@@ -13,6 +13,7 @@ const {
  * Communication module — messages, files, groups, Socket.io.
  * Schema: backend/sql/schema.sql
  */
+
 function registerMessagesRoutes(app) {
   app.use('/api/messages', messageRoutes);
   app.use('/api/files', fileRoutes);
@@ -22,6 +23,16 @@ function registerMessagesRoutes(app) {
 function initMessagesRealtime(httpServer) {
   initSocket(httpServer);
   return { name: 'messages', closeSocket };
+}
+
+/** Called by central modules/index.js registerAllModules() */
+function register(app) {
+  registerMessagesRoutes(app);
+}
+
+/** Called by central modules/index.js initAllRealtime() */
+function initRealtime(httpServer) {
+  return initMessagesRealtime(httpServer);
 }
 
 /** @deprecated Use registerMessagesRoutes + initMessagesRealtime */
@@ -34,6 +45,8 @@ function registerMessagesModule(app, httpServer) {
 }
 
 module.exports = {
+  register,
+  initRealtime,
   registerMessagesModule,
   registerMessagesRoutes,
   initMessagesRealtime,

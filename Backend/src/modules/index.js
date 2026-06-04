@@ -1,47 +1,33 @@
-const {
-  registerMessagesRoutes,
-  initMessagesRealtime,
-} = require('./messages');
-const { registerDashboardModule } = require('./dashboard');
-const { registerProjectManagementModule } = require('./project-management');
-const { registerSchedulingModule } = require('./scheduling');
-
-/** ERP modules with HTTP routes (add new modules here) */
-const MODULE_REGISTRARS = [
-  registerDashboardModule,
-  registerProjectManagementModule,
-  registerSchedulingModule,
-];
-
 /**
- * Mount all module HTTP routes on the Express app.
+ * Central module registry.
+ * To add a new module: import it here and add to MODULES array.
  */
+const auth        = require('./auth');
+const messages    = require('./messages');
+const dashboard   = require('./dashboard');
+// const projectMgmt = require('./project-management');  // uncomment when ready
+
+const MODULES = [auth, messages, dashboard];
+
 function registerAllModules(app) {
-  const modules = [];
-
-  MODULE_REGISTRARS.forEach((register) => {
-    modules.push(register(app));
-  });
-
-  registerMessagesRoutes(app);
-  modules.push({ name: 'messages' });
-
-  return { modules };
+  for (const mod of MODULES) {
+    if (typeof mod.register === 'function') {
+      mod.register(app);
+    }
+  }
 }
 
-/**
- * Initialize realtime features (Socket.io) after http.createServer(app).
- */
-function initAllRealtime(httpServer) {
-  return initMessagesRealtime(httpServer);
+function initAllRealtime(server) {
+  const closers = [];
+  for (const mod of MODULES) {
+    if (typeof mod.initRealtime === 'function') {
+      const close = mod.initRealtime(server);
+      if (typeof close === 'function') closers.push(close);
+    }
+  }
+  return {
+    closeSocket: () => closers.forEach((fn) => fn()),
+  };
 }
 
-module.exports = {
-  registerAllModules,
-  initAllRealtime,
-  registerMessagesRoutes,
-  initMessagesRealtime,
-  registerDashboardModule,
-  registerProjectManagementModule,
-  registerSchedulingModule,
-};
+module.exports = { registerAllModules, initAllRealtime };

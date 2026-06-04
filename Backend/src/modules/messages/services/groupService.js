@@ -1,20 +1,22 @@
-const { sql, getPool } = require('../../../config/db');
+/**
+ * groupService.js — PostgreSQL version
+ * Tables: comm_groups, comm_group_members, auth_users
+ */
+
+const { getPool } = require('../../../config/db');
+
+// ── Guards ────────────────────────────────────────────────────────────────────
 
 async function assertGroupAdmin(groupId, userId) {
-  const pool = await getPool();
-  const result = await pool
-    .request()
-    .input('groupId', sql.Int, groupId)
-    .input('userId', sql.Int, userId)
-    .query(`
-      SELECT TOP 1 g.groupId
-      FROM dbo.groups g
-      WHERE g.groupId = @groupId
-        AND g.isActive = 1
-        AND g.createdByUserId = @userId;
-    `);
-
-  if (!result.recordset[0]) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT group_id FROM comm_groups
+     WHERE group_id = $1
+       AND is_active = TRUE
+       AND created_by = $2::uuid`,
+    [groupId, userId]
+  );
+  if (!rows[0]) {
     const err = new Error('Group not found or access denied');
     err.code = 'GROUP_FORBIDDEN';
     err.statusCode = 403;
@@ -23,29 +25,21 @@ async function assertGroupAdmin(groupId, userId) {
 }
 
 async function assertGroupMember(groupId, userId) {
-  const pool = await getPool();
-  const result = await pool
-    .request()
-    .input('groupId', sql.Int, groupId)
-    .input('userId', sql.Int, userId)
-    .query(`
-      SELECT TOP 1 g.groupId
-      FROM dbo.groups g
-      WHERE g.groupId = @groupId
-        AND g.isActive = 1
-        AND (
-          g.createdByUserId = @userId
-          OR EXISTS (
-            SELECT 1
-            FROM dbo.group_members gm
-            WHERE gm.groupId = g.groupId
-              AND gm.userId = @userId
-              AND gm.isActive = 1
-          )
-        );
-    `);
-
-  if (!result.recordset[0]) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT g.group_id FROM comm_groups g
+     WHERE g.group_id = $1
+       AND g.is_active = TRUE
+       AND (
+         g.created_by = $2::uuid
+         OR EXISTS (
+           SELECT 1 FROM comm_group_members gm
+           WHERE gm.group_id = g.group_id AND gm.user_id = $2::uuid
+         )
+       )`,
+    [groupId, userId]
+  );
+  if (!rows[0]) {
     const err = new Error('Group not found or access denied');
     err.code = 'GROUP_FORBIDDEN';
     err.statusCode = 403;
@@ -53,212 +47,160 @@ async function assertGroupMember(groupId, userId) {
   }
 }
 
+// ── List ──────────────────────────────────────────────────────────────────────
+
 /**
  * Lists active groups the user created or belongs to.
  */
 async function listGroupsForUser(userId) {
-  const pool = await getPool();
-  const result = await pool
-    .request()
-    .input('userId', sql.Int, userId)
-    .query(`
-      SELECT DISTINCT
-        g.groupId,
-        g.groupName,
-        g.createdAt,
-        (
-          SELECT COUNT(*)
-          FROM dbo.group_members gm
-          WHERE gm.groupId = g.groupId
-            AND gm.isActive = 1
-        ) AS memberCount
-      FROM dbo.groups g
-      LEFT JOIN dbo.group_members gm
-        ON gm.groupId = g.groupId
-        AND gm.userId = @userId
-        AND gm.isActive = 1
-      WHERE g.isActive = 1
-        AND (g.createdByUserId = @userId OR gm.groupMemberId IS NOT NULL)
-      ORDER BY g.groupName ASC;
-    `);
-
-  return result.recordset;
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT DISTINCT
+       g.group_id    AS "groupId",
+       g.group_name  AS "groupName",
+       g.created_at  AS "createdAt",
+       (
+         SELECT COUNT(*)::int
+         FROM comm_group_members gm2
+         WHERE gm2.group_id = g.group_id
+       ) AS "memberCount"
+     FROM comm_groups g
+     LEFT JOIN comm_group_members gm
+       ON gm.group_id = g.group_id AND gm.user_id = $1::uuid
+     WHERE g.is_active = TRUE
+       AND (g.created_by = $1::uuid OR gm.user_id IS NOT NULL)
+     ORDER BY g.group_name ASC`,
+    [userId]
+  );
+  return rows;
 }
+
+// ── Create ────────────────────────────────────────────────────────────────────
 
 /**
  * Creates a group and adds the creator as a member.
  */
 async function createGroup(userId, groupName) {
-  const pool = await getPool();
-  const transaction = new sql.Transaction(pool);
-  await transaction.begin();
-
+  const pool = getPool();
+  const client = await pool.connect();
   try {
-    const insertGroup = await new sql.Request(transaction)
-      .input('groupName', sql.NVarChar(200), groupName)
-      .input('createdByUserId', sql.Int, userId)
-      .query(`
-        INSERT INTO dbo.groups (groupName, createdByUserId)
-        OUTPUT INSERTED.groupId, INSERTED.groupName, INSERTED.createdAt
-        VALUES (@groupName, @createdByUserId);
-      `);
+    await client.query('BEGIN');
 
-    const group = insertGroup.recordset[0];
+    const { rows } = await client.query(
+      `INSERT INTO comm_groups (group_name, created_by)
+       VALUES ($1, $2::uuid)
+       RETURNING group_id AS "groupId", group_name AS "groupName", created_at AS "createdAt"`,
+      [groupName, userId]
+    );
+    const group = rows[0];
 
-    await new sql.Request(transaction)
-      .input('groupId', sql.Int, group.groupId)
-      .input('userId', sql.Int, userId)
-      .query(`
-        INSERT INTO dbo.group_members (groupId, userId)
-        VALUES (@groupId, @userId);
-      `);
+    await client.query(
+      `INSERT INTO comm_group_members (group_id, user_id) VALUES ($1, $2::uuid)
+       ON CONFLICT DO NOTHING`,
+      [group.groupId, userId]
+    );
 
-    await transaction.commit();
-    return group;
+    await client.query('COMMIT');
+    return { ...group, memberCount: 1 };
   } catch (err) {
-    await transaction.rollback();
+    await client.query('ROLLBACK');
     throw err;
+  } finally {
+    client.release();
   }
 }
+
+// ── Members ───────────────────────────────────────────────────────────────────
 
 async function getGroupMembers(groupId, userId) {
   await assertGroupMember(groupId, userId);
 
-  const pool = await getPool();
-  const result = await pool
-    .request()
-    .input('groupId', sql.Int, groupId)
-    .query(`
-      SELECT
-        u.userId,
-        u.email,
-        u.firstName,
-        u.lastName
-      FROM dbo.group_members gm
-      INNER JOIN dbo.users u ON u.userId = gm.userId
-      WHERE gm.groupId = @groupId
-        AND gm.isActive = 1
-        AND u.isActive = 1
-      ORDER BY u.lastName, u.firstName;
-    `);
-
-  return result.recordset;
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT
+       u.user_id    AS "userId",
+       u.email,
+       u.first_name AS "firstName",
+       u.last_name  AS "lastName"
+     FROM comm_group_members gm
+     INNER JOIN auth_users u ON u.user_id = gm.user_id
+     WHERE gm.group_id = $1
+       AND u.is_active = TRUE
+     ORDER BY u.last_name, u.first_name`,
+    [groupId]
+  );
+  return rows;
 }
 
 /**
- * Expands group IDs to distinct member user IDs (active groups/members only).
+ * Expands group IDs to distinct member user IDs.
  */
-async function getMemberUserIdsForGroups(groupIds) {
-  const userIds = new Set();
-  if (!groupIds || groupIds.length === 0) {
-    return [];
-  }
-
-  const pool = await getPool();
-  for (const groupId of groupIds) {
-    const result = await pool
-      .request()
-      .input('groupId', sql.Int, groupId)
-      .query(`
-        SELECT gm.userId
-        FROM dbo.group_members gm
-        INNER JOIN dbo.groups g ON g.groupId = gm.groupId
-        WHERE gm.groupId = @groupId
-          AND gm.isActive = 1
-          AND g.isActive = 1;
-      `);
-
-    result.recordset.forEach((row) => userIds.add(row.userId));
-  }
-
-  return [...userIds];
+async function getMemberUserIdsForGroups(groupIds = []) {
+  if (!groupIds.length) return [];
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT DISTINCT gm.user_id
+     FROM comm_group_members gm
+     INNER JOIN comm_groups g ON g.group_id = gm.group_id
+     WHERE gm.group_id = ANY($1::int[])
+       AND g.is_active = TRUE`,
+    [groupIds]
+  );
+  return rows.map(r => r.user_id);
 }
+
+// ── Add members ───────────────────────────────────────────────────────────────
 
 async function addMembers(groupId, actorUserId, userIds) {
   await assertGroupAdmin(groupId, actorUserId);
 
-  const pool = await getPool();
-  const transaction = new sql.Transaction(pool);
-  await transaction.begin();
-
+  const pool = getPool();
+  const client = await pool.connect();
   try {
-    for (const memberUserId of userIds) {
-      await new sql.Request(transaction)
-        .input('groupId', sql.Int, groupId)
-        .input('userId', sql.Int, memberUserId)
-        .query(`
-          IF EXISTS (
-            SELECT 1 FROM dbo.group_members
-            WHERE groupId = @groupId AND userId = @userId
-          )
-          BEGIN
-            UPDATE dbo.group_members
-            SET isActive = 1, joinedAt = SYSUTCDATETIME()
-            WHERE groupId = @groupId AND userId = @userId;
-          END
-          ELSE
-          BEGIN
-            INSERT INTO dbo.group_members (groupId, userId)
-            VALUES (@groupId, @userId);
-          END
-        `);
+    await client.query('BEGIN');
+    for (const memberId of userIds) {
+      await client.query(
+        `INSERT INTO comm_group_members (group_id, user_id)
+         VALUES ($1, $2::uuid)
+         ON CONFLICT (group_id, user_id) DO NOTHING`,
+        [groupId, memberId]
+      );
     }
-
-    await transaction.commit();
+    await client.query('COMMIT');
     return getGroupMembers(groupId, actorUserId);
   } catch (err) {
-    await transaction.rollback();
+    await client.query('ROLLBACK');
     throw err;
+  } finally {
+    client.release();
   }
 }
+
+// ── Remove member ─────────────────────────────────────────────────────────────
 
 async function removeMember(groupId, actorUserId, memberUserId) {
   await assertGroupAdmin(groupId, actorUserId);
 
-  const pool = await getPool();
-  const result = await pool
-    .request()
-    .input('groupId', sql.Int, groupId)
-    .input('userId', sql.Int, memberUserId)
-    .query(`
-      UPDATE dbo.group_members
-      SET isActive = 0
-      WHERE groupId = @groupId
-        AND userId = @userId
-        AND isActive = 1;
-
-      SELECT @@ROWCOUNT AS affected;
-    `);
-
-  return (result.recordset[0]?.affected ?? 0) > 0;
+  const pool = getPool();
+  const { rowCount } = await pool.query(
+    `DELETE FROM comm_group_members
+     WHERE group_id = $1 AND user_id = $2::uuid`,
+    [groupId, memberUserId]
+  );
+  return rowCount > 0;
 }
+
+// ── Soft delete group ─────────────────────────────────────────────────────────
 
 async function softDeleteGroup(groupId, userId) {
   await assertGroupAdmin(groupId, userId);
 
-  const pool = await getPool();
-  const transaction = new sql.Transaction(pool);
-  await transaction.begin();
-
-  try {
-    await new sql.Request(transaction)
-      .input('groupId', sql.Int, groupId)
-      .query(`
-        UPDATE dbo.groups
-        SET isActive = 0
-        WHERE groupId = @groupId AND isActive = 1;
-
-        UPDATE dbo.group_members
-        SET isActive = 0
-        WHERE groupId = @groupId AND isActive = 1;
-      `);
-
-    await transaction.commit();
-    return true;
-  } catch (err) {
-    await transaction.rollback();
-    throw err;
-  }
+  const pool = getPool();
+  await pool.query(
+    `UPDATE comm_groups SET is_active = FALSE WHERE group_id = $1`,
+    [groupId]
+  );
+  return true;
 }
 
 module.exports = {
@@ -269,4 +211,5 @@ module.exports = {
   addMembers,
   removeMember,
   softDeleteGroup,
+  assertGroupMember,
 };

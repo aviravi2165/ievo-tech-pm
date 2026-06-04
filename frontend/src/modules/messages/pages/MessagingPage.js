@@ -1,14 +1,17 @@
-import { useState, useEffect, useRef } from 'react';
-import MessageTabBar from '../components/MessageTabBar';
-import InboxSidebar from '../components/InboxSidebar';
-import ChatWindow from '../components/ChatWindow';
-import ComposeModal from '../components/ComposeModal';
-import GroupManager from '../components/GroupManager';
-import { useInbox } from '../hooks/useInbox';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import MessageTabBar   from '../components/MessageTabBar';
+import InboxSidebar    from '../components/InboxSidebar';
+import ChatWindow      from '../components/ChatWindow';
+import ComposeModal    from '../components/ComposeModal';
+import GroupManager    from '../components/GroupManager';
+import { useInbox }       from '../hooks/useInbox';
 import { useUnreadCount } from '../hooks/useUnreadCount';
-import { useGroups } from '../hooks/useGroups';
-import { messageApi } from '../api/messageApi';
+import { useGroups }      from '../hooks/useGroups';
+import { useSocket }      from '../context/SocketContext';
+import { useAuth }        from '../../auth/AuthContext';
+import { messageApi }     from '../api/messageApi';
 
+// ── Toast ─────────────────────────────────────────────────────────────────────
 function useToast() {
   const [toasts, setToasts] = useState([]);
   const add = (msg, type = 'info') => {
@@ -19,26 +22,28 @@ function useToast() {
   return { toasts, toast: add };
 }
 
+// ── Page ──────────────────────────────────────────────────────────────────────
 export default function MessagingPage({ currentUser }) {
   const { conversations, loading, error: inboxError, refetch, archiveConversation } = useInbox();
   const { count: unreadCount, decrement } = useUnreadCount();
   const { groups, loading: groupsLoading, createGroup, deleteGroup } = useGroups();
+  const { socket } = useSocket();
+  const { user }   = useAuth();
 
-  const [activeConv, setActiveConv] = useState(null);
-  const [tab, setTab] = useState('inbox');
-  const [sentConvs, setSentConvs] = useState([]);
-  const [sentLoading, setSentLoading] = useState(false);
-  const [sentError, setSentError] = useState(null);
-  const [composeOpen, setComposeOpen] = useState(false);
-  const [isNarrow, setIsNarrow] = useState(true);
+  const [activeConv,   setActiveConv]   = useState(null);
+  const [tab,          setTab]          = useState('inbox');
+  const [sentConvs,    setSentConvs]    = useState([]);
+  const [sentLoading,  setSentLoading]  = useState(false);
+  const [sentError,    setSentError]    = useState(null);
+  const [composeOpen,  setComposeOpen]  = useState(false);
+  const [isNarrow,     setIsNarrow]     = useState(true);
   const layoutRef = useRef(null);
-
   const { toasts, toast } = useToast();
 
+  // ── Responsive layout ───────────────────────────────────────────────────
   useEffect(() => {
     const el = layoutRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return undefined;
-
+    if (!el || typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(([entry]) => {
       setIsNarrow(entry.contentRect.width < 640);
     });
@@ -46,31 +51,59 @@ export default function MessagingPage({ currentUser }) {
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => {
-    if (tab !== 'sent') return;
+  // ── Load sent tab ────────────────────────────────────────────────────────
+  const fetchSent = useCallback(() => {
     setSentLoading(true);
     setSentError(null);
     messageApi.getSent()
       .then(data => setSentConvs(data.conversations || data || []))
-      .catch((err) => setSentError(err.message || 'Failed to load sent mail'))
+      .catch(err  => setSentError(err.message || 'Failed to load sent mail'))
       .finally(() => setSentLoading(false));
-  }, [tab]);
+  }, []);
 
+  useEffect(() => {
+    if (tab === 'sent') fetchSent();
+  }, [tab, fetchSent]);
+
+  // ── Socket: update sent list when current user sends a message ───────────
+  useEffect(() => {
+    if (!socket) return;
+    const handler = (payload) => {
+      const isMine = payload.senderUserId && user?.userId
+        && payload.senderUserId === user.userId;
+
+      if (isMine && tab === 'sent') {
+        // Refresh sent list so newly sent conversation appears immediately
+        fetchSent();
+      }
+
+      // If a reply arrives on the currently open conversation, keep it active
+      // and let ChatWindow/useThread handle the new message via its own socket.
+      // Nothing to do here — useInbox already handles inbox list updates.
+    };
+    socket.on('NEW_MESSAGE', handler);
+    return () => socket.off('NEW_MESSAGE', handler);
+  }, [socket, user?.userId, tab, fetchSent]);
+
+  // ── Tab change ───────────────────────────────────────────────────────────
   const handleTabChange = (nextTab) => {
     setTab(nextTab);
     setActiveConv(null);
   };
 
-  const isMailTab = tab === 'inbox' || tab === 'sent';
-  const displayedConvs = tab === 'sent' ? sentConvs : conversations;
-  const displayedLoading = tab === 'sent' ? sentLoading : loading;
-  const listError = tab === 'sent' ? sentError : inboxError;
+  // ── Derived display state ────────────────────────────────────────────────
+  const isMailTab        = tab === 'inbox' || tab === 'sent';
+  const displayedConvs   = tab === 'sent' ? sentConvs   : conversations;
+  const displayedLoading = tab === 'sent' ? sentLoading  : loading;
+  const listError        = tab === 'sent' ? sentError    : inboxError;
 
+  // ── Select conversation ──────────────────────────────────────────────────
   const handleSelectConv = (conv) => {
     setActiveConv(conv);
     if (conv.unreadCount > 0) decrement(conv.unreadCount);
   };
 
+  // ── Archive ──────────────────────────────────────────────────────────────
   const handleArchive = async () => {
     if (!activeConv) return;
     try {
@@ -82,14 +115,17 @@ export default function MessagingPage({ currentUser }) {
     }
   };
 
+  // ── After sending a new message ──────────────────────────────────────────
   const handleSent = () => {
-    refetch();
+    refetch();           // refresh inbox so sender sees it there too
+    if (tab === 'sent') fetchSent();
     toast('Message sent.', 'success');
   };
 
-  const showList = isMailTab && !activeConv;
-  const showThread = isMailTab && !!activeConv;
-  const showGroups = tab === 'groups';
+  // ── Layout flags ─────────────────────────────────────────────────────────
+  const showList      = isMailTab && (!activeConv || !isNarrow);
+  const showThread    = isMailTab && !!activeConv;
+  const showGroups    = tab === 'groups';
   const showEmptyHint = !isNarrow && isMailTab && !activeConv;
 
   return (
@@ -104,6 +140,7 @@ export default function MessagingPage({ currentUser }) {
         ref={layoutRef}
         className={`msg-layout ${isNarrow ? 'msg-layout--stacked' : 'msg-layout--split'}`}
       >
+        {/* Conversation list — inbox or sent */}
         {showList && (
           <InboxSidebar
             hideTabs
@@ -119,6 +156,7 @@ export default function MessagingPage({ currentUser }) {
           />
         )}
 
+        {/* Active thread */}
         {showThread && (
           <main className="msg-main msg-main--full">
             <ChatWindow
@@ -130,6 +168,7 @@ export default function MessagingPage({ currentUser }) {
           </main>
         )}
 
+        {/* Groups panel */}
         {showGroups && (
           <main className="msg-main msg-main--full">
             <GroupManager
@@ -141,11 +180,13 @@ export default function MessagingPage({ currentUser }) {
           </main>
         )}
 
+        {/* Empty state — wide layout, nothing selected */}
         {showEmptyHint && (
           <main className="msg-main">
             <div className="msg-empty">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1">
-                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="1">
+                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
               </svg>
               <h3>Select a conversation</h3>
               <p>Choose from the list or compose a new message.</p>
@@ -162,6 +203,7 @@ export default function MessagingPage({ currentUser }) {
         )}
       </div>
 
+      {/* Compose modal */}
       {composeOpen && (
         <ComposeModal
           onClose={() => setComposeOpen(false)}
@@ -170,6 +212,7 @@ export default function MessagingPage({ currentUser }) {
         />
       )}
 
+      {/* Toasts */}
       {toasts.length > 0 && (
         <div className="toast-container">
           {toasts.map(t => (

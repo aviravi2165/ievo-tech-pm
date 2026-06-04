@@ -1,49 +1,35 @@
-const sql = require('mssql');
+/**
+ * PostgreSQL connection pool — drop-in replacement for the MSSQL db.js.
+ * Install: npm install pg
+ * Remove:  npm uninstall mssql
+ */
+const { Pool } = require('pg');
 
-const dbConfig = {
-  server: process.env.DB_SERVER,
-  database: process.env.DB_DATABASE,
-  user: process.env.DB_USER,
+const pool = new Pool({
+  host:     process.env.DB_HOST     || 'localhost',
+  port:     parseInt(process.env.DB_PORT || '5433', 10),
+  database: process.env.DB_DATABASE || 'ievo_erp',
+  user:     process.env.DB_USER     || 'postgres',
   password: process.env.DB_PASSWORD,
-  port: parseInt(process.env.DB_PORT || '1433', 10),
-  options: {
-    encrypt: process.env.DB_ENCRYPT === 'true',
-    trustServerCertificate: process.env.DB_TRUST_SERVER_CERTIFICATE === 'true',
-  },
-  pool: {
-    max: 10,
-    min: 0,
-    idleTimeoutMillis: 30000,
-  },
-};
+  max:      10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+});
 
-let pool = null;
+pool.on('error', (err) => {
+  console.error('PostgreSQL pool error:', err);
+});
 
 /**
- * Returns a connected MSSQL connection pool (singleton).
- * @returns {Promise<import('mssql').ConnectionPool>}
+ * Returns the shared pool.
+ * Usage: const { rows } = await getPool().query('SELECT ...', [params])
  */
-async function getPool() {
-  if (pool && pool.connected) {
-    return pool;
-  }
-
-  pool = await sql.connect(dbConfig);
+function getPool() {
   return pool;
 }
 
-/**
- * Gracefully closes the connection pool.
- */
 async function closePool() {
-  if (pool) {
-    await pool.close();
-    pool = null;
-  }
+  await pool.end();
 }
 
-module.exports = {
-  sql,
-  getPool,
-  closePool,
-};
+module.exports = { getPool, closePool };

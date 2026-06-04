@@ -27,7 +27,7 @@
   padding: 0 20px;
   background: var(--charcoal, #fff);
   border-bottom: 1px solid var(--divider, #e0dcd4);
-  border-top: 3px solid var(--ievo-red, #ed1c24);
+  border-top: 3px solid var(--ievo-red, #D92906);
   box-shadow: 0 1px 3px rgba(26, 29, 35, 0.06);
 }
 
@@ -55,7 +55,7 @@
 .erp-topbar-module {
   font-size: 14px;
   font-weight: 600;
-  color: var(--ievo-red, #ed1c24);
+  color: var(--ievo-red, #D92906);
   letter-spacing: 0.04em;
 }
 
@@ -108,7 +108,7 @@
 }
 
 .erp-topbar-profile:hover {
-  border-color: var(--ievo-red-dark, #c4181f);
+  border-color: var(--ievo-red-dark, #D92906);
 }
 
 .erp-topbar-avatar {
@@ -117,7 +117,7 @@
   border-radius: 50%;
   background: var(--ievo-red-glow, rgba(237, 28, 36, 0.1));
   border: 1px solid rgba(237, 28, 36, 0.25);
-  color: var(--ievo-red, #ed1c24);
+  color: var(--ievo-red, #D92906);
   font-size: 12px;
   font-weight: 700;
   display: flex;
@@ -186,7 +186,7 @@
 }
 
 .erp-module-item.active .erp-module-icon {
-  color: var(--ievo-red, #ed1c24);
+  color: var(--ievo-red, #D92906);
 }
 
 .erp-module-item.disabled {
@@ -263,7 +263,7 @@
   border: none;
   border-right: 1px solid var(--divider, #e0dcd4);
   background: var(--slate, #f8f5f0);
-  color: var(--ievo-red, #ed1c24);
+  color: var(--ievo-red, #D92906);
   cursor: pointer;
   position: relative;
   font-family: inherit;
@@ -294,7 +294,7 @@
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
-  background: var(--ievo-red, #ed1c24);
+  background: var(--ievo-red, #D92906);
   color: #fff;
   font-size: 9px;
   font-weight: 700;
@@ -404,7 +404,7 @@
   height: 8px;
   margin-top: 6px;
   border-radius: 50%;
-  background: var(--ievo-red, #ed1c24);
+  background: var(--ievo-red, #D92906);
   flex-shrink: 0;
 }
 
@@ -503,4 +503,26 @@
     width: 100%;
     max-width: 100%;
   }
+}
+/* ── Add this block to the bottom of shell/assets/shell.css ── */
+
+.erp-topbar-logout {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--divider, #e0dcd4);
+  border-radius: var(--radius, 4px);
+  background: transparent;
+  color: var(--muted, #707070);
+  cursor: pointer;
+  transition: border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
+  font-family: inherit;
+}
+
+.erp-topbar-logout:hover {
+  border-color: var(--ievo-red, #ed1c24);
+  color: var(--ievo-red, #ed1c24);
+  background: var(--ievo-red-glow, rgba(237,28,36,0.06));
 }
