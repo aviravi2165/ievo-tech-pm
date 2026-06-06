@@ -332,12 +332,8 @@ async function getSent(userId, page = 1, limit = 30) {
   const pool   = getPool();
   const offset = (Math.max(page, 1) - 1) * limit;
 
-  // FIX: previously used created_by = userId which only showed conversations
-  // the user *started*.  Replies and group messages sent by the user were
-  // invisible.  Now we join on comm_messages so any conversation where the
-  // user has sent at least one message appears in Sent.
   const { rows } = await pool.query(
-    `SELECT DISTINCT ON (c.last_message_at, c.conversation_id)
+    `SELECT
        c.conversation_id   AS "conversationId",
        c.subject,
        c.last_message_at   AS "latestAt",
@@ -359,11 +355,6 @@ async function getSent(userId, page = 1, limit = 30) {
            AND p2.is_deleted = FALSE
        )                   AS "participantNames"
      FROM comm_conversations c
-     -- FIX: match any conversation where user sent a message (not just created_by)
-     INNER JOIN comm_messages sm
-       ON sm.conversation_id = c.conversation_id
-       AND sm.sender_id = $1::uuid
-       AND sm.is_deleted = FALSE
      INNER JOIN comm_participants p
        ON p.conversation_id = c.conversation_id
        AND p.user_id = $1::uuid
@@ -376,7 +367,8 @@ async function getSent(userId, page = 1, limit = 30) {
      ) lm ON TRUE
      LEFT JOIN comm_groups cg ON cg.group_id = c.group_id
      WHERE c.is_deleted = FALSE
-     ORDER BY c.last_message_at DESC, c.conversation_id DESC
+       AND c.created_by = $1::uuid
+     ORDER BY c.last_message_at DESC
      LIMIT $2 OFFSET $3`,
     [userId, limit, offset]
   );
@@ -388,8 +380,13 @@ async function getSent(userId, page = 1, limit = 30) {
 
 async function getUnreadCount(userId) {
   const pool = getPool();
+  // FIX: Count CONVERSATIONS with at least one unread message, not individual
+  // messages.  This keeps the sidebar badge and the message icon badge in sync —
+  // both now show the number of conversations that have something new to read,
+  // which is the number users actually care about (e.g. "3 unread threads",
+  // not "6 unread messages across those threads").
   const { rows } = await pool.query(
-    `SELECT COUNT(*)::int AS count
+    `SELECT COUNT(DISTINCT m.conversation_id)::int AS count
      FROM comm_messages m
      INNER JOIN comm_participants p
        ON p.conversation_id = m.conversation_id
