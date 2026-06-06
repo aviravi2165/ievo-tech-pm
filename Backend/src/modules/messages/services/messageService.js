@@ -1,16 +1,10 @@
 /**
  * messageService.js — PostgreSQL version
- * Tables: comm_conversations, comm_participants, comm_messages,
- *         comm_attachments, comm_read_receipts, auth_users
  */
 
 const { getPool } = require('../../../config/db');
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 function sanitizeBodyHtml(html = '') {
-  // Server-side strip of obviously dangerous tags.
-  // Full DOMPurify sanitisation happens client-side.
   return html
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
     .replace(/<iframe[\s\S]*?>[\s\S]*?<\/iframe>/gi, '')
@@ -90,7 +84,7 @@ function mapThreadMessage(row) {
     bodyHtml:        row.body_html,
     sentAt:          row.sent_at,
     parentMessageId: row.parent_message_id,
-    attachments:     row.attachments  || [],
+    attachments:     row.attachments   || [],
     readReceipts:    row.read_receipts || [],
     parentMessage:   row.parent_message_id
       ? { messageId: row.parent_message_id, senderName: row.parent_sender_name, bodyHtml: row.parent_body_html }
@@ -102,46 +96,43 @@ function mapThreadMessage(row) {
 
 async function sendMessage(senderUserId, payload) {
   const {
-    recipientIds = [],
-    groupIds     = [],
+    recipientIds  = [],
+    groupIds      = [],
     subject,
     bodyHtml,
-    allowReply   = true,
+    allowReply    = true,
     attachmentIds = [],
   } = payload;
 
   const sanitizedBody = sanitizeBodyHtml(bodyHtml);
   if (!sanitizedBody.trim()) {
-    const err = new Error('Message body is required');
-    err.statusCode = 400;
-    throw err;
+    const err = new Error('Message body is required'); err.statusCode = 400; throw err;
   }
 
-  const recipientUserIds = await resolveRecipientUserIds(recipientIds, groupIds);
+  const recipientUserIds   = await resolveRecipientUserIds(recipientIds, groupIds);
   const uniqueParticipants = [...new Set([...recipientUserIds, senderUserId])];
 
   if (uniqueParticipants.length < 2) {
-    const err = new Error('At least one recipient is required');
-    err.statusCode = 400;
-    throw err;
+    const err = new Error('At least one recipient is required'); err.statusCode = 400; throw err;
   }
 
-  const pool = getPool();
+  const pool   = getPool();
   const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
 
-    // 1. Create conversation
+    // Save group_id when sent to a group so inbox/sent can show the group name
+    const primaryGroupId = groupIds.length > 0 ? groupIds[0] : null;
+
     const convRes = await client.query(
-      `INSERT INTO comm_conversations (subject, created_by, allow_reply, last_message_at)
-       VALUES ($1, $2, $3, NOW())
+      `INSERT INTO comm_conversations (subject, created_by, allow_reply, group_id, last_message_at)
+       VALUES ($1, $2, $3, $4, NOW())
        RETURNING conversation_id, subject`,
-      [subject, senderUserId, allowReply]
+      [subject, senderUserId, allowReply, primaryGroupId]
     );
     const conversation = convRes.rows[0];
 
-    // 2. Insert participants
     for (const uid of uniqueParticipants) {
       await client.query(
         `INSERT INTO comm_participants (conversation_id, user_id)
@@ -151,7 +142,6 @@ async function sendMessage(senderUserId, payload) {
       );
     }
 
-    // 3. Insert message
     const msgRes = await client.query(
       `INSERT INTO comm_messages (conversation_id, sender_id, body_html)
        VALUES ($1, $2, $3)
@@ -160,19 +150,15 @@ async function sendMessage(senderUserId, payload) {
     );
     const messageId = msgRes.rows[0].message_id;
 
-    // 4. Link attachments
     await linkAttachmentsToMessage(client, messageId, attachmentIds, senderUserId);
 
-    // 5. Update last_message_at
     await client.query(
-      `UPDATE comm_conversations SET last_message_at = NOW()
-       WHERE conversation_id = $1`,
+      `UPDATE comm_conversations SET last_message_at = NOW() WHERE conversation_id = $1`,
       [conversation.conversation_id]
     );
 
     await client.query('COMMIT');
 
-    // Fetch sender name
     const senderRes = await pool.query(
       `SELECT first_name, last_name, email FROM auth_users WHERE user_id = $1`,
       [senderUserId]
@@ -183,6 +169,7 @@ async function sendMessage(senderUserId, payload) {
       messageId,
       subject:        conversation.subject,
       senderName:     displayName(senderRes.rows[0]),
+      senderUserId,
       participantIds: uniqueParticipants,
     };
   } catch (err) {
@@ -237,9 +224,16 @@ async function replyToConversation(conversationId, senderUserId, payload) {
       [conversationId]
     );
 
+    // Un-archive for ALL participants so replied conversations reappear in inbox
+    await client.query(
+      `UPDATE comm_participants SET is_archived = FALSE
+       WHERE conversation_id = $1 AND is_deleted = FALSE`,
+      [conversationId]
+    );
+
     await client.query('COMMIT');
 
-    const metaRes = await pool.query(
+    const metaRes   = await pool.query(
       `SELECT subject FROM comm_conversations WHERE conversation_id = $1`,
       [conversationId]
     );
@@ -252,8 +246,9 @@ async function replyToConversation(conversationId, senderUserId, payload) {
     return {
       conversationId,
       messageId,
-      subject:        metaRes.rows[0]?.subject,
-      senderName:     displayName(senderRes.rows[0]),
+      subject:      metaRes.rows[0]?.subject,
+      senderName:   displayName(senderRes.rows[0]),
+      senderUserId,
       participantIds,
     };
   } catch (err) {
@@ -265,9 +260,12 @@ async function replyToConversation(conversationId, senderUserId, payload) {
 }
 
 // ── Inbox ─────────────────────────────────────────────────────────────────────
+// FIX: Added recipient names aggregation so the frontend can show
+// "To: Alice, Bob" in sent view and sender name in inbox view,
+// instead of just the subject line.
 
 async function getInbox(userId, page = 1, limit = 30) {
-  const pool = getPool();
+  const pool   = getPool();
   const offset = (Math.max(page, 1) - 1) * limit;
 
   const { rows } = await pool.query(
@@ -282,6 +280,18 @@ async function getInbox(userId, page = 1, limit = 30) {
          su.email, 'Unknown'
        )                   AS "latestSender",
        LEFT(lm.body_html, 120) AS preview,
+       cg.group_name       AS "groupName",
+       (
+         SELECT STRING_AGG(
+           COALESCE(NULLIF(TRIM(CONCAT(u2.first_name, ' ', u2.last_name)), ''), u2.email),
+           ', ' ORDER BY u2.first_name, u2.last_name
+         )
+         FROM comm_participants p2
+         INNER JOIN auth_users u2 ON u2.user_id = p2.user_id
+         WHERE p2.conversation_id = c.conversation_id
+           AND p2.user_id <> $1::uuid
+           AND p2.is_deleted = FALSE
+       )                   AS "participantNames",
        (
          SELECT COUNT(*)::int
          FROM comm_messages um
@@ -292,7 +302,7 @@ async function getInbox(userId, page = 1, limit = 30) {
              SELECT 1 FROM comm_read_receipts rr
              WHERE rr.message_id = um.message_id AND rr.user_id = $1::uuid
            )
-       ) AS "unreadCount"
+       )                   AS "unreadCount"
      FROM comm_conversations c
      INNER JOIN comm_participants p
        ON p.conversation_id = c.conversation_id
@@ -306,6 +316,7 @@ async function getInbox(userId, page = 1, limit = 30) {
        ORDER BY sent_at DESC LIMIT 1
      ) lm ON TRUE
      LEFT JOIN auth_users su ON su.user_id = lm.sender_id
+     LEFT JOIN comm_groups cg ON cg.group_id = c.group_id
      WHERE c.is_deleted = FALSE
      ORDER BY c.last_message_at DESC
      LIMIT $2 OFFSET $3`,
@@ -318,7 +329,7 @@ async function getInbox(userId, page = 1, limit = 30) {
 // ── Sent ──────────────────────────────────────────────────────────────────────
 
 async function getSent(userId, page = 1, limit = 30) {
-  const pool = getPool();
+  const pool   = getPool();
   const offset = (Math.max(page, 1) - 1) * limit;
 
   const { rows } = await pool.query(
@@ -330,7 +341,19 @@ async function getSent(userId, page = 1, limit = 30) {
        c.allow_reply       AS "allowReply",
        'You'               AS "latestSender",
        LEFT(lm.body_html, 120) AS preview,
-       0                   AS "unreadCount"
+       0                   AS "unreadCount",
+       cg.group_name       AS "groupName",
+       (
+         SELECT STRING_AGG(
+           COALESCE(NULLIF(TRIM(CONCAT(u2.first_name, ' ', u2.last_name)), ''), u2.email),
+           ', ' ORDER BY u2.first_name, u2.last_name
+         )
+         FROM comm_participants p2
+         INNER JOIN auth_users u2 ON u2.user_id = p2.user_id
+         WHERE p2.conversation_id = c.conversation_id
+           AND p2.user_id <> $1::uuid
+           AND p2.is_deleted = FALSE
+       )                   AS "participantNames"
      FROM comm_conversations c
      INNER JOIN comm_participants p
        ON p.conversation_id = c.conversation_id
@@ -342,6 +365,7 @@ async function getSent(userId, page = 1, limit = 30) {
        WHERE conversation_id = c.conversation_id AND is_deleted = FALSE
        ORDER BY sent_at DESC LIMIT 1
      ) lm ON TRUE
+     LEFT JOIN comm_groups cg ON cg.group_id = c.group_id
      WHERE c.is_deleted = FALSE
        AND c.created_by = $1::uuid
      ORDER BY c.last_message_at DESC
@@ -380,7 +404,7 @@ async function getUnreadCount(userId) {
 // ── Search ────────────────────────────────────────────────────────────────────
 
 async function searchMessages(userId, query) {
-  const pool = getPool();
+  const pool    = getPool();
   const pattern = `%${query}%`;
 
   const { rows } = await pool.query(
@@ -413,7 +437,6 @@ async function getThread(conversationId, userId) {
 
   const pool = getPool();
 
-  // Conversation + participants
   const convRes = await pool.query(
     `SELECT conversation_id AS "conversationId", subject, allow_reply AS "allowReply",
             created_at AS "createdAt", last_message_at AS "lastMessageAt"
@@ -435,7 +458,6 @@ async function getThread(conversationId, userId) {
     [conversationId]
   );
 
-  // Messages with attachments and read receipts as JSON arrays
   const msgRes = await pool.query(
     `SELECT
        m.message_id,

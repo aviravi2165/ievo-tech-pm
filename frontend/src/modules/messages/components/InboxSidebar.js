@@ -1,34 +1,39 @@
 import { useState, useMemo } from 'react';
 
-/** Formats a date/ISO string to a short human label */
 function fmtTime(dateStr) {
   if (!dateStr) return '';
-  const d = new Date(dateStr);
-  const now = new Date();
-  const diffMs = now - d;
-  const diffDays = Math.floor(diffMs / 86400000);
+  const d        = new Date(dateStr);
+  const diffDays = Math.floor((Date.now() - d) / 86400000);
   if (diffDays === 0) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   if (diffDays === 1) return 'Yesterday';
-  if (diffDays < 7) return d.toLocaleDateString([], { weekday: 'short' });
+  if (diffDays < 7)   return d.toLocaleDateString([], { weekday: 'short' });
   return d.toLocaleDateString([], { day: 'numeric', month: 'short' });
 }
 
-/** First letter(s) for avatar */
 function initials(name = '') {
   return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() || '?';
 }
 
 /**
- * InboxSidebar
- * Props:
- *   conversations   — array from useInbox
- *   loading         — bool
- *   activeId        — conversationId currently open
- *   onSelect(conv)  — click handler
- *   onCompose()     — open compose modal
- *   onViewGroups()  — switch to groups panel
- *   unreadCount     — number for badge
+ * Primary display name for a conversation row.
+ *
+ * Inbox:  show group name (if group conv) OR all other participants
+ *         — "who this conversation is with", NOT who sent the last message
+ * Sent:   show group name (if group conv) OR recipient list
+ *
+ * Subject is shown as a smaller subtitle below, not as the heading.
  */
+function convDisplayName(conv, tab) {
+  // Group conversation — always show group name regardless of tab
+  if (conv.groupName) return conv.groupName;
+
+  // For both inbox and sent: show the other participants
+  if (conv.participantNames) return conv.participantNames;
+
+  // Fallback
+  return conv.subject || '?';
+}
+
 export default function InboxSidebar({
   conversations = [],
   loading,
@@ -46,22 +51,20 @@ export default function InboxSidebar({
   const filtered = useMemo(() => {
     if (!search.trim()) return conversations;
     const q = search.toLowerCase();
-    return conversations.filter(
-      c =>
-        c.subject?.toLowerCase().includes(q) ||
-        c.latestSender?.toLowerCase().includes(q)
+    return conversations.filter(c =>
+      c.subject?.toLowerCase().includes(q) ||
+      c.participantNames?.toLowerCase().includes(q) ||
+      c.groupName?.toLowerCase().includes(q)
     );
   }, [conversations, search]);
 
   return (
     <aside className="msg-sidebar">
-      {/* Header */}
       <div className="msg-sidebar-header">
         <h2>I.EVO</h2>
         <p>Messages · Design | Demonstrate | Deliver</p>
       </div>
 
-      {/* Compose button */}
       <button className="msg-compose-btn" onClick={onCompose}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
           <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -69,7 +72,6 @@ export default function InboxSidebar({
         New Message
       </button>
 
-      {/* Search */}
       <div className="msg-search-wrap">
         <input
           type="text"
@@ -109,11 +111,7 @@ export default function InboxSidebar({
       )}
 
       <div className="msg-conv-list">
-        {loading && (
-          <div className="loader-wrap">
-            <div className="spinner" />
-          </div>
-        )}
+        {loading && <div className="loader-wrap"><div className="spinner" /></div>}
 
         {!loading && error && (
           <div className="msg-list-error">
@@ -128,26 +126,32 @@ export default function InboxSidebar({
           </div>
         )}
 
-        {!loading && !error && filtered.map(conv => (
-          <div
-            key={conv.conversationId}
-            className={`msg-conv-item ${activeId === conv.conversationId ? 'active' : ''} ${conv.unreadCount > 0 ? 'unread' : ''}`}
-            onClick={() => onSelect(conv)}
-          >
-            <div className="conv-avatar">{initials(conv.latestSender || conv.subject)}</div>
-            <div className="conv-info">
-              <div className="conv-top">
-                <span className="conv-subject">{conv.subject}</span>
-                <span className="conv-time">{fmtTime(conv.latestAt || conv.createdAt)}</span>
+        {!loading && !error && filtered.map(conv => {
+          const name = convDisplayName(conv, tab);
+          return (
+            <div
+              key={conv.conversationId}
+              className={`msg-conv-item ${activeId === conv.conversationId ? 'active' : ''} ${conv.unreadCount > 0 ? 'unread' : ''}`}
+              onClick={() => onSelect(conv)}
+            >
+              <div className="conv-avatar">{initials(name)}</div>
+              <div className="conv-info">
+                <div className="conv-top">
+                  {/* PRIMARY LINE: group name or participant names */}
+                  <span className="conv-subject">{name}</span>
+                  <span className="conv-time">{fmtTime(conv.latestAt || conv.createdAt)}</span>
+                </div>
+                <div className="conv-preview">
+                  {/* SUBTITLE: subject in muted italic */}
+                  <span style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
+                    {conv.subject}
+                  </span>
+                </div>
               </div>
-              <div className="conv-preview">
-                {conv.latestSender && <strong>{conv.latestSender}: </strong>}
-                {conv.preview || 'No messages yet.'}
-              </div>
+              {conv.unreadCount > 0 && <span className="conv-unread-dot" />}
             </div>
-            {conv.unreadCount > 0 && <span className="conv-unread-dot" />}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </aside>
   );

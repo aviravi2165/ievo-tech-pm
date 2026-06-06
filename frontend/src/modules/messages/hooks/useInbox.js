@@ -3,21 +3,12 @@ import { messageApi } from '../api/messageApi';
 import { useSocket } from '../context/SocketContext';
 import { useAuth } from '../../auth/AuthContext';
 
-/**
- * Manages the inbox conversation list.
- *
- * Fixes:
- * 1. Archived conversations reappear when a new reply arrives on them.
- * 2. Sender's own messages don't bump unread count in their inbox.
- * 3. Socket handler always calls fetchInbox for unknown/archived convs
- *    so they surface back at the top.
- */
 export function useInbox() {
-  const { socket }  = useSocket();
-  const { user }    = useAuth();
+  const { socket } = useSocket();
+  const { user }   = useAuth();
   const [conversations, setConversations] = useState([]);
-  const [loading, setLoading]             = useState(true);
-  const [error, setError]                 = useState(null);
+  const [loading,       setLoading]       = useState(true);
+  const [error,         setError]         = useState(null);
 
   const fetchInbox = useCallback(async () => {
     try {
@@ -38,28 +29,30 @@ export function useInbox() {
     if (!socket) return;
 
     const handler = (payload) => {
-      // payload: { conversationId, messageId, senderName, senderUserId, subject }
-      const isMine = payload.senderUserId && user?.userId
-        && payload.senderUserId === user.userId;
+      // FIX: Don't bump unreadCount for messages the current user sent
+      const isMine = payload.senderUserId && user?.userId &&
+        String(payload.senderUserId) === String(user.userId);
 
       setConversations((prev) => {
         const exists = prev.find(c => c.conversationId === payload.conversationId);
 
         if (exists) {
-          // Move to top; only bump unread if someone else sent it
           return [
             {
               ...exists,
               latestSender: payload.senderName,
               latestAt:     new Date().toISOString(),
-              unreadCount:  isMine ? (exists.unreadCount || 0) : (exists.unreadCount || 0) + 1,
+              // FIX: only increment unread for messages from others
+              unreadCount: isMine
+                ? (exists.unreadCount || 0)
+                : (exists.unreadCount || 0) + 1,
             },
             ...prev.filter(c => c.conversationId !== payload.conversationId),
           ];
         }
 
-        // Conversation not in list — could be new OR was archived.
-        // Either way fetch fresh so it reappears at top.
+        // Not in list (new conv or was archived) — fetch fresh to get
+        // participantNames and all fields populated correctly
         fetchInbox();
         return prev;
       });

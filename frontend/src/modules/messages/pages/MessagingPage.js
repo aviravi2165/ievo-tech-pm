@@ -69,21 +69,19 @@ export default function MessagingPage({ currentUser }) {
   useEffect(() => {
     if (!socket) return;
     const handler = (payload) => {
-      const isMine = payload.senderUserId && user?.userId
-        && payload.senderUserId === user.userId;
+      const isMine = payload.senderUserId && user?.userId &&
+        String(payload.senderUserId) === String(user.userId);
 
-      if (isMine && tab === 'sent') {
-        // Refresh sent list so newly sent conversation appears immediately
+      // BUG FIX: Always refresh sent when it's our own message,
+      // regardless of which tab is active — so switching to Sent
+      // immediately shows the new conversation without a manual refresh.
+      if (isMine) {
         fetchSent();
       }
-
-      // If a reply arrives on the currently open conversation, keep it active
-      // and let ChatWindow/useThread handle the new message via its own socket.
-      // Nothing to do here — useInbox already handles inbox list updates.
     };
     socket.on('NEW_MESSAGE', handler);
     return () => socket.off('NEW_MESSAGE', handler);
-  }, [socket, user?.userId, tab, fetchSent]);
+  }, [socket, user?.userId, fetchSent]);
 
   // ── Tab change ───────────────────────────────────────────────────────────
   const handleTabChange = (nextTab) => {

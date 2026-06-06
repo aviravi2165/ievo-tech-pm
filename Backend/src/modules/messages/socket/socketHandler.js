@@ -5,14 +5,16 @@ const messageService = require('../services/messageService');
 let io = null;
 
 /**
- * Socket payloads must never include HTML or file data (PRD).
+ * BUG FIX: Added senderUserId to payload so frontend can detect own messages
+ * and NOT increment the unread badge or unread count on sent messages.
  */
 function toNewMessagePayload(payload) {
   return {
     conversationId: payload.conversationId,
-    messageId: payload.messageId,
-    senderName: payload.senderName,
-    subject: payload.subject,
+    messageId:      payload.messageId,
+    senderName:     payload.senderName,
+    senderUserId:   payload.senderUserId,   // ← FIXED: was missing
+    subject:        payload.subject,
   };
 }
 
@@ -27,9 +29,7 @@ function initSocket(httpServer) {
   io.use((socket, next) => {
     try {
       const token = socket.handshake.auth?.token;
-      if (!token) {
-        return next(new Error('Authentication required'));
-      }
+      if (!token) return next(new Error('Authentication required'));
       socket.data.user = verifyToken(token);
       return next();
     } catch {
@@ -43,108 +43,61 @@ function initSocket(httpServer) {
 
     socket.on('join_conversation', async (data = {}) => {
       const conversationId = parseInt(data.conversationId, 10);
-      if (Number.isNaN(conversationId)) {
-        return;
-      }
-
+      if (Number.isNaN(conversationId)) return;
       try {
-        await messageService.assertConversationParticipant(
-          conversationId,
-          userId
-        );
+        await messageService.assertConversationParticipant(conversationId, userId);
         socket.join(`conv:${conversationId}`);
-      } catch {
-        // Ignore unauthorized room joins
-      }
+      } catch { /* ignore unauthorized */ }
     });
 
     socket.on('leave_conversation', (data = {}) => {
       const conversationId = parseInt(data.conversationId, 10);
-      if (!Number.isNaN(conversationId)) {
-        socket.leave(`conv:${conversationId}`);
-      }
+      if (!Number.isNaN(conversationId)) socket.leave(`conv:${conversationId}`);
     });
 
     socket.on('MARK_READ', async (data = {}) => {
-      const messageId = parseInt(data.messageId, 10);
+      const messageId      = parseInt(data.messageId, 10);
       const conversationId = parseInt(data.conversationId, 10);
-      if (Number.isNaN(messageId) || Number.isNaN(conversationId)) {
-        return;
-      }
-
+      if (Number.isNaN(messageId) || Number.isNaN(conversationId)) return;
       try {
-        await messageService.assertConversationParticipant(
-          conversationId,
-          userId
-        );
-
-        const payload = {
+        await messageService.assertConversationParticipant(conversationId, userId);
+        socket.to(`conv:${conversationId}`).emit('MARK_READ', {
           messageId,
           userId,
           readAt: new Date().toISOString(),
-        };
-
-        socket.to(`conv:${conversationId}`).emit('MARK_READ', payload);
-      } catch {
-        // Ignore invalid read broadcasts
-      }
+        });
+      } catch { /* ignore */ }
     });
   });
 
   return io;
 }
 
-/**
- * Broadcasts NEW_MESSAGE to conversation viewers and all participants.
- */
 async function broadcastNewMessage(result) {
-  if (!io || !result) {
-    return;
-  }
+  if (!io || !result) return;
 
-  const payload = toNewMessagePayload(result);
+  const payload        = toNewMessagePayload(result);
   const conversationId = payload.conversationId;
 
+  // Broadcast to anyone currently viewing this conversation thread
   io.to(`conv:${conversationId}`).emit('NEW_MESSAGE', payload);
 
-  const participantIds = await messageService.getParticipantUserIds(
-    conversationId
-  );
+  // Broadcast to every participant's personal inbox room
+  const participantIds = await messageService.getParticipantUserIds(conversationId);
   participantIds.forEach((participantId) => {
     io.to(`user:${participantId}`).emit('NEW_MESSAGE', payload);
   });
 }
 
-/**
- * Broadcasts MARK_READ to others viewing the conversation.
- */
 function broadcastMarkRead({ conversationId, messageId, userId, readAt }) {
-  if (!io) {
-    return;
-  }
-
-  io.to(`conv:${conversationId}`).emit('MARK_READ', {
-    messageId,
-    userId,
-    readAt,
-  });
+  if (!io) return;
+  io.to(`conv:${conversationId}`).emit('MARK_READ', { messageId, userId, readAt });
 }
 
 function closeSocket() {
-  if (io) {
-    io.close();
-    io = null;
-  }
+  if (io) { io.close(); io = null; }
 }
 
-function getIo() {
-  return io;
-}
+function getIo() { return io; }
 
-module.exports = {
-  initSocket,
-  broadcastNewMessage,
-  broadcastMarkRead,
-  closeSocket,
-  getIo,
-};
+module.exports = { initSocket, broadcastNewMessage, broadcastMarkRead, closeSocket, getIo };

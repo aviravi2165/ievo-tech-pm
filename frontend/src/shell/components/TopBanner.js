@@ -9,7 +9,7 @@ export default function TopBanner({ currentUser, activeModule }) {
 
   const initials = displayName
     .split(' ')
-    .map((w) => w[0])
+    .map(w => w[0])
     .join('')
     .slice(0, 2)
     .toUpperCase();
@@ -25,9 +25,10 @@ export default function TopBanner({ currentUser, activeModule }) {
       <p className="erp-topbar-tagline">Design | Demonstrate | Deliver</p>
 
       <div className="erp-topbar-actions">
+        {/* Green dot + "Online" — login status, not user type */}
         <span className="erp-topbar-status">
           <span className="erp-status-dot" />
-          {currentUser?.userType || 'Employee'}
+          Online
         </span>
 
         <button type="button" className="erp-topbar-profile" title={displayName}>

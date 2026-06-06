@@ -1,55 +1,74 @@
 import { useState } from 'react';
 import { groupApi } from '../api/groupApi';
+import RecipientPicker from './RecipientPicker';
 
 /**
  * GroupManager
- * Props:
- *   groups   — from useGroups
- *   loading
- *   onCreate(name)
- *   onDelete(groupId)
- *   onRefetch()
+ *
+ * FIX: Replaced raw UUID text input with RecipientPicker (same user-search
+ * dropdown used in ComposeModal). Users search by name/email — no UUID typing.
  */
-export default function GroupManager({ groups = [], loading, onCreate, onDelete, onRefetch }) {
-  const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [error, setError] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [managingGroup, setManagingGroup] = useState(null); // { groupId, groupName }
-  const [members, setMembers] = useState([]);
+export default function GroupManager({ groups = [], loading, onCreate, onDelete }) {
+  const [creating,       setCreating]       = useState(false);
+  const [newName,        setNewName]        = useState('');
+  const [createError,    setCreateError]    = useState('');
+  const [saving,         setSaving]         = useState(false);
+  const [managingGroup,  setManagingGroup]  = useState(null);
+  const [members,        setMembers]        = useState([]);
   const [membersLoading, setMembersLoading] = useState(false);
 
+  // Add-members state — uses RecipientPicker (user objects, not raw IDs)
+  const [selectedUsers, setSelectedUsers] = useState([]);
+  const [addError,      setAddError]      = useState('');
+  const [addSaving,     setAddSaving]     = useState(false);
+
   const handleCreate = async () => {
-    if (!newName.trim()) { setError('Group name is required.'); return; }
-    setSaving(true);
-    setError('');
+    if (!newName.trim()) { setCreateError('Group name is required.'); return; }
+    setSaving(true); setCreateError('');
     try {
       await onCreate(newName.trim());
-      setNewName('');
-      setCreating(false);
+      setNewName(''); setCreating(false);
     } catch {
-      setError('Failed to create group. Try again.');
-    } finally {
-      setSaving(false);
-    }
+      setCreateError('Failed to create group. Try again.');
+    } finally { setSaving(false); }
   };
 
   const openManage = async (group) => {
     setManagingGroup(group);
     setMembersLoading(true);
+    setSelectedUsers([]); setAddError('');
     try {
       const data = await groupApi.getMembers(group.groupId);
       setMembers(data || []);
-    } finally {
-      setMembersLoading(false);
-    }
+    } finally { setMembersLoading(false); }
   };
 
   const handleRemoveMember = async (userId) => {
-    await groupApi.removeMember(managingGroup.groupId, userId);
-    setMembers(prev => prev.filter(m => m.userId !== userId));
+    try {
+      await groupApi.removeMember(managingGroup.groupId, userId);
+      setMembers(prev => prev.filter(m => m.userId !== userId));
+    } catch {
+      setAddError('Failed to remove member.');
+    }
   };
 
+  const handleAddMembers = async () => {
+    if (!selectedUsers.length) { setAddError('Select at least one user.'); return; }
+    // RecipientPicker gives { id, label, type } — extract user IDs only
+    const userIds = selectedUsers.filter(u => u.type === 'user').map(u => u.id);
+    if (!userIds.length) { setAddError('Only users can be added (not groups).'); return; }
+
+    setAddSaving(true); setAddError('');
+    try {
+      const updated = await groupApi.addMembers(managingGroup.groupId, userIds);
+      setMembers(updated || []);
+      setSelectedUsers([]);
+    } catch (err) {
+      setAddError(err?.response?.data?.error || 'Failed to add members.');
+    } finally { setAddSaving(false); }
+  };
+
+  // ── Manage panel ──────────────────────────────────────────────────────────
   if (managingGroup) {
     return (
       <div className="groups-panel">
@@ -68,6 +87,35 @@ export default function GroupManager({ groups = [], loading, onCreate, onDelete,
           <h3 style={{ margin: 0 }}>{managingGroup.groupName}</h3>
         </div>
 
+        {/* Add members via search */}
+        <div style={{
+          background: 'var(--charcoal)', border: '1px solid var(--divider)',
+          borderRadius: 'var(--radius-lg)', padding: 14, marginBottom: 20,
+        }}>
+          <label className="field-label" style={{ marginBottom: 8 }}>Add Members</label>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+            <div style={{ flex: 1 }}>
+              <RecipientPicker
+                value={selectedUsers}
+                onChange={setSelectedUsers}
+                groups={[]}
+              />
+            </div>
+            <button
+              className="btn btn-primary"
+              style={{ padding: '9px 16px', fontSize: 12, whiteSpace: 'nowrap', marginTop: 1 }}
+              onClick={handleAddMembers}
+              disabled={addSaving || !selectedUsers.length}
+            >
+              {addSaving ? 'Adding…' : '+ Add'}
+            </button>
+          </div>
+          {addError && (
+            <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 6 }}>{addError}</div>
+          )}
+        </div>
+
+        {/* Members list */}
         <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
           Members ({members.length})
         </div>
@@ -89,11 +137,11 @@ export default function GroupManager({ groups = [], loading, onCreate, onDelete,
               fontSize: 13, fontWeight: 600, color: 'var(--gold)',
               fontFamily: 'var(--font-display)',
             }}>
-              {`${m.firstName?.[0] || ''}${m.lastName?.[0] || ''}`.toUpperCase()}
+              {`${m.firstName?.[0] || ''}${m.lastName?.[0] || ''}`.toUpperCase() || '?'}
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13, color: 'var(--light)' }}>{m.firstName} {m.lastName}</div>
-              <div style={{ fontSize: 11, color: 'var(--muted)' }}>{m.email || m.department || ''}</div>
+              <div style={{ fontSize: 11, color: 'var(--muted)' }}>{m.email || ''}</div>
             </div>
             <button
               className="icon-btn danger"
@@ -108,12 +156,13 @@ export default function GroupManager({ groups = [], loading, onCreate, onDelete,
         ))}
 
         {!membersLoading && members.length === 0 && (
-          <p style={{ color: 'var(--muted)', fontSize: 13 }}>No members in this group yet.</p>
+          <p style={{ color: 'var(--muted)', fontSize: 13 }}>No members yet. Add some above.</p>
         )}
       </div>
     );
   }
 
+  // ── Groups list ───────────────────────────────────────────────────────────
   return (
     <div className="groups-panel">
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 20 }}>
@@ -142,9 +191,9 @@ export default function GroupManager({ groups = [], loading, onCreate, onDelete,
             onKeyDown={e => e.key === 'Enter' && handleCreate()}
             autoFocus
           />
-          {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 8 }}>{error}</div>}
+          {createError && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 8 }}>{createError}</div>}
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button className="btn btn-ghost" onClick={() => { setCreating(false); setNewName(''); setError(''); }}>
+            <button className="btn btn-ghost" onClick={() => { setCreating(false); setNewName(''); setCreateError(''); }}>
               Cancel
             </button>
             <button className="btn btn-primary" onClick={handleCreate} disabled={saving}>
