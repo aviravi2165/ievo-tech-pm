@@ -1,3 +1,17 @@
+/**
+ * MessagingPage.js
+ *
+ * FIX: Wires the new onOpenConversation prop for GroupManager.
+ * When a user clicks the "Open group chat" button on a group card,
+ * GroupManager calls onOpenConversation(conv).  This handler:
+ *   1. Switches the active tab to 'inbox'.
+ *   2. Sets the conversation as the active (selected) thread.
+ *   3. Decrements the unread badge if the conversation has unread messages.
+ *
+ * This means the user lands directly in the chat thread for that group
+ * without having to hunt through the inbox list.
+ */
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 import MessageTabBar   from '../components/MessageTabBar';
 import InboxSidebar    from '../components/InboxSidebar';
@@ -16,8 +30,8 @@ function useToast() {
   const [toasts, setToasts] = useState([]);
   const add = (msg, type = 'info') => {
     const id = Date.now();
-    setToasts(prev => [...prev, { id, msg, type }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
+    setToasts((prev) => [...prev, { id, msg, type }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3500);
   };
   return { toasts, toast: add };
 }
@@ -40,7 +54,7 @@ export default function MessagingPage({ currentUser }) {
   const layoutRef = useRef(null);
   const { toasts, toast } = useToast();
 
-  // ── Responsive layout ───────────────────────────────────────────────────
+  // ── Responsive layout ────────────────────────────────────────────────────
   useEffect(() => {
     const el = layoutRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
@@ -51,57 +65,66 @@ export default function MessagingPage({ currentUser }) {
     return () => observer.disconnect();
   }, []);
 
-  // ── Load sent tab ────────────────────────────────────────────────────────
+  // ── Load sent tab ─────────────────────────────────────────────────────────
   const fetchSent = useCallback(() => {
     setSentLoading(true);
     setSentError(null);
-    messageApi.getSent()
-      .then(data => setSentConvs(data.conversations || data || []))
-      .catch(err  => setSentError(err.message || 'Failed to load sent mail'))
-      .finally(() => setSentLoading(false));
+    messageApi
+      .getSent()
+      .then((data) => setSentConvs(data.conversations || data || []))
+      .catch((err)  => setSentError(err.message || 'Failed to load sent mail'))
+      .finally(()   => setSentLoading(false));
   }, []);
 
   useEffect(() => {
     if (tab === 'sent') fetchSent();
   }, [tab, fetchSent]);
 
-  // ── Socket: update sent list when current user sends a message ───────────
+  // ── Socket: keep sent list fresh when current user sends ─────────────────
   useEffect(() => {
     if (!socket) return;
     const handler = (payload) => {
-      const isMine = payload.senderUserId && user?.userId &&
+      const isMine =
+        payload.senderUserId &&
+        user?.userId &&
         String(payload.senderUserId) === String(user.userId);
-
-      // BUG FIX: Always refresh sent when it's our own message,
-      // regardless of which tab is active — so switching to Sent
-      // immediately shows the new conversation without a manual refresh.
-      if (isMine) {
-        fetchSent();
-      }
+      if (isMine) fetchSent();
     };
     socket.on('NEW_MESSAGE', handler);
     return () => socket.off('NEW_MESSAGE', handler);
   }, [socket, user?.userId, fetchSent]);
 
-  // ── Tab change ───────────────────────────────────────────────────────────
+  // ── Tab change ────────────────────────────────────────────────────────────
   const handleTabChange = (nextTab) => {
     setTab(nextTab);
     setActiveConv(null);
   };
 
-  // ── Derived display state ────────────────────────────────────────────────
+  // ── Derived display state ─────────────────────────────────────────────────
   const isMailTab        = tab === 'inbox' || tab === 'sent';
   const displayedConvs   = tab === 'sent' ? sentConvs   : conversations;
   const displayedLoading = tab === 'sent' ? sentLoading  : loading;
   const listError        = tab === 'sent' ? sentError    : inboxError;
 
-  // ── Select conversation ──────────────────────────────────────────────────
+  // ── Select conversation ───────────────────────────────────────────────────
   const handleSelectConv = (conv) => {
     setActiveConv(conv);
     if (conv.unreadCount > 0) decrement(conv.unreadCount);
   };
 
-  // ── Archive ──────────────────────────────────────────────────────────────
+  // ── FIX: Open group thread from GroupManager ──────────────────────────────
+  // GroupManager calls this when the user clicks the chat-bubble icon on a
+  // group card.  We switch to inbox and highlight the conversation.
+  const handleOpenConversation = useCallback((conv) => {
+    // Ensure inbox is loaded and switch to it
+    setTab('inbox');
+    setActiveConv(conv);
+    if (conv.unreadCount > 0) decrement(conv.unreadCount);
+    // Refresh inbox so the conversation appears in the list if not already there
+    refetch();
+  }, [decrement, refetch]);
+
+  // ── Archive ───────────────────────────────────────────────────────────────
   const handleArchive = async () => {
     if (!activeConv) return;
     try {
@@ -113,14 +136,14 @@ export default function MessagingPage({ currentUser }) {
     }
   };
 
-  // ── After sending a new message ──────────────────────────────────────────
+  // ── After sending a new message ───────────────────────────────────────────
   const handleSent = () => {
-    refetch();           // refresh inbox so sender sees it there too
+    refetch();
     if (tab === 'sent') fetchSent();
     toast('Message sent.', 'success');
   };
 
-  // ── Layout flags ─────────────────────────────────────────────────────────
+  // ── Layout flags ──────────────────────────────────────────────────────────
   const showList      = isMailTab && (!activeConv || !isNarrow);
   const showThread    = isMailTab && !!activeConv;
   const showGroups    = tab === 'groups';
@@ -174,11 +197,12 @@ export default function MessagingPage({ currentUser }) {
               loading={groupsLoading}
               onCreate={createGroup}
               onDelete={deleteGroup}
+              onOpenConversation={handleOpenConversation}  
             />
           </main>
         )}
 
-        {/* Empty state — wide layout, nothing selected */}
+        {/* Empty state */}
         {showEmptyHint && (
           <main className="msg-main">
             <div className="msg-empty">
@@ -213,7 +237,7 @@ export default function MessagingPage({ currentUser }) {
       {/* Toasts */}
       {toasts.length > 0 && (
         <div className="toast-container">
-          {toasts.map(t => (
+          {toasts.map((t) => (
             <div key={t.id} className={`toast ${t.type}`}>{t.msg}</div>
           ))}
         </div>

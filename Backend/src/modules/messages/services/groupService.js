@@ -1,6 +1,11 @@
 /**
  * groupService.js — PostgreSQL version
- * Tables: comm_groups, comm_group_members, auth_users
+ * Tables: comm_groups, comm_group_members, auth_users, comm_conversations
+ *
+ * CHANGES:
+ *  1. NEW: getLatestGroupConversation(groupId, userId) — returns the most recent
+ *     comm_conversation row that has group_id = groupId AND has the requesting
+ *     user as a participant.  Used by the Groups panel "open thread" feature.
  */
 
 const { getPool } = require('../../../config/db');
@@ -49,9 +54,6 @@ async function assertGroupMember(groupId, userId) {
 
 // ── List ──────────────────────────────────────────────────────────────────────
 
-/**
- * Lists active groups the user created or belongs to.
- */
 async function listGroupsForUser(userId) {
   const pool = getPool();
   const { rows } = await pool.query(
@@ -77,9 +79,6 @@ async function listGroupsForUser(userId) {
 
 // ── Create ────────────────────────────────────────────────────────────────────
 
-/**
- * Creates a group and adds the creator as a member.
- */
 async function createGroup(userId, groupName) {
   const pool = getPool();
   const client = await pool.connect();
@@ -132,9 +131,6 @@ async function getGroupMembers(groupId, userId) {
   return rows;
 }
 
-/**
- * Expands group IDs to distinct member user IDs.
- */
 async function getMemberUserIdsForGroups(groupIds = []) {
   if (!groupIds.length) return [];
   const pool = getPool();
@@ -203,6 +199,58 @@ async function softDeleteGroup(groupId, userId) {
   return true;
 }
 
+// ── NEW: Get latest conversation for a group ──────────────────────────────────
+
+/**
+ * Returns the most recent conversation that is linked to groupId AND in which
+ * the requesting userId is a participant.
+ *
+ * The Groups panel calls this when a user clicks a group card so they are taken
+ * directly into the existing inbox thread instead of having to find it manually.
+ *
+ * Returns:
+ *   {
+ *     conversationId, subject, allowReply, lastMessageAt, createdAt,
+ *     unreadCount, groupName
+ *   }
+ *   or null if no conversation exists yet.
+ */
+async function getLatestGroupConversation(groupId, userId) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT
+       c.conversation_id   AS "conversationId",
+       c.subject,
+       c.allow_reply       AS "allowReply",
+       c.last_message_at   AS "lastMessageAt",
+       c.created_at        AS "createdAt",
+       g.group_name        AS "groupName",
+       (
+         SELECT COUNT(*)::int
+         FROM comm_messages um
+         WHERE um.conversation_id = c.conversation_id
+           AND um.is_deleted = FALSE
+           AND um.sender_id <> $2::uuid
+           AND NOT EXISTS (
+             SELECT 1 FROM comm_read_receipts rr
+             WHERE rr.message_id = um.message_id AND rr.user_id = $2::uuid
+           )
+       ) AS "unreadCount"
+     FROM comm_conversations c
+     INNER JOIN comm_participants p
+       ON p.conversation_id = c.conversation_id
+       AND p.user_id = $2::uuid
+       AND p.is_deleted = FALSE
+     INNER JOIN comm_groups g ON g.group_id = c.group_id
+     WHERE c.group_id = $1
+       AND c.is_deleted = FALSE
+     ORDER BY c.last_message_at DESC
+     LIMIT 1`,
+    [groupId, userId]
+  );
+  return rows[0] || null;
+}
+
 module.exports = {
   listGroupsForUser,
   createGroup,
@@ -212,4 +260,5 @@ module.exports = {
   removeMember,
   softDeleteGroup,
   assertGroupMember,
+  getLatestGroupConversation,
 };

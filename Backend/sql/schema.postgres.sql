@@ -236,3 +236,37 @@ CREATE INDEX IF NOT EXISTS idx_pm_tasks_activity
   ON pm_tasks(activity_id);
 CREATE INDEX IF NOT EXISTS idx_pm_audit_project
   ON pm_audit_log(project_id, changed_at DESC);
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Migration: file storage enhancements
+-- Run this script once against your existing database.
+-- It is safe to run multiple times (uses IF NOT EXISTS / IF NOT COLUMN).
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- 1. Add storage_mode column to comm_attachments so we know whether
+--    the file bytes live on disk or in Postgres.
+--    Existing rows default to 'disk' (the original behaviour).
+ALTER TABLE comm_attachments
+  ADD COLUMN IF NOT EXISTS storage_mode VARCHAR(10) NOT NULL DEFAULT 'disk';
+
+-- 2. Blob table for FILE_STORAGE=postgres mode.
+--    Stores file bytes as BYTEA inside Postgres.
+--    Suitable for files up to ~1 GB; for larger files consider pg Large Objects
+--    or an S3-compatible object store.
+CREATE TABLE IF NOT EXISTS comm_attachment_blobs (
+  attachment_id INT     PRIMARY KEY
+                        REFERENCES comm_attachments(attachment_id)
+                        ON DELETE CASCADE,
+  blob          BYTEA   NOT NULL
+);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- How to enable postgres storage:
+--   In Backend/.env set:
+--     FILE_STORAGE=postgres
+--
+--   To use disk storage (default — existing behaviour):
+--     FILE_STORAGE=disk
+--   or leave the variable unset.
+-- ─────────────────────────────────────────────────────────────────────────────

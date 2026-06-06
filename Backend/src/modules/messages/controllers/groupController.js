@@ -1,9 +1,24 @@
+/**
+ * groupController.js
+ *
+ * FIXES:
+ *  1. removeMember() — was calling parseInt() on req.params.userId, which is a
+ *     UUID string.  parseInt('550e8400-...') === 550, so the DELETE always
+ *     targeted the wrong user or silently no-oped.  Now the raw UUID string is
+ *     passed directly to groupService.removeMember().
+ *
+ *  2. NEW: getGroupConversation() — returns the most-recent conversation that
+ *     belongs to this group (group_id column on comm_conversations), so the
+ *     frontend can open an existing group chat thread directly from the Groups
+ *     panel.  Returns { conversationId } or 404 when no thread exists yet.
+ */
+
 const groupService = require('../services/groupService');
 
 function handleError(res, err) {
   const status = err.statusCode || 500;
   return res.status(status).json({
-    error: err.message,
+    error:   err.message,
     message: err.message,
   });
 }
@@ -53,11 +68,7 @@ async function addMembers(req, res) {
     if (userIds.length === 0) {
       return res.status(400).json({ error: 'userIds array is required' });
     }
-    const members = await groupService.addMembers(
-      groupId,
-      req.user.userId,
-      userIds
-    );
+    const members = await groupService.addMembers(groupId, req.user.userId, userIds);
     return res.json(members);
   } catch (err) {
     return handleError(res, err);
@@ -67,15 +78,22 @@ async function addMembers(req, res) {
 async function removeMember(req, res) {
   try {
     const groupId = parseInt(req.params.groupId, 10);
-    const memberUserId = parseInt(req.params.userId, 10);
-    if (Number.isNaN(groupId) || Number.isNaN(memberUserId)) {
-      return res.status(400).json({ error: 'Invalid id' });
+    if (Number.isNaN(groupId)) {
+      return res.status(400).json({ error: 'Invalid group id' });
     }
+
+    // FIX: userId is a UUID string — do NOT parseInt() it.
+    const memberUserId = req.params.userId;
+    if (!memberUserId || typeof memberUserId !== 'string' || !memberUserId.trim()) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+
     const removed = await groupService.removeMember(
       groupId,
       req.user.userId,
       memberUserId
     );
+
     if (!removed) {
       return res.status(404).json({ error: 'Member not found' });
     }
@@ -98,6 +116,31 @@ async function remove(req, res) {
   }
 }
 
+/**
+ * NEW: GET /api/groups/:groupId/conversation
+ * Returns the most-recent conversation for this group so the frontend can
+ * navigate the user straight into the inbox thread when they click a group.
+ */
+async function getGroupConversation(req, res) {
+  try {
+    const groupId = parseInt(req.params.groupId, 10);
+    if (Number.isNaN(groupId)) {
+      return res.status(400).json({ error: 'Invalid group id' });
+    }
+
+    // Verify the requesting user is a member/admin of the group
+    await groupService.assertGroupMember(groupId, req.user.userId);
+
+    const conv = await groupService.getLatestGroupConversation(groupId, req.user.userId);
+    if (!conv) {
+      return res.status(404).json({ error: 'No conversation found for this group' });
+    }
+    return res.json(conv);
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
 module.exports = {
   list,
   create,
@@ -105,4 +148,5 @@ module.exports = {
   addMembers,
   removeMember,
   remove,
+  getGroupConversation,
 };
