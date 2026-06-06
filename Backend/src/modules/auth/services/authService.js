@@ -1,16 +1,13 @@
 const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
+const jwt    = require('jsonwebtoken');
 const { getPool } = require('../../../config/db');
 
-/**
- * Validates credentials against auth_users.
- * Returns a signed JWT and user info on success.
- */
+// ── Login ─────────────────────────────────────────────────────────────────────
+
 async function login({ username, password }) {
   if (!username || !password) {
     const err = new Error('Username and password are required');
-    err.statusCode = 400;
-    throw err;
+    err.statusCode = 400; throw err;
   }
   const pool = getPool();
   const { rows } = await pool.query(
@@ -23,15 +20,11 @@ async function login({ username, password }) {
   );
   const user = rows[0];
   if (!user || !user.is_active || !user.allow_login) {
-    const err = new Error('Invalid credentials');
-    err.statusCode = 401;
-    throw err;
+    const err = new Error('Invalid credentials'); err.statusCode = 401; throw err;
   }
   const valid = await bcrypt.compare(password, user.password_hash);
   if (!valid) {
-    const err = new Error('Invalid credentials');
-    err.statusCode = 401;
-    throw err;
+    const err = new Error('Invalid credentials'); err.statusCode = 401; throw err;
   }
   const payload = {
     userId:      user.user_id,
@@ -59,9 +52,11 @@ async function login({ username, password }) {
   };
 }
 
-/**
- * Returns basic profile for the logged-in user.
- */
+// ── Get me — FIX: now returns camelCase matching login response ───────────────
+// The old version returned raw snake_case from the DB query.
+// This caused user.userId to be undefined on page reload, breaking all
+// UUID-based checks (send, reply, read receipts) for every user.
+
 async function getMe(userId) {
   const pool = getPool();
   const { rows } = await pool.query(
@@ -72,30 +67,31 @@ async function getMe(userId) {
     [userId]
   );
   if (!rows[0]) {
-    const err = new Error('User not found');
-    err.statusCode = 404;
-    throw err;
+    const err = new Error('User not found'); err.statusCode = 404; throw err;
   }
-  return rows[0];
+  const u = rows[0];
+  // Return camelCase so AuthContext.user shape is identical whether
+  // the user just logged in OR reloaded the page.
+  return {
+    userId:         u.user_id,
+    username:       u.username,
+    firstName:      u.first_name,
+    lastName:       u.last_name,
+    email:          u.email,
+    userType:       u.user_type,
+    profilePicture: u.profile_picture,
+    deptId:         u.dept_id,
+  };
 }
 
-/**
- * Search users by name or username for RecipientPicker.
- * Excludes the requesting user from results.
- * Returns: [{ userId, firstName, lastName, email, username, userType }]
- */
+// ── Search users for RecipientPicker ─────────────────────────────────────────
+
 async function searchUsers(q, limit = 10, excludeUserId = null) {
   const pool = getPool();
-
-  // If empty query return recent/all active users up to limit
   if (!q) {
     const { rows } = await pool.query(
-      `SELECT user_id AS "userId",
-              first_name AS "firstName",
-              last_name  AS "lastName",
-              email,
-              username,
-              user_type  AS "userType"
+      `SELECT user_id AS "userId", first_name AS "firstName", last_name AS "lastName",
+              email, username, user_type AS "userType"
        FROM auth_users
        WHERE is_active = TRUE
          AND ($1::uuid IS NULL OR user_id != $1::uuid)
@@ -105,15 +101,10 @@ async function searchUsers(q, limit = 10, excludeUserId = null) {
     );
     return rows;
   }
-
   const search = `%${q.toLowerCase()}%`;
   const { rows } = await pool.query(
-    `SELECT user_id AS "userId",
-            first_name AS "firstName",
-            last_name  AS "lastName",
-            email,
-            username,
-            user_type  AS "userType"
+    `SELECT user_id AS "userId", first_name AS "firstName", last_name AS "lastName",
+            email, username, user_type AS "userType"
      FROM auth_users
      WHERE is_active = TRUE
        AND ($1::uuid IS NULL OR user_id != $1::uuid)

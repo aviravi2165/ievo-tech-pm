@@ -11,7 +11,6 @@ import { useSocket }      from '../context/SocketContext';
 import { useAuth }        from '../../auth/AuthContext';
 import { messageApi }     from '../api/messageApi';
 
-// ── Toast ─────────────────────────────────────────────────────────────────────
 function useToast() {
   const [toasts, setToasts] = useState([]);
   const add = (msg, type = 'info') => {
@@ -22,7 +21,6 @@ function useToast() {
   return { toasts, toast: add };
 }
 
-// ── Page ──────────────────────────────────────────────────────────────────────
 export default function MessagingPage({ currentUser }) {
   const { conversations, loading, error: inboxError, refetch, archiveConversation } = useInbox();
   const { count: unreadCount, decrement } = useUnreadCount();
@@ -40,7 +38,7 @@ export default function MessagingPage({ currentUser }) {
   const layoutRef = useRef(null);
   const { toasts, toast } = useToast();
 
-  // ── Responsive layout ───────────────────────────────────────────────────
+  // ── Responsive layout ─────────────────────────────────────────────────────
   useEffect(() => {
     const el = layoutRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
@@ -51,7 +49,7 @@ export default function MessagingPage({ currentUser }) {
     return () => observer.disconnect();
   }, []);
 
-  // ── Load sent tab ────────────────────────────────────────────────────────
+  // ── Load sent tab ─────────────────────────────────────────────────────────
   const fetchSent = useCallback(() => {
     setSentLoading(true);
     setSentError(null);
@@ -65,45 +63,49 @@ export default function MessagingPage({ currentUser }) {
     if (tab === 'sent') fetchSent();
   }, [tab, fetchSent]);
 
-  // ── Socket: update sent list when current user sends a message ───────────
+  // ── Socket: refresh sent when current user sends ──────────────────────────
   useEffect(() => {
     if (!socket) return;
     const handler = (payload) => {
       const isMine = payload.senderUserId && user?.userId &&
         String(payload.senderUserId) === String(user.userId);
-
-      // BUG FIX: Always refresh sent when it's our own message,
-      // regardless of which tab is active — so switching to Sent
-      // immediately shows the new conversation without a manual refresh.
-      if (isMine) {
-        fetchSent();
-      }
+      if (isMine) fetchSent();
     };
     socket.on('NEW_MESSAGE', handler);
     return () => socket.off('NEW_MESSAGE', handler);
   }, [socket, user?.userId, fetchSent]);
 
-  // ── Tab change ───────────────────────────────────────────────────────────
+  // ── Tab change ────────────────────────────────────────────────────────────
   const handleTabChange = (nextTab) => {
     setTab(nextTab);
     setActiveConv(null);
   };
 
-  // ── Derived display state ────────────────────────────────────────────────
+  // ── Derived display state ─────────────────────────────────────────────────
   const isMailTab        = tab === 'inbox' || tab === 'sent';
   const displayedConvs   = tab === 'sent' ? sentConvs   : conversations;
   const displayedLoading = tab === 'sent' ? sentLoading  : loading;
   const listError        = tab === 'sent' ? sentError    : inboxError;
 
-  // ── Select conversation ──────────────────────────────────────────────────
+  // ── Select conversation ───────────────────────────────────────────────────
   const handleSelectConv = (conv) => {
     setActiveConv(conv);
-    // FIX: pass conversationId so useUnreadCount can remove it from the
-    // unread set — this keeps the badge count accurate (conversation-level).
     if (conv.unreadCount > 0) decrement(conv.conversationId);
   };
 
-  // ── Archive ──────────────────────────────────────────────────────────────
+  // ── Open group conversation from Groups tab ───────────────────────────────
+  // Called by GroupManager when user clicks "Open Chat" on a group card.
+  // Switches to Inbox tab and opens the conversation.
+  const handleOpenGroupConversation = useCallback((conv) => {
+    // Refresh inbox so the conversation appears in the list
+    refetch();
+    // Switch to inbox tab and open the conversation
+    setTab('inbox');
+    setActiveConv(conv);
+    if (conv.unreadCount > 0) decrement(conv.conversationId);
+  }, [refetch, decrement]);
+
+  // ── Archive ───────────────────────────────────────────────────────────────
   const handleArchive = async () => {
     if (!activeConv) return;
     try {
@@ -115,14 +117,14 @@ export default function MessagingPage({ currentUser }) {
     }
   };
 
-  // ── After sending a new message ──────────────────────────────────────────
+  // ── After sending ─────────────────────────────────────────────────────────
   const handleSent = () => {
-    refetch();           // refresh inbox so sender sees it there too
-    if (tab === 'sent') fetchSent();
+    refetch();
+    fetchSent();
     toast('Message sent.', 'success');
   };
 
-  // ── Layout flags ─────────────────────────────────────────────────────────
+  // ── Layout flags ──────────────────────────────────────────────────────────
   const showList      = isMailTab && (!activeConv || !isNarrow);
   const showThread    = isMailTab && !!activeConv;
   const showGroups    = tab === 'groups';
@@ -140,7 +142,6 @@ export default function MessagingPage({ currentUser }) {
         ref={layoutRef}
         className={`msg-layout ${isNarrow ? 'msg-layout--stacked' : 'msg-layout--split'}`}
       >
-        {/* Conversation list — inbox or sent */}
         {showList && (
           <InboxSidebar
             hideTabs
@@ -156,7 +157,6 @@ export default function MessagingPage({ currentUser }) {
           />
         )}
 
-        {/* Active thread */}
         {showThread && (
           <main className="msg-main msg-main--full">
             <ChatWindow
@@ -168,7 +168,6 @@ export default function MessagingPage({ currentUser }) {
           </main>
         )}
 
-        {/* Groups panel */}
         {showGroups && (
           <main className="msg-main msg-main--full">
             <GroupManager
@@ -176,11 +175,11 @@ export default function MessagingPage({ currentUser }) {
               loading={groupsLoading}
               onCreate={createGroup}
               onDelete={deleteGroup}
+              onOpenConversation={handleOpenGroupConversation}
             />
           </main>
         )}
 
-        {/* Empty state — wide layout, nothing selected */}
         {showEmptyHint && (
           <main className="msg-main">
             <div className="msg-empty">
@@ -203,7 +202,6 @@ export default function MessagingPage({ currentUser }) {
         )}
       </div>
 
-      {/* Compose modal */}
       {composeOpen && (
         <ComposeModal
           onClose={() => setComposeOpen(false)}
@@ -212,7 +210,6 @@ export default function MessagingPage({ currentUser }) {
         />
       )}
 
-      {/* Toasts */}
       {toasts.length > 0 && (
         <div className="toast-container">
           {toasts.map(t => (

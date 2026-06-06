@@ -1,21 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { messageApi } from '../api/messageApi';
-import { useSocket } from '../context/SocketContext';
-import { useAuth } from '../../auth/AuthContext';
-import { useUnreadCount } from './useUnreadCount';
+import { useSocket }  from '../context/SocketContext';
+import { useAuth }    from '../../auth/AuthContext';
 
-/**
- * useInbox
- *
- * FIX: After loading conversations, calls syncUnreadConvIds() so useUnreadCount
- * knows which conversation IDs are already contributing to the badge.
- * This prevents the socket handler in useUnreadCount from double-counting
- * conversations that are already marked unread in the list.
- */
 export function useInbox() {
   const { socket } = useSocket();
   const { user }   = useAuth();
-  const { syncUnreadConvIds } = useUnreadCount();
 
   const [conversations, setConversations] = useState([]);
   const [loading,       setLoading]       = useState(true);
@@ -25,22 +15,14 @@ export function useInbox() {
     try {
       setLoading(true);
       const data = await messageApi.getInbox();
-      const convs = data.conversations || data || [];
-      setConversations(convs);
+      setConversations(data.conversations || data || []);
       setError(null);
-
-      // FIX: Tell useUnreadCount which conv IDs are already unread so socket
-      // events for those convos don't bump the badge a second time.
-      const unreadIds = convs
-        .filter((c) => (c.unreadCount || 0) > 0)
-        .map((c) => c.conversationId);
-      syncUnreadConvIds(unreadIds);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, [syncUnreadConvIds]);
+  }, []);
 
   useEffect(() => { fetchInbox(); }, [fetchInbox]);
 
@@ -54,28 +36,24 @@ export function useInbox() {
         String(payload.senderUserId) === String(user.userId);
 
       setConversations((prev) => {
-        const exists = prev.find(
-          (c) => c.conversationId === payload.conversationId
-        );
+        const exists = prev.find(c => c.conversationId === payload.conversationId);
 
         if (exists) {
+          // Move to top; only bump unread for others' messages
           return [
             {
               ...exists,
               latestSender: payload.senderName,
-              latestAt: new Date().toISOString(),
-              // Only bump per-conversation unread counter for others' messages
-              unreadCount: isMine
+              latestAt:     new Date().toISOString(),
+              unreadCount:  isMine
                 ? (exists.unreadCount || 0)
                 : (exists.unreadCount || 0) + 1,
             },
-            ...prev.filter(
-              (c) => c.conversationId !== payload.conversationId
-            ),
+            ...prev.filter(c => c.conversationId !== payload.conversationId),
           ];
         }
 
-        // New conversation not yet in list — fetch fresh
+        // Not in list (new or was archived) — fetch fresh so it appears
         fetchInbox();
         return prev;
       });
@@ -87,16 +65,8 @@ export function useInbox() {
 
   const archiveConversation = useCallback(async (conversationId) => {
     await messageApi.archive(conversationId);
-    setConversations((prev) =>
-      prev.filter((c) => c.conversationId !== conversationId)
-    );
+    setConversations(prev => prev.filter(c => c.conversationId !== conversationId));
   }, []);
 
-  return {
-    conversations,
-    loading,
-    error,
-    refetch: fetchInbox,
-    archiveConversation,
-  };
+  return { conversations, loading, error, refetch: fetchInbox, archiveConversation };
 }
