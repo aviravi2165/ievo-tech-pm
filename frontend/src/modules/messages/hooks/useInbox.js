@@ -26,12 +26,12 @@ export function useInbox() {
 
   useEffect(() => { fetchInbox(); }, [fetchInbox]);
 
+  // Socket: real-time inbox updates
   useEffect(() => {
     if (!socket) return;
 
     const handler = (payload) => {
-      const isMine =
-        payload.senderUserId &&
+      const isMine = payload.senderUserId &&
         user?.userId &&
         String(payload.senderUserId) === String(user.userId);
 
@@ -39,13 +39,13 @@ export function useInbox() {
         const exists = prev.find(c => c.conversationId === payload.conversationId);
 
         if (exists) {
-          // Move to top; only bump unread for others' messages
           return [
             {
               ...exists,
               latestSender: payload.senderName,
               latestAt:     new Date().toISOString(),
-              unreadCount:  isMine
+              // Only bump unread dot for others' messages
+              unreadCount: isMine
                 ? (exists.unreadCount || 0)
                 : (exists.unreadCount || 0) + 1,
             },
@@ -53,7 +53,7 @@ export function useInbox() {
           ];
         }
 
-        // Not in list (new or was archived) — fetch fresh so it appears
+        // Conversation not in list (new or was archived) — fetch fresh
         fetchInbox();
         return prev;
       });
@@ -68,5 +68,23 @@ export function useInbox() {
     setConversations(prev => prev.filter(c => c.conversationId !== conversationId));
   }, []);
 
-  return { conversations, loading, error, refetch: fetchInbox, archiveConversation };
+  /**
+   * Called when user opens a conversation — clears the unread dot immediately
+   * without waiting for a server round-trip.
+   */
+  const clearUnreadDot = useCallback((conversationId) => {
+    setConversations(prev =>
+      prev.map(c => c.conversationId === conversationId
+        ? { ...c, unreadCount: 0 }
+        : c
+      )
+    );
+  }, []);
+
+  return {
+    conversations, loading, error,
+    refetch: fetchInbox,
+    archiveConversation,
+    clearUnreadDot,
+  };
 }

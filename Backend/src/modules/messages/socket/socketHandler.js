@@ -61,10 +61,18 @@ function initSocket(httpServer) {
       if (Number.isNaN(messageId) || Number.isNaN(conversationId)) return;
       try {
         await messageService.assertConversationParticipant(conversationId, userId);
+        // Fetch userName so the "Seen by" label renders without a DB round-trip on the client
+        const pool = require('../../../config/db').getPool();
+        const { rows } = await pool.query(
+          `SELECT COALESCE(NULLIF(TRIM(CONCAT(first_name,' ',last_name)),''), email) AS name
+           FROM auth_users WHERE user_id = $1`, [userId]
+        );
+        const userName = rows[0]?.name || 'Someone';
         socket.to(`conv:${conversationId}`).emit('MARK_READ', {
           messageId,
           userId,
           readAt: new Date().toISOString(),
+          userName,
         });
       } catch { /* ignore */ }
     });

@@ -488,9 +488,11 @@ async function getThread(conversationId, userId) {
        COALESCE(
          (SELECT JSON_AGG(JSON_BUILD_OBJECT(
            'userId',  rr.user_id,
-           'readAt',  rr.read_at
+           'readAt',  rr.read_at,
+           'userName', COALESCE(NULLIF(TRIM(CONCAT(ru.first_name,' ',ru.last_name)),''), ru.email)
          ))
          FROM comm_read_receipts rr
+         LEFT JOIN auth_users ru ON ru.user_id = rr.user_id
          WHERE rr.message_id = m.message_id),
          '[]'
        ) AS read_receipts

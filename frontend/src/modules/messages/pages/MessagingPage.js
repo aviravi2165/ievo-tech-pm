@@ -22,7 +22,7 @@ function useToast() {
 }
 
 export default function MessagingPage({ currentUser }) {
-  const { conversations, loading, error: inboxError, refetch, archiveConversation } = useInbox();
+  const { conversations, loading, error: inboxError, refetch, archiveConversation, clearUnreadDot } = useInbox();
   const { count: unreadCount, decrement } = useUnreadCount();
   const { groups, loading: groupsLoading, createGroup, deleteGroup } = useGroups();
   const { socket } = useSocket();
@@ -90,7 +90,10 @@ export default function MessagingPage({ currentUser }) {
   // ── Select conversation ───────────────────────────────────────────────────
   const handleSelectConv = (conv) => {
     setActiveConv(conv);
-    if (conv.unreadCount > 0) decrement(conv.conversationId);
+    if (conv.unreadCount > 0) {
+      decrement(conv.conversationId);
+      clearUnreadDot(conv.conversationId);
+    }
   };
 
   // ── Open group conversation from Groups tab ───────────────────────────────
