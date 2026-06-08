@@ -1,13 +1,17 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { messageApi } from '../api/messageApi';
 import { useSocket }  from '../context/SocketContext';
 
 export function useThread(conversationId) {
-  const { socket } = useSocket();
+  const { socket }  = useSocket();
   const [messages,     setMessages]     = useState([]);
   const [conversation, setConversation] = useState(null);
   const [loading,      setLoading]      = useState(false);
   const [error,        setError]        = useState(null);
+
+  // Ref to track which messages have already been marked read this session
+  // so we don't fire duplicate PATCH calls when messages state updates
+  const markedReadRef = useRef(new Set());
 
   const fetchThread = useCallback(async () => {
     if (!conversationId) return;
@@ -23,8 +27,11 @@ export function useThread(conversationId) {
     }
   }, [conversationId]);
 
+  // Fetch on open + join socket room
   useEffect(() => {
     if (!conversationId) return;
+    // Reset the marked-read ref when switching conversations
+    markedReadRef.current = new Set();
     fetchThread();
     if (socket) socket.emit('join_conversation', { conversationId });
     return () => {
@@ -32,7 +39,7 @@ export function useThread(conversationId) {
     };
   }, [conversationId, socket, fetchThread]);
 
-  // Live: new message or read receipt
+  // Socket listeners
   useEffect(() => {
     if (!socket || !conversationId) return;
 
@@ -41,19 +48,19 @@ export function useThread(conversationId) {
       fetchThread();
     };
 
-    // Live read receipt — update the specific message's receipts in place
+    // Live read receipt — update the specific message in place
+    // userName is included from the socket event (set by sender's REST response)
     const onRead = ({ messageId, userId, readAt, userName }) => {
       setMessages(prev =>
         prev.map(m => {
           if (m.messageId !== messageId) return m;
-          // Avoid duplicate receipts
-          const already = m.readReceipts?.some(r => r.userId === userId);
+          const already = m.readReceipts?.some(r => String(r.userId) === String(userId));
           if (already) return m;
           return {
             ...m,
             readReceipts: [
               ...(m.readReceipts || []),
-              { userId, readAt, userName },
+              { userId, readAt, userName: userName || 'Someone' },
             ],
           };
         })
@@ -69,29 +76,48 @@ export function useThread(conversationId) {
   }, [socket, conversationId, fetchThread]);
 
   /**
-   * Mark a single message read — writes to DB and emits MARK_READ to conv room
-   * so other viewers see the tick update live.
+   * Mark a single message read.
+   * - Writes to DB via REST
+   * - REST response includes userName (from messageService.markMessageRead)
+   * - Emits MARK_READ socket event with userName so co-viewers update live
+   * - Deduped via markedReadRef so repeated calls are no-ops
    */
   const markRead = useCallback(async (messageId) => {
+    if (markedReadRef.current.has(messageId)) return;
+    markedReadRef.current.add(messageId);
     try {
-      await messageApi.markRead(messageId);
+      const result = await messageApi.markRead(messageId);
       if (socket) {
-        socket.emit('MARK_READ', { messageId, conversationId });
+        socket.emit('MARK_READ', {
+          messageId,
+          conversationId,
+          userName: result.userName,
+          readAt:   result.readAt,
+        });
       }
-    } catch (_) { /* silent */ }
+    } catch (_) {
+      // Remove from ref on failure so it can be retried
+      markedReadRef.current.delete(messageId);
+    }
   }, [socket, conversationId]);
 
   /**
-   * Mark ALL unread messages in this conversation read in one go.
-   * Called by ChatWindow on open.
+   * Mark ALL unread messages in this thread read.
+   * Called once by ChatWindow when the conversation opens.
+   * Uses markedReadRef to ensure no message is marked twice even if
+   * this function is called multiple times (e.g. on message list refresh).
    */
-  const markAllRead = useCallback(async (currentUserId) => {
-    const unread = (messages).filter(
-      m => m.senderId !== currentUserId &&
-        !m.readReceipts?.find(r => r.userId === currentUserId)
-    );
-    await Promise.all(unread.map(m => markRead(m.messageId)));
-  }, [messages, markRead]);
+  const markAllRead = useCallback((currentUserId) => {
+    // Read messages snapshot at call time — don't put messages in dep array
+    setMessages(currentMessages => {
+      const unread = currentMessages.filter(
+        m => String(m.senderId) !== String(currentUserId) &&
+          !m.readReceipts?.find(r => String(r.userId) === String(currentUserId))
+      );
+      unread.forEach(m => markRead(m.messageId));
+      return currentMessages; // no state change, just side effects
+    });
+  }, [markRead]);
 
   const sendReply = useCallback(async (payload) => {
     const result = await messageApi.reply(conversationId, payload);

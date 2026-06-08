@@ -1,29 +1,22 @@
-const { Server } = require('socket.io');
+const { Server }     = require('socket.io');
 const { verifyToken } = require('../../../middleware/auth');
-const messageService = require('../services/messageService');
+const messageService  = require('../services/messageService');
 
 let io = null;
 
-/**
- * BUG FIX: Added senderUserId to payload so frontend can detect own messages
- * and NOT increment the unread badge or unread count on sent messages.
- */
 function toNewMessagePayload(payload) {
   return {
     conversationId: payload.conversationId,
     messageId:      payload.messageId,
     senderName:     payload.senderName,
-    senderUserId:   payload.senderUserId,   // ← FIXED: was missing
+    senderUserId:   payload.senderUserId,
     subject:        payload.subject,
   };
 }
 
 function initSocket(httpServer) {
   io = new Server(httpServer, {
-    cors: {
-      origin: process.env.CORS_ORIGIN || true,
-      credentials: true,
-    },
+    cors: { origin: process.env.CORS_ORIGIN || true, credentials: true },
   });
 
   io.use((socket, next) => {
@@ -47,7 +40,7 @@ function initSocket(httpServer) {
       try {
         await messageService.assertConversationParticipant(conversationId, userId);
         socket.join(`conv:${conversationId}`);
-      } catch { /* ignore unauthorized */ }
+      } catch { /* ignore */ }
     });
 
     socket.on('leave_conversation', (data = {}) => {
@@ -55,24 +48,43 @@ function initSocket(httpServer) {
       if (!Number.isNaN(conversationId)) socket.leave(`conv:${conversationId}`);
     });
 
+    /**
+     * MARK_READ flow:
+     * 1. Client REST-PATCHes /api/messages/:id/read (writes to DB, returns userName)
+     * 2. Client emits MARK_READ socket event with { messageId, conversationId, userName }
+     * 3. We validate participant then broadcast to conv: room so OTHER viewers update live
+     *
+     * We no longer write to DB here — that's already done by the REST call.
+     * We just relay the event so the tick updates for co-viewers without a full refetch.
+     */
     socket.on('MARK_READ', async (data = {}) => {
-      const messageId      = parseInt(data.messageId, 10);
+      const messageId      = parseInt(data.messageId,      10);
       const conversationId = parseInt(data.conversationId, 10);
       if (Number.isNaN(messageId) || Number.isNaN(conversationId)) return;
+
       try {
         await messageService.assertConversationParticipant(conversationId, userId);
-        // Fetch userName so the "Seen by" label renders without a DB round-trip on the client
-        const pool = require('../../../config/db').getPool();
-        const { rows } = await pool.query(
-          `SELECT COALESCE(NULLIF(TRIM(CONCAT(first_name,' ',last_name)),''), email) AS name
-           FROM auth_users WHERE user_id = $1`, [userId]
-        );
-        const userName = rows[0]?.name || 'Someone';
+
+        // userName should be sent by the client from the REST response,
+        // but if missing we look it up as a fallback
+        let userName = data.userName;
+        if (!userName) {
+          const pool = require('../../../config/db').getPool();
+          const { rows } = await pool.query(
+            `SELECT COALESCE(NULLIF(TRIM(CONCAT(first_name,' ',last_name)),''), email) AS name
+             FROM auth_users WHERE user_id = $1`,
+            [userId]
+          );
+          userName = rows[0]?.name || 'Someone';
+        }
+
+        // Broadcast to others in the conversation room (not back to sender)
         socket.to(`conv:${conversationId}`).emit('MARK_READ', {
           messageId,
+          conversationId,
           userId,
-          readAt: new Date().toISOString(),
           userName,
+          readAt: data.readAt || new Date().toISOString(),
         });
       } catch { /* ignore */ }
     });
@@ -87,19 +99,21 @@ async function broadcastNewMessage(result) {
   const payload        = toNewMessagePayload(result);
   const conversationId = payload.conversationId;
 
-  // Broadcast to anyone currently viewing this conversation thread
   io.to(`conv:${conversationId}`).emit('NEW_MESSAGE', payload);
 
-  // Broadcast to every participant's personal inbox room
-  const participantIds = await messageService.getParticipantUserIds(conversationId);
-  participantIds.forEach((participantId) => {
-    io.to(`user:${participantId}`).emit('NEW_MESSAGE', payload);
+  const participantIds = result.participantIds
+    || await messageService.getParticipantUserIds(conversationId);
+
+  participantIds.forEach(pid => {
+    io.to(`user:${pid}`).emit('NEW_MESSAGE', payload);
   });
 }
 
-function broadcastMarkRead({ conversationId, messageId, userId, readAt }) {
+function broadcastMarkRead({ conversationId, messageId, userId, readAt, userName }) {
   if (!io) return;
-  io.to(`conv:${conversationId}`).emit('MARK_READ', { messageId, userId, readAt });
+  io.to(`conv:${conversationId}`).emit('MARK_READ', {
+    messageId, conversationId, userId, readAt, userName,
+  });
 }
 
 function closeSocket() {

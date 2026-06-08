@@ -23,15 +23,12 @@ async function assertConversationParticipant(conversationId, userId) {
   const { rows } = await pool.query(
     `SELECT participant_id
      FROM comm_participants
-     WHERE conversation_id = $1
-       AND user_id = $2
-       AND is_deleted = FALSE`,
+     WHERE conversation_id = $1 AND user_id = $2 AND is_deleted = FALSE`,
     [conversationId, userId]
   );
   if (!rows[0]) {
     const err = new Error('Conversation not found or access denied');
-    err.statusCode = 403;
-    throw err;
+    err.statusCode = 403; throw err;
   }
 }
 
@@ -49,8 +46,7 @@ async function getMemberUserIdsForGroups(groupIds = []) {
   if (!groupIds.length) return [];
   const pool = getPool();
   const { rows } = await pool.query(
-    `SELECT DISTINCT user_id
-     FROM comm_group_members
+    `SELECT DISTINCT user_id FROM comm_group_members
      WHERE group_id = ANY($1::int[])`,
     [groupIds]
   );
@@ -67,8 +63,7 @@ async function resolveRecipientUserIds(recipientIds = [], groupIds = []) {
 async function linkAttachmentsToMessage(client, messageId, attachmentIds, uploadedBy) {
   for (const attachmentId of attachmentIds) {
     await client.query(
-      `UPDATE comm_attachments
-       SET message_id = $1
+      `UPDATE comm_attachments SET message_id = $1
        WHERE attachment_id = $2 AND uploaded_by = $3 AND message_id IS NULL`,
       [messageId, attachmentId, uploadedBy]
     );
@@ -85,14 +80,16 @@ function mapThreadMessage(row) {
     sentAt:          row.sent_at,
     parentMessageId: row.parent_message_id,
     attachments:     row.attachments   || [],
-    readReceipts:    row.read_receipts || [],
-    parentMessage:   row.parent_message_id
-      ? { messageId: row.parent_message_id, senderName: row.parent_sender_name, bodyHtml: row.parent_body_html }
-      : null,
+    readReceipts:    row.read_receipts || [],  // includes userName
+    parentMessage:   row.parent_message_id ? {
+      messageId:  row.parent_message_id,
+      senderName: row.parent_sender_name,
+      bodyHtml:   row.parent_body_html,
+    } : null,
   };
 }
 
-// ── Send new conversation ─────────────────────────────────────────────────────
+// ── Send ──────────────────────────────────────────────────────────────────────
 
 async function sendMessage(senderUserId, payload) {
   const {
@@ -118,13 +115,10 @@ async function sendMessage(senderUserId, payload) {
 
   const pool   = getPool();
   const client = await pool.connect();
-
   try {
     await client.query('BEGIN');
 
-    // Save group_id when sent to a group so inbox/sent can show the group name
     const primaryGroupId = groupIds.length > 0 ? groupIds[0] : null;
-
     const convRes = await client.query(
       `INSERT INTO comm_conversations (subject, created_by, allow_reply, group_id, last_message_at)
        VALUES ($1, $2, $3, $4, NOW())
@@ -137,7 +131,8 @@ async function sendMessage(senderUserId, payload) {
       await client.query(
         `INSERT INTO comm_participants (conversation_id, user_id)
          VALUES ($1, $2)
-         ON CONFLICT (conversation_id, user_id) DO UPDATE SET is_deleted = FALSE, is_archived = FALSE`,
+         ON CONFLICT (conversation_id, user_id)
+         DO UPDATE SET is_deleted = FALSE, is_archived = FALSE`,
         [conversation.conversation_id, uid]
       );
     }
@@ -151,7 +146,6 @@ async function sendMessage(senderUserId, payload) {
     const messageId = msgRes.rows[0].message_id;
 
     await linkAttachmentsToMessage(client, messageId, attachmentIds, senderUserId);
-
     await client.query(
       `UPDATE comm_conversations SET last_message_at = NOW() WHERE conversation_id = $1`,
       [conversation.conversation_id]
@@ -173,8 +167,7 @@ async function sendMessage(senderUserId, payload) {
       participantIds: uniqueParticipants,
     };
   } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
+    await client.query('ROLLBACK'); throw err;
   } finally {
     client.release();
   }
@@ -197,7 +190,7 @@ async function replyToConversation(conversationId, senderUserId, payload) {
     const err = new Error('Conversation not found'); err.statusCode = 404; throw err;
   }
   if (!conv.allow_reply) {
-    const err = new Error('Replies are not allowed on this conversation'); err.statusCode = 403; throw err;
+    const err = new Error('Replies are not allowed'); err.statusCode = 403; throw err;
   }
 
   const sanitizedBody = sanitizeBodyHtml(bodyHtml);
@@ -218,13 +211,11 @@ async function replyToConversation(conversationId, senderUserId, payload) {
     const messageId = msgRes.rows[0].message_id;
 
     await linkAttachmentsToMessage(client, messageId, attachmentIds, senderUserId);
-
     await client.query(
       `UPDATE comm_conversations SET last_message_at = NOW() WHERE conversation_id = $1`,
       [conversationId]
     );
-
-    // Un-archive for ALL participants so replied conversations reappear in inbox
+    // Un-archive for all participants so the thread reappears in their inbox
     await client.query(
       `UPDATE comm_participants SET is_archived = FALSE
        WHERE conversation_id = $1 AND is_deleted = FALSE`,
@@ -234,35 +225,29 @@ async function replyToConversation(conversationId, senderUserId, payload) {
     await client.query('COMMIT');
 
     const metaRes   = await pool.query(
-      `SELECT subject FROM comm_conversations WHERE conversation_id = $1`,
-      [conversationId]
+      `SELECT subject FROM comm_conversations WHERE conversation_id = $1`, [conversationId]
     );
     const senderRes = await pool.query(
-      `SELECT first_name, last_name, email FROM auth_users WHERE user_id = $1`,
-      [senderUserId]
+      `SELECT first_name, last_name, email FROM auth_users WHERE user_id = $1`, [senderUserId]
     );
     const participantIds = await getParticipantUserIds(conversationId);
 
     return {
       conversationId,
       messageId,
-      subject:      metaRes.rows[0]?.subject,
-      senderName:   displayName(senderRes.rows[0]),
+      subject:       metaRes.rows[0]?.subject,
+      senderName:    displayName(senderRes.rows[0]),
       senderUserId,
       participantIds,
     };
   } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
+    await client.query('ROLLBACK'); throw err;
   } finally {
     client.release();
   }
 }
 
 // ── Inbox ─────────────────────────────────────────────────────────────────────
-// FIX: Added recipient names aggregation so the frontend can show
-// "To: Alice, Bob" in sent view and sender name in inbox view,
-// instead of just the subject line.
 
 async function getInbox(userId, page = 1, limit = 30) {
   const pool   = getPool();
@@ -270,20 +255,23 @@ async function getInbox(userId, page = 1, limit = 30) {
 
   const { rows } = await pool.query(
     `SELECT
-       c.conversation_id   AS "conversationId",
+       c.conversation_id                   AS "conversationId",
        c.subject,
-       c.last_message_at   AS "latestAt",
-       c.created_at        AS "createdAt",
-       c.allow_reply       AS "allowReply",
+       c.last_message_at                   AS "latestAt",
+       c.created_at                        AS "createdAt",
+       c.allow_reply                       AS "allowReply",
+       -- participant count so frontend knows if it's a group without loading thread
+       (SELECT COUNT(*)::int FROM comm_participants cp
+        WHERE cp.conversation_id = c.conversation_id AND cp.is_deleted = FALSE
+       )                                   AS "participantCount",
        COALESCE(
-         NULLIF(TRIM(CONCAT(su.first_name, ' ', su.last_name)), ''),
+         NULLIF(TRIM(CONCAT(su.first_name,' ',su.last_name)),''),
          su.email, 'Unknown'
-       )                   AS "latestSender",
-       LEFT(lm.body_html, 120) AS preview,
-       cg.group_name       AS "groupName",
-       (
-         SELECT STRING_AGG(
-           COALESCE(NULLIF(TRIM(CONCAT(u2.first_name, ' ', u2.last_name)), ''), u2.email),
+       )                                   AS "latestSender",
+       LEFT(lm.body_html, 120)             AS preview,
+       cg.group_name                       AS "groupName",
+       (SELECT STRING_AGG(
+           COALESCE(NULLIF(TRIM(CONCAT(u2.first_name,' ',u2.last_name)),''), u2.email),
            ', ' ORDER BY u2.first_name, u2.last_name
          )
          FROM comm_participants p2
@@ -291,18 +279,17 @@ async function getInbox(userId, page = 1, limit = 30) {
          WHERE p2.conversation_id = c.conversation_id
            AND p2.user_id <> $1::uuid
            AND p2.is_deleted = FALSE
-       )                   AS "participantNames",
-       (
-         SELECT COUNT(*)::int
-         FROM comm_messages um
-         WHERE um.conversation_id = c.conversation_id
-           AND um.is_deleted = FALSE
-           AND um.sender_id <> $1::uuid
-           AND NOT EXISTS (
-             SELECT 1 FROM comm_read_receipts rr
-             WHERE rr.message_id = um.message_id AND rr.user_id = $1::uuid
-           )
-       )                   AS "unreadCount"
+       )                                   AS "participantNames",
+       (SELECT COUNT(*)::int
+        FROM comm_messages um
+        WHERE um.conversation_id = c.conversation_id
+          AND um.is_deleted = FALSE
+          AND um.sender_id <> $1::uuid
+          AND NOT EXISTS (
+            SELECT 1 FROM comm_read_receipts rr
+            WHERE rr.message_id = um.message_id AND rr.user_id = $1::uuid
+          )
+       )                                   AS "unreadCount"
      FROM comm_conversations c
      INNER JOIN comm_participants p
        ON p.conversation_id = c.conversation_id
@@ -334,18 +321,20 @@ async function getSent(userId, page = 1, limit = 30) {
 
   const { rows } = await pool.query(
     `SELECT
-       c.conversation_id   AS "conversationId",
+       c.conversation_id  AS "conversationId",
        c.subject,
-       c.last_message_at   AS "latestAt",
-       c.created_at        AS "createdAt",
-       c.allow_reply       AS "allowReply",
-       'You'               AS "latestSender",
+       c.last_message_at  AS "latestAt",
+       c.created_at       AS "createdAt",
+       c.allow_reply      AS "allowReply",
+       (SELECT COUNT(*)::int FROM comm_participants cp
+        WHERE cp.conversation_id = c.conversation_id AND cp.is_deleted = FALSE
+       )                  AS "participantCount",
+       'You'              AS "latestSender",
        LEFT(lm.body_html, 120) AS preview,
-       0                   AS "unreadCount",
-       cg.group_name       AS "groupName",
-       (
-         SELECT STRING_AGG(
-           COALESCE(NULLIF(TRIM(CONCAT(u2.first_name, ' ', u2.last_name)), ''), u2.email),
+       0                  AS "unreadCount",
+       cg.group_name      AS "groupName",
+       (SELECT STRING_AGG(
+           COALESCE(NULLIF(TRIM(CONCAT(u2.first_name,' ',u2.last_name)),''), u2.email),
            ', ' ORDER BY u2.first_name, u2.last_name
          )
          FROM comm_participants p2
@@ -353,7 +342,7 @@ async function getSent(userId, page = 1, limit = 30) {
          WHERE p2.conversation_id = c.conversation_id
            AND p2.user_id <> $1::uuid
            AND p2.is_deleted = FALSE
-       )                   AS "participantNames"
+       )                  AS "participantNames"
      FROM comm_conversations c
      INNER JOIN comm_participants p
        ON p.conversation_id = c.conversation_id
@@ -376,15 +365,10 @@ async function getSent(userId, page = 1, limit = 30) {
   return { conversations: rows, page, limit };
 }
 
-// ── Unread count ──────────────────────────────────────────────────────────────
+// ── Unread count (conversations, not messages) ────────────────────────────────
 
 async function getUnreadCount(userId) {
   const pool = getPool();
-  // FIX: Count CONVERSATIONS with at least one unread message, not individual
-  // messages.  This keeps the sidebar badge and the message icon badge in sync —
-  // both now show the number of conversations that have something new to read,
-  // which is the number users actually care about (e.g. "3 unread threads",
-  // not "6 unread messages across those threads").
   const { rows } = await pool.query(
     `SELECT COUNT(DISTINCT m.conversation_id)::int AS count
      FROM comm_messages m
@@ -406,12 +390,36 @@ async function getUnreadCount(userId) {
   return rows[0]?.count ?? 0;
 }
 
+// NEW: returns just the conversation IDs that have unread messages
+// Used by useUnreadCount to initialise its ref without a second inbox fetch
+async function getUnreadConversationIds(userId) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT DISTINCT m.conversation_id AS "conversationId"
+     FROM comm_messages m
+     INNER JOIN comm_participants p
+       ON p.conversation_id = m.conversation_id
+       AND p.user_id = $1::uuid
+       AND p.is_deleted = FALSE
+       AND p.is_archived = FALSE
+     INNER JOIN comm_conversations c
+       ON c.conversation_id = m.conversation_id AND c.is_deleted = FALSE
+     WHERE m.is_deleted = FALSE
+       AND m.sender_id <> $1::uuid
+       AND NOT EXISTS (
+         SELECT 1 FROM comm_read_receipts rr
+         WHERE rr.message_id = m.message_id AND rr.user_id = $1::uuid
+       )`,
+    [userId]
+  );
+  return rows.map(r => r.conversationId);
+}
+
 // ── Search ────────────────────────────────────────────────────────────────────
 
 async function searchMessages(userId, query) {
   const pool    = getPool();
   const pattern = `%${query}%`;
-
   const { rows } = await pool.query(
     `SELECT DISTINCT
        c.conversation_id AS "conversationId",
@@ -431,7 +439,6 @@ async function searchMessages(userId, query) {
      LIMIT 50`,
     [userId, pattern]
   );
-
   return rows;
 }
 
@@ -443,13 +450,13 @@ async function getThread(conversationId, userId) {
   const pool = getPool();
 
   const convRes = await pool.query(
-    `SELECT conversation_id AS "conversationId", subject, allow_reply AS "allowReply",
+    `SELECT conversation_id AS "conversationId", subject,
+            allow_reply AS "allowReply",
             created_at AS "createdAt", last_message_at AS "lastMessageAt"
      FROM comm_conversations
      WHERE conversation_id = $1 AND is_deleted = FALSE`,
     [conversationId]
   );
-
   if (!convRes.rows[0]) {
     const err = new Error('Conversation not found'); err.statusCode = 404; throw err;
   }
@@ -463,6 +470,8 @@ async function getThread(conversationId, userId) {
     [conversationId]
   );
 
+  // read_receipts includes userName so MessageBubble can show names without
+  // a second lookup. Excludes the message sender from their own receipt list.
   const msgRes = await pool.query(
     `SELECT
        m.message_id,
@@ -471,9 +480,9 @@ async function getThread(conversationId, userId) {
        m.parent_message_id,
        m.body_html,
        m.sent_at,
-       COALESCE(NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), ''), u.email, 'Unknown') AS sender_name,
-       pm.body_html   AS parent_body_html,
-       COALESCE(NULLIF(TRIM(CONCAT(pu.first_name, ' ', pu.last_name)), ''), pu.email) AS parent_sender_name,
+       COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''), u.email, 'Unknown') AS sender_name,
+       pm.body_html AS parent_body_html,
+       COALESCE(NULLIF(TRIM(CONCAT(pu.first_name,' ',pu.last_name)),''), pu.email) AS parent_sender_name,
        COALESCE(
          (SELECT JSON_AGG(JSON_BUILD_OBJECT(
            'attachmentId', a.attachment_id,
@@ -485,15 +494,20 @@ async function getThread(conversationId, userId) {
          WHERE a.message_id = m.message_id AND a.is_deleted = FALSE),
          '[]'
        ) AS attachments,
+       -- read_receipts: exclude the sender's own row so "Seen by" never shows self
        COALESCE(
          (SELECT JSON_AGG(JSON_BUILD_OBJECT(
-           'userId',  rr.user_id,
-           'readAt',  rr.read_at,
-           'userName', COALESCE(NULLIF(TRIM(CONCAT(ru.first_name,' ',ru.last_name)),''), ru.email)
+           'userId',   rr.user_id,
+           'userName', COALESCE(
+             NULLIF(TRIM(CONCAT(ru.first_name,' ',ru.last_name)),''),
+             ru.email, rr.user_id::text
+           ),
+           'readAt', rr.read_at
          ))
          FROM comm_read_receipts rr
          LEFT JOIN auth_users ru ON ru.user_id = rr.user_id
-         WHERE rr.message_id = m.message_id),
+         WHERE rr.message_id = m.message_id
+           AND rr.user_id <> m.sender_id),
          '[]'
        ) AS read_receipts
      FROM comm_messages m
@@ -525,7 +539,6 @@ async function markMessageRead(messageId, userId) {
      WHERE m.message_id = $1 AND m.is_deleted = FALSE`,
     [messageId, userId]
   );
-
   if (!rows[0]) {
     const err = new Error('Message not found or access denied'); err.statusCode = 404; throw err;
   }
@@ -537,11 +550,19 @@ async function markMessageRead(messageId, userId) {
     [messageId, userId]
   );
 
+  // Fetch userName for the socket broadcast
+  const { rows: nameRows } = await pool.query(
+    `SELECT COALESCE(NULLIF(TRIM(CONCAT(first_name,' ',last_name)),''), email) AS name
+     FROM auth_users WHERE user_id = $1::uuid`,
+    [userId]
+  );
+
   return {
     messageId,
     userId,
     conversationId: rows[0].conversation_id,
-    readAt: new Date().toISOString(),
+    readAt:   new Date().toISOString(),
+    userName: nameRows[0]?.name || 'Someone',
   };
 }
 
@@ -573,17 +594,14 @@ async function softDeleteMessage(messageId, userId) {
   return true;
 }
 
-// ── Email digest helper ───────────────────────────────────────────────────────
+// ── Email digest ──────────────────────────────────────────────────────────────
 
 async function getUsersForUnreadDigest() {
   const pool = getPool();
   const { rows } = await pool.query(
-    `SELECT
-       u.user_id    AS "userId",
-       u.email,
-       u.first_name AS "firstName",
-       u.last_name  AS "lastName",
-       COUNT(m.message_id)::int AS "unreadCount"
+    `SELECT u.user_id AS "userId", u.email,
+            u.first_name AS "firstName", u.last_name AS "lastName",
+            COUNT(m.message_id)::int AS "unreadCount"
      FROM auth_users u
      INNER JOIN comm_participants p
        ON p.user_id = u.user_id AND p.is_deleted = FALSE AND p.is_archived = FALSE
@@ -612,6 +630,7 @@ module.exports = {
   getInbox,
   getSent,
   getUnreadCount,
+  getUnreadConversationIds,
   searchMessages,
   getThread,
   markMessageRead,
