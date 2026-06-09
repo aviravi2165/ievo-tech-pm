@@ -10,16 +10,28 @@ const ALLOWED = [
   'image/jpeg', 'image/png', 'text/plain',
 ];
 
-export default function ComposeModal({ onClose, onSent, groups = [] }) {
-  const [recipients, setRecipients] = useState([]);
+/**
+ * ComposeModal
+ *
+ * FIX Bug 2: accepts initialRecipients prop.
+ * When the user opens compose from a group card that has no existing thread,
+ * MessagingPage passes the group as a pre-filled recipient so the user can
+ * immediately compose the first message to that group without having to
+ * search for it manually.
+ *
+ * initialRecipients shape: [{ id, label, type: 'user'|'group' }]
+ * Matches the shape RecipientPicker already uses internally.
+ */
+export default function ComposeModal({ onClose, onSent, groups = [], initialRecipients = [] }) {
+  // Seed recipients from initialRecipients prop (e.g. pre-filled group)
+  const [recipients, setRecipients] = useState(initialRecipients);
   const [subject,    setSubject]    = useState('');
   const [allowReply, setAllowReply] = useState(true);
   const [attachments, setAttachments] = useState([]);
   const [error,      setError]      = useState('');
   const [sending,    setSending]    = useState(false);
 
-  // Use a contentEditable div for rich text (same as Composer)
-  const bodyRef     = useRef(null);
+  const bodyRef      = useRef(null);
   const fileInputRef = useRef(null);
 
   // ── Formatting ────────────────────────────────────────────────────────────
@@ -64,9 +76,9 @@ export default function ComposeModal({ onClose, onSent, groups = [] }) {
     setSending(true); setError('');
     try {
       const result = await messageApi.send({
-        recipientIds: recipients.filter(r => r.type === 'user').map(r => r.id),
-        groupIds:     recipients.filter(r => r.type === 'group').map(r => r.id),
-        subject:      subject.trim(),
+        recipientIds:  recipients.filter(r => r.type === 'user').map(r => r.id),
+        groupIds:      recipients.filter(r => r.type === 'group').map(r => r.id),
+        subject:       subject.trim(),
         bodyHtml,
         allowReply,
         attachmentIds: attachments.filter(a => a.attachmentId).map(a => a.attachmentId),
@@ -116,7 +128,7 @@ export default function ComposeModal({ onClose, onSent, groups = [] }) {
             />
           </div>
 
-          {/* Message — rich text, matching Composer */}
+          {/* Message */}
           <div>
             <label className="field-label">Message</label>
 
@@ -156,7 +168,6 @@ export default function ComposeModal({ onClose, onSent, groups = [] }) {
                 </svg>
               </button>
               <div className="fmt-sep" />
-              {/* Attach button inside toolbar */}
               <button type="button" className="fmt-btn" title="Attach file"
                 onClick={() => fileInputRef.current?.click()}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

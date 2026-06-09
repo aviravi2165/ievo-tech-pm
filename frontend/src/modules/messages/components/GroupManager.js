@@ -1,20 +1,19 @@
 /**
  * GroupManager.js
  *
- * FIX: Clicking a group card now opens the existing conversation thread in
- * the Inbox (if one exists) instead of doing nothing.
+ * FIXES in this version:
  *
- * How it works:
- *  - Each group card now has an "Open Chat" button alongside "Manage".
- *  - Clicking it calls groupApi.getGroupConversation(groupId).
- *  - On success: calls the onOpenConversation(conv) prop, which MessagingPage
- *    uses to switch to the Inbox tab and select that conversation.
- *  - On 404: shows a small inline message "No thread yet — send one from
- *    New Message to start the conversation."
+ *  1. handleOpenThread — on 404 (no existing conversation for the group),
+ *     instead of showing a dead-end inline error message, it now calls the
+ *     new onComposeToGroup(group) prop. MessagingPage uses this to open
+ *     ComposeModal with the group pre-filled as a recipient so the user can
+ *     start the first conversation immediately.
  *
- * Props added:
- *   onOpenConversation(conv) — provided by MessagingPage; receives the
- *                              conversation object returned by the API.
+ *  2. The inline open-error state is removed entirely — it was confusing UX.
+ *     The 404 path is now an action (open compose) not an error.
+ *
+ *  3. Any non-404 network error still shows a brief toast-style message
+ *     using the existing openError map, but only for genuine failures.
  */
 
 import { useState } from 'react';
@@ -26,22 +25,21 @@ export default function GroupManager({
   loading,
   onCreate,
   onDelete,
-  onOpenConversation,   // ← NEW prop
+  onOpenConversation,  // called when an existing thread is found
+  onComposeToGroup,    // NEW — called when no thread exists yet (404)
 }) {
-  const [creating,        setCreating]        = useState(false);
-  const [newName,         setNewName]         = useState('');
-  const [createError,     setCreateError]     = useState('');
-  const [saving,          setSaving]          = useState(false);
-  const [managingGroup,   setManagingGroup]   = useState(null);
-  const [members,         setMembers]         = useState([]);
-  const [membersLoading,  setMembersLoading]  = useState(false);
-  const [selectedUsers,   setSelectedUsers]   = useState([]);
-  const [addError,        setAddError]        = useState('');
-  const [addSaving,       setAddSaving]       = useState(false);
-
-  // NEW: per-group open-thread state
-  const [openingGroupId,  setOpeningGroupId]  = useState(null);
-  const [openError,       setOpenError]       = useState({});   // { [groupId]: msg }
+  const [creating,       setCreating]       = useState(false);
+  const [newName,        setNewName]        = useState('');
+  const [createError,    setCreateError]    = useState('');
+  const [saving,         setSaving]         = useState(false);
+  const [managingGroup,  setManagingGroup]  = useState(null);
+  const [members,        setMembers]        = useState([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [selectedUsers,  setSelectedUsers]  = useState([]);
+  const [addError,       setAddError]       = useState('');
+  const [addSaving,      setAddSaving]      = useState(false);
+  const [openingGroupId, setOpeningGroupId] = useState(null);
+  const [openError,      setOpenError]      = useState({});
 
   const handleCreate = async () => {
     if (!newName.trim()) { setCreateError('Group name is required.'); return; }
@@ -67,7 +65,7 @@ export default function GroupManager({
   const handleRemoveMember = async (userId) => {
     try {
       await groupApi.removeMember(managingGroup.groupId, userId);
-      setMembers((prev) => prev.filter((m) => m.userId !== userId));
+      setMembers(prev => prev.filter(m => m.userId !== userId));
     } catch {
       setAddError('Failed to remove member.');
     }
@@ -75,9 +73,8 @@ export default function GroupManager({
 
   const handleAddMembers = async () => {
     if (!selectedUsers.length) { setAddError('Select at least one user.'); return; }
-    const userIds = selectedUsers.filter((u) => u.type === 'user').map((u) => u.id);
+    const userIds = selectedUsers.filter(u => u.type === 'user').map(u => u.id);
     if (!userIds.length) { setAddError('Only users can be added (not groups).'); return; }
-
     setAddSaving(true); setAddError('');
     try {
       const updated = await groupApi.addMembers(managingGroup.groupId, userIds);
@@ -88,28 +85,34 @@ export default function GroupManager({
     } finally { setAddSaving(false); }
   };
 
-  // NEW: open the existing conversation thread for a group in Inbox
+  /**
+   * Open the existing conversation thread for a group.
+   * On 404: open ComposeModal pre-filled with this group as recipient.
+   * On other errors: show a brief inline error.
+   */
   const handleOpenThread = async (group) => {
     setOpeningGroupId(group.groupId);
-    setOpenError((prev) => ({ ...prev, [group.groupId]: '' }));
+    setOpenError(prev => ({ ...prev, [group.groupId]: '' }));
     try {
       const conv = await groupApi.getGroupConversation(group.groupId);
-      // Pass back to MessagingPage which will switch tab + select conversation
       onOpenConversation?.(conv);
     } catch (err) {
       const is404 = err?.response?.status === 404;
-      setOpenError((prev) => ({
-        ...prev,
-        [group.groupId]: is404
-          ? 'No thread yet — compose a New Message to this group to start one.'
-          : 'Could not open thread. Try again.',
-      }));
+      if (is404) {
+        // No thread yet — open compose with this group pre-filled
+        onComposeToGroup?.(group);
+      } else {
+        setOpenError(prev => ({
+          ...prev,
+          [group.groupId]: 'Could not open thread. Try again.',
+        }));
+      }
     } finally {
       setOpeningGroupId(null);
     }
   };
 
-  // ── Manage panel ────────────────────────────────────────────────────────────
+  // ── Manage panel ──────────────────────────────────────────────────────────
   if (managingGroup) {
     return (
       <div className="groups-panel">
@@ -169,7 +172,7 @@ export default function GroupManager({
 
         {membersLoading && <div className="loader-wrap"><div className="spinner" /></div>}
 
-        {!membersLoading && members.map((m) => (
+        {!membersLoading && members.map(m => (
           <div key={m.userId} style={{
             display: 'flex', alignItems: 'center', gap: 12,
             padding: '10px 16px',
@@ -216,7 +219,7 @@ export default function GroupManager({
     );
   }
 
-  // ── Groups list ─────────────────────────────────────────────────────────────
+  // ── Groups list ────────────────────────────────────────────────────────────
   return (
     <div className="groups-panel">
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 20 }}>
@@ -241,8 +244,8 @@ export default function GroupManager({
             style={{ marginBottom: 10 }}
             placeholder="e.g. Operations Team"
             value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+            onChange={e => setNewName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleCreate()}
             autoFocus
           />
           {createError && (
@@ -278,7 +281,7 @@ export default function GroupManager({
         </div>
       )}
 
-      {groups.map((g) => (
+      {groups.map(g => (
         <div key={g.groupId} className="group-card">
           <div className="group-icon">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -294,19 +297,19 @@ export default function GroupManager({
             <div className="group-count">
               {g.memberCount ?? 0} member{g.memberCount !== 1 ? 's' : ''}
             </div>
-            {/* Inline error for open-thread attempt */}
+            {/* Only show genuine network errors, not 404s */}
             {openError[g.groupId] && (
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>
+              <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 3 }}>
                 {openError[g.groupId]}
               </div>
             )}
           </div>
 
           <div className="group-actions">
-            {/* NEW: Open existing thread in Inbox */}
+            {/* Open thread — or compose if no thread yet */}
             <button
               className="icon-btn"
-              title="Open group chat in Inbox"
+              title="Open group chat"
               disabled={openingGroupId === g.groupId}
               onClick={() => handleOpenThread(g)}
             >
@@ -335,16 +338,14 @@ export default function GroupManager({
               </svg>
             </button>
 
-            {/* Delete group */}
+            {/* Delete */}
             <button
               className="icon-btn danger"
               title="Delete group"
               onClick={() => {
                 if (window.confirm(
                   `Delete group "${g.groupName}"? Past messages are preserved.`
-                )) {
-                  onDelete(g.groupId);
-                }
+                )) onDelete(g.groupId);
               }}
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none"

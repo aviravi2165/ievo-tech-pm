@@ -28,13 +28,17 @@ export default function MessagingPage({ currentUser }) {
   const { socket } = useSocket();
   const { user }   = useAuth();
 
-  const [activeConv,   setActiveConv]   = useState(null);
-  const [tab,          setTab]          = useState('inbox');
-  const [sentConvs,    setSentConvs]    = useState([]);
-  const [sentLoading,  setSentLoading]  = useState(false);
-  const [sentError,    setSentError]    = useState(null);
-  const [composeOpen,  setComposeOpen]  = useState(false);
-  const [isNarrow,     setIsNarrow]     = useState(true);
+  const [activeConv,  setActiveConv]  = useState(null);
+  const [tab,         setTab]         = useState('inbox');
+  const [sentConvs,   setSentConvs]   = useState([]);
+  const [sentLoading, setSentLoading] = useState(false);
+  const [sentError,   setSentError]   = useState(null);
+  const [composeOpen, setComposeOpen] = useState(false);
+
+  // FIX Bug 2: pre-filled recipients when opening compose from a group card
+  const [composeInitialRecipients, setComposeInitialRecipients] = useState([]);
+
+  const [isNarrow,    setIsNarrow]    = useState(true);
   const layoutRef = useRef(null);
   const { toasts, toast } = useToast();
 
@@ -96,17 +100,36 @@ export default function MessagingPage({ currentUser }) {
     }
   };
 
-  // ── Open group conversation from Groups tab ───────────────────────────────
-  // Called by GroupManager when user clicks "Open Chat" on a group card.
-  // Switches to Inbox tab and opens the conversation.
+  // ── Open group conversation from Groups tab (existing thread found) ───────
   const handleOpenGroupConversation = useCallback((conv) => {
-    // Refresh inbox so the conversation appears in the list
     refetch();
-    // Switch to inbox tab and open the conversation
     setTab('inbox');
     setActiveConv(conv);
     if (conv.unreadCount > 0) decrement(conv.conversationId);
   }, [refetch, decrement]);
+
+  // ── FIX Bug 2: group has no thread yet → open compose pre-filled ──────────
+  const handleComposeToGroup = useCallback((group) => {
+    // Build a recipient entry in the same shape RecipientPicker uses
+    const groupRecipient = {
+      id:    group.groupId,
+      label: group.groupName,
+      type:  'group',
+    };
+    setComposeInitialRecipients([groupRecipient]);
+    setComposeOpen(true);
+  }, []);
+
+  // ── Open compose (blank) ──────────────────────────────────────────────────
+  const handleOpenCompose = useCallback(() => {
+    setComposeInitialRecipients([]);
+    setComposeOpen(true);
+  }, []);
+
+  const handleCloseCompose = useCallback(() => {
+    setComposeOpen(false);
+    setComposeInitialRecipients([]);
+  }, []);
 
   // ── Archive ───────────────────────────────────────────────────────────────
   const handleArchive = async () => {
@@ -153,7 +176,7 @@ export default function MessagingPage({ currentUser }) {
             error={listError}
             activeId={activeConv?.conversationId}
             onSelect={handleSelectConv}
-            onCompose={() => setComposeOpen(true)}
+            onCompose={handleOpenCompose}
             unreadCount={unreadCount}
             tab={tab}
             onTabChange={handleTabChange}
@@ -179,6 +202,7 @@ export default function MessagingPage({ currentUser }) {
               onCreate={createGroup}
               onDelete={deleteGroup}
               onOpenConversation={handleOpenGroupConversation}
+              onComposeToGroup={handleComposeToGroup}
             />
           </main>
         )}
@@ -196,7 +220,7 @@ export default function MessagingPage({ currentUser }) {
                 type="button"
                 className="msg-compose-btn"
                 style={{ marginTop: 8 }}
-                onClick={() => setComposeOpen(true)}
+                onClick={handleOpenCompose}
               >
                 New Message
               </button>
@@ -207,9 +231,10 @@ export default function MessagingPage({ currentUser }) {
 
       {composeOpen && (
         <ComposeModal
-          onClose={() => setComposeOpen(false)}
+          onClose={handleCloseCompose}
           onSent={handleSent}
           groups={groups}
+          initialRecipients={composeInitialRecipients}
         />
       )}
 
