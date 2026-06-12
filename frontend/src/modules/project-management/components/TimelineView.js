@@ -1,10 +1,7 @@
-/**
- * TimelineView — Scheduling view (Gantt-style, pure CSS)
- * Shows phases and their activities as horizontal bars across a date range.
- * This replaces the separate "Scheduling" module in the drawer.
- */
-import { useMemo, useState, useEffect, useCallback } from 'react';
+import { useMemo, useState, useRef, useCallback } from 'react';
 import { phaseApi } from '../api/projectApi';
+
+const LABEL_W = 180; // must match .pm-tl-label width in pm.css
 
 function daysBetween(a, b) {
   return Math.round((new Date(b) - new Date(a)) / 86400000);
@@ -14,17 +11,25 @@ function fmt(d) {
   return new Date(d).toLocaleDateString([], { day: 'numeric', month: 'short' });
 }
 
-export default function TimelineView({ phases = [], projectStart, projectEnd }) {
-  const [expanded, setExpanded] = useState({});
-  const [activities, setActivities] = useState({});
+function fmtFull(d) {
+  return new Date(d).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
+}
 
+export default function TimelineView({ phases = [], projectStart, projectEnd }) {
+  const [expanded,   setExpanded]   = useState({});
+  // Use a ref for activities cache — avoids stale closure on fetchActivities
+  const activitiesRef = useRef({});
+  const [actCache,   setActCache]   = useState({});
+
+  // FIX: fetchActivities no longer depends on activities state
   const fetchActivities = useCallback(async (phaseId) => {
-    if (activities[phaseId]) return;
+    if (activitiesRef.current[phaseId]) return; // already loaded
     try {
       const acts = await phaseApi.getActivities(phaseId);
-      setActivities(prev => ({ ...prev, [phaseId]: acts }));
+      activitiesRef.current[phaseId] = acts;
+      setActCache(prev => ({ ...prev, [phaseId]: acts }));
     } catch { /**/ }
-  }, [activities]);
+  }, []); // stable — no deps needed
 
   const togglePhase = (phaseId) => {
     setExpanded(prev => {
@@ -34,101 +39,217 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
     });
   };
 
-  // Compute overall date range from project + phases
-  const { rangeStart, totalDays } = useMemo(() => {
+  // Compute date range — fall back gracefully when dates are missing
+  const { rangeStart, totalDays, hasDates } = useMemo(() => {
     const dates = [projectStart, projectEnd];
-    phases.forEach(p => { if (p.plannedStart) dates.push(p.plannedStart); if (p.plannedEnd) dates.push(p.plannedEnd); });
+    phases.forEach(p => {
+      if (p.plannedStart) dates.push(p.plannedStart);
+      if (p.plannedEnd)   dates.push(p.plannedEnd);
+    });
     const valid = dates.filter(Boolean).map(d => new Date(d));
-    if (!valid.length) return { rangeStart: new Date(), totalDays: 30 };
+
+    if (!valid.length) {
+      // No dates at all — show a 3-month window from today
+      const start = new Date();
+      start.setDate(1);
+      return { rangeStart: start, totalDays: 90, hasDates: false };
+    }
+
     const min = new Date(Math.min(...valid));
     const max = new Date(Math.max(...valid));
-    min.setDate(min.getDate() - 2);
-    max.setDate(max.getDate() + 2);
-    return { rangeStart: min, totalDays: Math.max(daysBetween(min, max), 7) };
+    min.setDate(min.getDate() - 3);
+    max.setDate(max.getDate() + 3);
+    return {
+      rangeStart: min,
+      totalDays: Math.max(daysBetween(min, max), 14),
+      hasDates: true,
+    };
   }, [phases, projectStart, projectEnd]);
 
-  // Generate week markers
+  // Week markers
   const weekMarkers = useMemo(() => {
     const markers = [];
     const d = new Date(rangeStart);
     while (daysBetween(rangeStart, d) < totalDays) {
-      markers.push({ label: fmt(d), pct: (daysBetween(rangeStart, d) / totalDays) * 100 });
+      markers.push({
+        label: fmt(d),
+        pct: (daysBetween(rangeStart, d) / totalDays) * 100,
+      });
       d.setDate(d.getDate() + 7);
     }
     return markers;
   }, [rangeStart, totalDays]);
 
-  const barStyle = (start, end, type) => {
+  // Today line position
+  const todayPct = useMemo(() => {
+    const pct = (daysBetween(rangeStart, new Date()) / totalDays) * 100;
+    return Math.max(0, Math.min(100, pct));
+  }, [rangeStart, totalDays]);
+
+  // Returns left% and width% for a bar, or null if no dates
+  const barStyle = (start, end) => {
     if (!start || !end) return null;
-    const left  = Math.max(0, (daysBetween(rangeStart, new Date(start)) / totalDays) * 100);
+    const left  = Math.max(0,   (daysBetween(rangeStart, new Date(start)) / totalDays) * 100);
     const right = Math.min(100, (daysBetween(rangeStart, new Date(end))   / totalDays) * 100);
-    const width = Math.max(right - left, 0.5);
+    const width = Math.max(right - left, 0.8);
     return { left: `${left}%`, width: `${width}%` };
   };
 
   if (!phases.length) {
-    return <div className="pm-empty"><p>No phases with dates to display on timeline.</p></div>;
+    return (
+      <div className="pm-empty">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2">
+          <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/>
+          <line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+        </svg>
+        <p>No phases yet. Add phases with planned dates to see the timeline.</p>
+      </div>
+    );
   }
 
   return (
     <div className="pm-timeline" style={{ userSelect: 'none' }}>
-      {/* Header — week markers */}
-      <div style={{ display: 'flex', marginLeft: 190, marginBottom: 8, position: 'relative', height: 20 }}>
-        {weekMarkers.map((m, i) => (
-          <div key={i} style={{
-            position: 'absolute', left: `${m.pct}%`,
-            fontSize: 10, color: 'var(--muted)', transform: 'translateX(-50%)',
-            borderLeft: '1px solid var(--divider)', paddingLeft: 4,
-          }}>{m.label}</div>
-        ))}
+
+      {!hasDates && (
+        <div style={{
+          background: 'rgba(201,169,110,0.08)', border: '1px solid var(--gold-dim)',
+          borderRadius: 'var(--radius)', padding: '8px 14px', marginBottom: 12,
+          fontSize: 12, color: 'var(--gold-dim)',
+        }}>
+          No planned dates set on phases. Add start and end dates to phases to see bars on the timeline.
+        </div>
+      )}
+
+      {/* ── Header row ── */}
+      <div style={{ display: 'flex', marginBottom: 6 }}>
+        {/* Label column spacer — matches LABEL_W exactly */}
+        <div style={{ width: LABEL_W, flexShrink: 0 }} />
+        {/* Week marker area */}
+        <div style={{ flex: 1, position: 'relative', height: 20 }}>
+          {weekMarkers.map((m, i) => (
+            <div key={i} style={{
+              position: 'absolute',
+              left: `${m.pct}%`,
+              transform: 'translateX(-50%)',
+              fontSize: 10,
+              color: 'var(--muted)',
+              whiteSpace: 'nowrap',
+            }}>
+              {m.label}
+            </div>
+          ))}
+        </div>
       </div>
 
-      {phases.map(phase => (
-        <div key={phase.phaseId}>
-          {/* Phase row */}
-          <div className="pm-tl-row" style={{ cursor: 'pointer' }} onClick={() => togglePhase(phase.phaseId)}>
-            <div className="pm-tl-label" title={phase.name}>
-              <span style={{ marginRight: 4, color: 'var(--muted)', fontSize: 10 }}>
-                {expanded[phase.phaseId] ? '▼' : '▶'}
-              </span>
-              {phase.name}
-            </div>
-            <div className="pm-tl-bar-wrap">
-              {barStyle(phase.plannedStart, phase.plannedEnd, 'phase') && (
-                <div className="pm-tl-bar phase" style={barStyle(phase.plannedStart, phase.plannedEnd, 'phase')}>
-                  <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', fontSize: 10 }}>
-                    {phase.status}
-                  </span>
-                </div>
-              )}
-              {/* Today line */}
-              <div style={{
-                position: 'absolute', top: 0, bottom: 0,
-                left: `${Math.max(0, Math.min(100, (daysBetween(rangeStart, new Date()) / totalDays) * 100))}%`,
-                width: 2, background: 'rgba(220,60,60,.7)', zIndex: 2,
-              }} />
-            </div>
-          </div>
+      {/* ── Phase + activity rows ── */}
+      <div style={{ position: 'relative' }}>
 
-          {/* Activity rows (expanded) */}
-          {expanded[phase.phaseId] && (activities[phase.phaseId] || []).map(act => (
-            <div key={act.activityId} className="pm-tl-row">
-              <div className="pm-tl-label" style={{ paddingLeft: 20, fontSize: 11, color: 'var(--muted)' }} title={act.name}>
-                {act.name}
+        {/* Today line — single overlay across all rows */}
+        <div style={{
+          position: 'absolute',
+          top: 0, bottom: 0,
+          left: `calc(${LABEL_W}px + ${todayPct}% * (100% - ${LABEL_W}px) / 100)`,
+          width: 2,
+          background: 'rgba(220,60,60,.75)',
+          zIndex: 10,
+          pointerEvents: 'none',
+        }}>
+          <div style={{
+            position: 'absolute', top: 0, left: 3,
+            fontSize: 9, color: 'rgba(220,60,60,.9)', whiteSpace: 'nowrap',
+          }}>Today</div>
+        </div>
+
+        {phases.map(phase => (
+          <div key={phase.phaseId}>
+            {/* Phase row */}
+            <div
+              className="pm-tl-row"
+              style={{ cursor: 'pointer' }}
+              onClick={() => togglePhase(phase.phaseId)}
+              title={phase.plannedStart
+                ? `${fmtFull(phase.plannedStart)} → ${fmtFull(phase.plannedEnd)}`
+                : 'No dates set'}
+            >
+              <div className="pm-tl-label">
+                <span style={{ marginRight: 5, color: 'var(--muted)', fontSize: 9 }}>
+                  {expanded[phase.phaseId] ? '▼' : '▶'}
+                </span>
+                {phase.name}
               </div>
+
               <div className="pm-tl-bar-wrap">
-                {barStyle(act.plannedStart, act.plannedEnd, 'activity') && (
-                  <div className="pm-tl-bar activity" style={barStyle(act.plannedStart, act.plannedEnd, 'activity')}>
+                {barStyle(phase.plannedStart, phase.plannedEnd) ? (
+                  <div
+                    className="pm-tl-bar phase"
+                    style={barStyle(phase.plannedStart, phase.plannedEnd)}
+                    title={`${phase.name} · ${phase.status}`}
+                  >
                     <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', fontSize: 10 }}>
-                      {act.status}
+                      {phase.status}
                     </span>
+                  </div>
+                ) : (
+                  /* No dates — show a ghost bar */
+                  <div style={{
+                    position: 'absolute', left: '2%', right: '2%', top: 6, height: 24,
+                    background: 'var(--mid)', borderRadius: 'var(--radius)',
+                    display: 'flex', alignItems: 'center', padding: '0 8px',
+                  }}>
+                    <span style={{ fontSize: 10, color: 'var(--muted)' }}>No dates — {phase.status}</span>
                   </div>
                 )}
               </div>
             </div>
-          ))}
-        </div>
-      ))}
+
+            {/* Activity rows (expanded) */}
+            {expanded[phase.phaseId] && (actCache[phase.phaseId] || []).map(act => (
+              <div
+                key={act.activityId}
+                className="pm-tl-row"
+                title={act.plannedStart
+                  ? `${fmtFull(act.plannedStart)} → ${fmtFull(act.plannedEnd)}`
+                  : 'No dates set'}
+              >
+                <div className="pm-tl-label" style={{ paddingLeft: 22, fontSize: 11, color: 'var(--muted)' }}>
+                  {act.name}
+                </div>
+                <div className="pm-tl-bar-wrap">
+                  {barStyle(act.plannedStart, act.plannedEnd) ? (
+                    <div
+                      className="pm-tl-bar activity"
+                      style={barStyle(act.plannedStart, act.plannedEnd)}
+                      title={`${act.name} · ${act.status}`}
+                    >
+                      <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', fontSize: 10 }}>
+                        {act.status}
+                      </span>
+                    </div>
+                  ) : (
+                    <div style={{
+                      position: 'absolute', left: '4%', right: '4%', top: 6, height: 22,
+                      background: 'var(--charcoal)', border: '1px dashed var(--divider)',
+                      borderRadius: 'var(--radius)', display: 'flex', alignItems: 'center', padding: '0 8px',
+                    }}>
+                      <span style={{ fontSize: 10, color: 'var(--muted)' }}>No dates</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {/* Loading indicator while activities fetch */}
+            {expanded[phase.phaseId] && !actCache[phase.phaseId] && (
+              <div className="pm-tl-row">
+                <div className="pm-tl-label" style={{ paddingLeft: 22, fontSize: 11, color: 'var(--muted)' }}>
+                  Loading…
+                </div>
+                <div className="pm-tl-bar-wrap" />
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

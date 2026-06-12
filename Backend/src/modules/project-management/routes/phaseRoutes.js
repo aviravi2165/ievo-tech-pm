@@ -20,7 +20,8 @@ router.use(authenticate);
 
 router.patch('/:id',        resolvePhaseProject, requireRole('Manager'), ctrl.update);
 router.delete('/:id',       resolvePhaseProject, requireRole('Manager'), ctrl.remove);
-router.patch('/:id/status', resolvePhaseProject, requireRole('Manager'), ctrl.updateStatus);
+router.patch('/:id/status',  resolvePhaseProject, requireRole('Manager'), ctrl.updateStatus);
+router.patch('/:id/reorder', resolvePhaseProject, requireRole('Manager'), ctrl.reorder);
 router.post('/:id/dependencies',              resolvePhaseProject, requireRole('Manager'), checkCircular('phase'), ctrl.addDep);
 router.delete('/:id/dependencies/:depId',     resolvePhaseProject, requireRole('Manager'), ctrl.removeDep);
 

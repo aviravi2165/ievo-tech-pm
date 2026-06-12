@@ -23,11 +23,18 @@ async function getPhasesForProject(projectId) {
 async function createPhase(projectId, userId, body) {
   const { name, description, plannedStart, plannedEnd, displayOrder } = body;
   if (!name?.trim()) { const e = new Error('Phase name required'); e.statusCode=400; throw e; }
+  // Assign display_order = next integer in sequence (1-based)
+  const { rows: orderRow } = await getPool().query(
+    `SELECT COALESCE(MAX(display_order), 0) + 1 AS next_order FROM pm_phases WHERE project_id=$1 AND NOT is_deleted`,
+    [projectId]
+  );
+  const nextOrder = displayOrder ?? orderRow[0].next_order;
+
   const { rows } = await getPool().query(
     `INSERT INTO pm_phases (project_id,name,description,planned_start,planned_end,display_order)
-     VALUES ($1,$2,$3,$4,$5,COALESCE($6,(SELECT COALESCE(MAX(display_order),0)+10 FROM pm_phases WHERE project_id=$1 AND NOT is_deleted)))
-     RETURNING phase_id AS "phaseId", name, status`,
-    [projectId, name.trim(), description||null, plannedStart||null, plannedEnd||null, displayOrder??null]
+     VALUES ($1,$2,$3,$4,$5,$6)
+     RETURNING phase_id AS "phaseId", name, status, display_order AS "displayOrder"`,
+    [projectId, name.trim(), description||null, plannedStart||null, plannedEnd||null, nextOrder]
   );
   await audit.log({ entityType:'phase', entityId:rows[0].phaseId, projectId, userId, action:'created', fieldChanged:'name', newValue:name.trim() });
   return rows[0];
@@ -82,4 +89,33 @@ async function removePhaseDep(phaseId, dependsOnId, projectId, userId) {
   await audit.log({ entityType:'phase', entityId:phaseId, projectId, userId, action:'dependency_removed', oldValue:dependsOnId });
 }
 
-module.exports = { getPhasesForProject, createPhase, updatePhase, updatePhaseStatus, deletePhase, addPhaseDep, removePhaseDep };
+async function reorderPhase(projectId, phaseId, direction) {
+  const pool = getPool();
+  // Get all phases sorted by display_order
+  const { rows: phases } = await pool.query(
+    `SELECT phase_id, display_order FROM pm_phases
+     WHERE project_id=$1 AND NOT is_deleted ORDER BY display_order, phase_id`,
+    [projectId]
+  );
+
+  const idx = phases.findIndex(p => p.phase_id === parseInt(phaseId, 10));
+  if (idx === -1) return;
+
+  const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+  if (swapIdx < 0 || swapIdx >= phases.length) return;
+
+  const current = phases[idx];
+  const swap    = phases[swapIdx];
+
+  // Swap display_order values
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`UPDATE pm_phases SET display_order=$1 WHERE phase_id=$2`, [swap.display_order, current.phase_id]);
+    await client.query(`UPDATE pm_phases SET display_order=$1 WHERE phase_id=$2`, [current.display_order, swap.phase_id]);
+    await client.query('COMMIT');
+  } catch(err) { await client.query('ROLLBACK'); throw err; }
+  finally { client.release(); }
+}
+
+module.exports = { getPhasesForProject, createPhase, updatePhase, updatePhaseStatus, deletePhase, addPhaseDep, removePhaseDep, reorderPhase };

@@ -37,9 +37,10 @@ export function useProject(projectId) {
     const token = localStorage.getItem('erp_token');
     if (!token) return;
 
-    const socket = io(import.meta.env.VITE_API_BASE_URL || window.location.origin, {
+    // Namespace '/pm' must be appended to the URL — it is NOT a socket.io-client option
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || window.location.origin;
+    const socket = io(`${baseUrl}/pm`, {
       path: '/socket.io',
-      namespace: '/pm',
       auth: { token },
       transports: ['websocket'],
     });

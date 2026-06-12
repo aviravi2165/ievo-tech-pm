@@ -25,6 +25,13 @@ export default function ProjectDetailPage({ projectId, onBack }) {
   const myRole  = project?.myRole;
   const canEdit = myRole === 'Manager';
 
+  const handleReorder = async (phaseId, direction) => {
+    try {
+      await phaseApi.reorder(phaseId, direction);
+      refetch();
+    } catch { /**/ }
+  };
+
   const handleAddPhase = async () => {
     if (!newPhaseName.trim()) return;
     try {
@@ -131,7 +138,15 @@ export default function ProjectDetailPage({ projectId, onBack }) {
             )}
 
             {phases.map(ph => (
-              <PhasePanel key={ph.phaseId} phase={ph} myRole={myRole} projectId={projectId} />
+              <PhasePanel
+                key={ph.phaseId}
+                phase={ph}
+                myRole={myRole}
+                projectId={projectId}
+                allPhases={phases}
+                onReorder={handleReorder}
+                onRefetchProject={refetch}
+              />
             ))}
           </>
         )}

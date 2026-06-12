@@ -187,7 +187,7 @@ export default function ActivityRow({ activity, myRole, phaseId, allActivities =
           )}
 
           {/* Task list — scrollable */}
-          <div style={{ maxHeight: 320, overflowY: 'auto', paddingRight: 2 }}>
+          <div className="pm-task-list">
             {loading && <div style={{ color: 'var(--muted)', fontSize: 12, padding: '8px 0' }}>Loading tasks…</div>}
             {!loading && tasks.map(t => (
               <TaskItem
@@ -195,7 +195,8 @@ export default function ActivityRow({ activity, myRole, phaseId, allActivities =
                 task={t}
                 myRole={myRole}
                 allTasks={tasks}
-                onRefetch={() => { fetchTasks(); onRefetchProject?.(); }}
+                onRefetch={fetchTasks}
+                onRefetchProject={onRefetchProject}
               />
             ))}
             {!loading && !tasks.length && (

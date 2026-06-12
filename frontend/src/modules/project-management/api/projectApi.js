@@ -25,6 +25,7 @@ export const phaseApi = {
   delete:         (id)             => axiosInstance.delete(`/api/phases/${id}`).then(r => r.data),
   addDep:         (id, dependsOnId)=> axiosInstance.post(`/api/phases/${id}/dependencies`, { dependsOnId }).then(r => r.data),
   removeDep:      (id, depId)      => axiosInstance.delete(`/api/phases/${id}/dependencies/${depId}`).then(r => r.data),
+  reorder:        (id, direction)  => axiosInstance.patch(`/api/phases/${id}/reorder`, { direction }).then(r => r.data),
 };
 
 export const activityApi = {
