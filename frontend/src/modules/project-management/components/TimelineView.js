@@ -3,16 +3,30 @@ import { phaseApi } from '../api/projectApi';
 
 const LABEL_W = 180; // must match .pm-tl-label width in pm.css
 
+/** Fix: parse YYYY-MM-DD as local date — avoids off-by-one in +UTC timezones */
+function parseDate(d) {
+  if (!d) return null;
+  const s = String(d).split('T')[0];
+  const [y, m, day] = s.split('-').map(Number);
+  return new Date(y, m - 1, day);
+}
+
 function daysBetween(a, b) {
-  return Math.round((new Date(b) - new Date(a)) / 86400000);
+  const da = a instanceof Date ? a : parseDate(a);
+  const db = b instanceof Date ? b : parseDate(b);
+  return Math.round((db - da) / 86400000);
 }
 
 function fmt(d) {
-  return new Date(d).toLocaleDateString([], { day: 'numeric', month: 'short' });
+  const dt = d instanceof Date ? d : parseDate(d);
+  if (!dt) return '';
+  return dt.toLocaleDateString([], { day: 'numeric', month: 'short' });
 }
 
 function fmtFull(d) {
-  return new Date(d).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
+  const dt = d instanceof Date ? d : parseDate(d);
+  if (!dt) return '';
+  return dt.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 export default function TimelineView({ phases = [], projectStart, projectEnd }) {
@@ -46,10 +60,9 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
       if (p.plannedStart) dates.push(p.plannedStart);
       if (p.plannedEnd)   dates.push(p.plannedEnd);
     });
-    const valid = dates.filter(Boolean).map(d => new Date(d));
+    const valid = dates.filter(Boolean).map(d => parseDate(d)).filter(Boolean);
 
     if (!valid.length) {
-      // No dates at all — show a 3-month window from today
       const start = new Date();
       start.setDate(1);
       return { rangeStart: start, totalDays: 90, hasDates: false };
@@ -88,9 +101,11 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
 
   // Returns left% and width% for a bar, or null if no dates
   const barStyle = (start, end) => {
-    if (!start || !end) return null;
-    const left  = Math.max(0,   (daysBetween(rangeStart, new Date(start)) / totalDays) * 100);
-    const right = Math.min(100, (daysBetween(rangeStart, new Date(end))   / totalDays) * 100);
+    const s = parseDate(start);
+    const e = parseDate(end);
+    if (!s || !e) return null;
+    const left  = Math.max(0,   (daysBetween(rangeStart, s) / totalDays) * 100);
+    const right = Math.min(100, (daysBetween(rangeStart, e) / totalDays) * 100);
     const width = Math.max(right - left, 0.8);
     return { left: `${left}%`, width: `${width}%` };
   };

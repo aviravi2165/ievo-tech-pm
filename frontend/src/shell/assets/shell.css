@@ -225,9 +225,10 @@
 .erp-main {
   flex: 1;
   min-width: 0;
-  overflow: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   background: var(--slate, #f8f5f0);
-  padding: 24px 28px;
 }
 
 /* ── Right message panel ── */
@@ -316,6 +317,9 @@
 /* ── Module content (center) ── */
 .erp-module {
   max-width: 1100px;
+  padding: 24px 28px;
+  overflow-y: auto;
+  height: 100%;
 }
 
 .erp-module-header h1 {

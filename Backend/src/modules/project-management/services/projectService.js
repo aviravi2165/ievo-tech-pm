@@ -111,7 +111,20 @@ async function addMember(projectId, targetUserId, role, actorUserId) {
 }
 
 async function updateMemberRole(projectId, targetUserId, role, actorUserId) {
-  const { rowCount } = await getPool().query(
+  const pool = getPool();
+  // Safety: if downgrading someone, ensure at least one other Manager remains
+  if (role !== 'Manager') {
+    const { rows: managers } = await pool.query(
+      `SELECT user_id FROM pm_members WHERE project_id=$1 AND role='Manager'`,
+      [projectId]
+    );
+    const remainingManagers = managers.filter(m => String(m.user_id) !== String(targetUserId));
+    if (remainingManagers.length === 0) {
+      const e = new Error('Cannot demote: this is the only Manager. Assign another Manager first.');
+      e.statusCode = 400; throw e;
+    }
+  }
+  const { rowCount } = await pool.query(
     `UPDATE pm_members SET role=$3 WHERE project_id=$1 AND user_id=$2`, [projectId, targetUserId, role]
   );
   if (!rowCount) { const e = new Error('Member not found'); e.statusCode=404; throw e; }
@@ -119,7 +132,17 @@ async function updateMemberRole(projectId, targetUserId, role, actorUserId) {
 }
 
 async function removeMember(projectId, targetUserId, actorUserId) {
-  await getPool().query(`DELETE FROM pm_members WHERE project_id=$1 AND user_id=$2`, [projectId, targetUserId]);
+  const pool = getPool();
+  // Safety: prevent removing the last Manager
+  const { rows: m } = await pool.query(`SELECT role FROM pm_members WHERE project_id=$1 AND user_id=$2`, [projectId, targetUserId]);
+  if (m[0]?.role === 'Manager') {
+    const { rows: managers } = await pool.query(`SELECT user_id FROM pm_members WHERE project_id=$1 AND role='Manager'`, [projectId]);
+    if (managers.length <= 1) {
+      const e = new Error('Cannot remove: this is the only Manager. Assign another Manager first.');
+      e.statusCode = 400; throw e;
+    }
+  }
+  await pool.query(`DELETE FROM pm_members WHERE project_id=$1 AND user_id=$2`, [projectId, targetUserId]);
   await audit.log({ entityType:'project', entityId:projectId, projectId, userId:actorUserId, action:'member_removed' });
 }
 

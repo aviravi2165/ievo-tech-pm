@@ -33,13 +33,17 @@ async function resolveUnblocked(client, entityType, completedId) {
   return unblocked;
 }
 
-async function blockIfNeeded(pool, entityType, entityId, dependsOnId) {
+/**
+ * blockIfNeeded — accepts a pool or a transaction client.
+ * When the dependency's blocker is not yet done, set the dependent entity to Blocked.
+ */
+async function blockIfNeeded(poolOrClient, entityType, entityId, dependsOnId) {
   const c = CFG[entityType]; if (!c) return;
-  const { rows } = await pool.query(
+  const { rows } = await poolOrClient.query(
     `SELECT status FROM ${c.entityTable} WHERE ${c.idCol} = $1`, [dependsOnId]
   );
   if (rows[0]?.status !== c.done) {
-    await pool.query(
+    await poolOrClient.query(
       `UPDATE ${c.entityTable} SET status = 'Blocked' WHERE ${c.idCol} = $1 AND status = 'To Do'`,
       [entityId]
     );

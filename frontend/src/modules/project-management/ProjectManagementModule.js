@@ -5,14 +5,9 @@ import ProjectDetailPage from './pages/ProjectDetailPage';
 
 /**
  * ProjectManagementModule
- *
- * Self-contained entry point — rendered by AppShell when the
- * "Project Management" module is selected in the drawer.
- *
- * Internal routing is handled with a simple stack: null = list, id = detail.
- * No router dependency — keeps the module portable.
+ * Pass currentUser down so TaskItem/MemberManager know who the logged-in user is.
  */
-export default function ProjectManagementModule() {
+export default function ProjectManagementModule({ currentUser }) {
   const [activeProjectId, setActiveProjectId] = useState(null);
 
   if (activeProjectId) {
@@ -20,6 +15,7 @@ export default function ProjectManagementModule() {
       <ProjectDetailPage
         projectId={activeProjectId}
         onBack={() => setActiveProjectId(null)}
+        currentUser={currentUser}
       />
     );
   }

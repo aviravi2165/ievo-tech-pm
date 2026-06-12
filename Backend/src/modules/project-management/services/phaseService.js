@@ -79,8 +79,15 @@ async function deletePhase(phaseId, projectId, userId) {
 }
 
 async function addPhaseDep(phaseId, dependsOnId, projectId, userId) {
-  await getPool().query(`INSERT INTO pm_phase_deps (phase_id,depends_on_phase_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [phaseId, dependsOnId]);
-  await blockIfNeeded(getPool(), 'phase', phaseId, dependsOnId);
+  const pool = getPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`INSERT INTO pm_phase_deps (phase_id,depends_on_phase_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [phaseId, dependsOnId]);
+    await blockIfNeeded(client, 'phase', phaseId, dependsOnId);
+    await client.query('COMMIT');
+  } catch(err) { await client.query('ROLLBACK'); throw err; }
+  finally { client.release(); }
   await audit.log({ entityType:'phase', entityId:phaseId, projectId, userId, action:'dependency_added', newValue:dependsOnId });
 }
 

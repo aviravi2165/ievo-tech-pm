@@ -103,8 +103,15 @@ async function removeAssignee(taskId, targetUserId, projectId, userId) {
 }
 
 async function addTaskDep(taskId, dependsOnId, projectId, userId) {
-  await getPool().query(`INSERT INTO pm_task_deps (task_id,depends_on_task_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [taskId, dependsOnId]);
-  await blockIfNeeded(getPool(), 'task', taskId, dependsOnId);
+  const pool = getPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`INSERT INTO pm_task_deps (task_id,depends_on_task_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [taskId, dependsOnId]);
+    await blockIfNeeded(client, 'task', taskId, dependsOnId);
+    await client.query('COMMIT');
+  } catch(err) { await client.query('ROLLBACK'); throw err; }
+  finally { client.release(); }
   await audit.log({ entityType:'task', entityId:taskId, projectId, userId, action:'dependency_added', newValue:dependsOnId });
 }
 
