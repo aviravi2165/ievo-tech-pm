@@ -18,9 +18,6 @@ router.get('/:conversationId/thread',        messageController.getThread);
 router.post('/:conversationId/reply',        messageController.reply);
 router.patch('/:conversationId/archive',     messageController.archive);
 
-// Remove a participant from a CC thread (soft-remove)
-router.delete('/:conversationId/participants/:userId', messageController.removeParticipant);
-
 router.patch('/:messageId/read',             messageController.markRead);
 router.delete('/:messageId',                 messageController.remove);
 
