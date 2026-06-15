@@ -10,6 +10,7 @@
   background: var(--slate, #f8f5f0);
 }
 
+
 .erp-shell-body {
   display: flex;
   flex: 1;
@@ -30,20 +31,23 @@
   border-top: 3px solid var(--ievo-red, #D92906);
   box-shadow: 0 1px 3px rgba(26, 29, 35, 0.06);
 }
-
+.erp-topbar-logo-img {
+  height: 32px; /* Adjust this to match your topbar's design */
+  width: auto;  /* Keeps the aspect ratio intact */
+  object-fit: contain;
+  display: block;
+}
 .erp-topbar-brand {
   display: flex;
   align-items: center;
   gap: 12px;
   flex-shrink: 0;
 }
-
-.erp-topbar-logo {
-  font-family: var(--font-display, Georgia, serif);
-  font-size: 22px;
-  font-weight: 600;
-  color: var(--coal, #1a1d23);
-  letter-spacing: 0.06em;
+.erp-topbar-logo-img {
+  height: 32px; /* Adjust this to match your topbar's design */
+  width: auto;  /* Keeps the aspect ratio intact */
+  object-fit: contain;
+  display: block;
 }
 
 .erp-topbar-divider {

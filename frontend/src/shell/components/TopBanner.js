@@ -1,4 +1,5 @@
 import { useAuth } from '../../modules/auth/AuthContext';
+import logo from "../assets/logo.png";
 
 export default function TopBanner({ currentUser, activeModule }) {
   const { logout } = useAuth();
@@ -17,7 +18,11 @@ export default function TopBanner({ currentUser, activeModule }) {
   return (
     <header className="erp-topbar">
       <div className="erp-topbar-brand">
-        <span className="erp-topbar-logo">I.EVO</span>
+      <img 
+      src={logo} 
+      alt="I.EVO" 
+      className="erp-topbar-logo-img" 
+    />
         <span className="erp-topbar-divider" />
         <span className="erp-topbar-module">{activeModule?.label ?? 'ERP'}</span>
       </div>
