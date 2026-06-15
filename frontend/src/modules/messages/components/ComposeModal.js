@@ -5,11 +5,11 @@ import { fileApi }    from '../api/fileApi';
 import api            from '../api/axiosInstance';
 
 // ─────────────────────────────────────────────────────────────────
-// Tiny user-search hook
+// User-search hook (debounced)
 // ─────────────────────────────────────────────────────────────────
 function useUserSearch(query) {
-  const [results,  setResults]  = useState([]);
-  const [loading,  setLoading]  = useState(false);
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
   const debounce = useRef(null);
 
   useEffect(() => {
@@ -18,11 +18,11 @@ function useUserSearch(query) {
     debounce.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const res = await api.get('/api/users/search', { params: { q: query, limit: 10 } });
+        const res = await api.get('/api/users/search', { params: { q: query, limit: 12 } });
         setResults(res.data.users || res.data || []);
       } catch { setResults([]); }
       finally { setLoading(false); }
-    }, 280);
+    }, 240);
     return () => clearTimeout(debounce.current);
   }, [query]);
 
@@ -30,19 +30,28 @@ function useUserSearch(query) {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// RecipientRow — one chip with optional expand controls for groups
+// Recipient chip — handles users, unexpanded groups, expanded group member chips
 // ─────────────────────────────────────────────────────────────────
-function RecipientChip({ item, onRemove, onExpand, expandable }) {
+function RecipientChip({ item, onRemove, onExpand, expanding, mode }) {
+  const isGroup = item.type === 'group';
+  // In BCC mode, groups can be expanded or not expanded yet
+  const showExpand = mode === 'bcc' && isGroup && !item.expanded;
+
   return (
     <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 5,
-      padding: '3px 8px 3px 7px',
-      background: item.type === 'group' ? 'rgba(201,169,110,0.15)' : 'var(--mid)',
-      border: `1px solid ${item.type === 'group' ? 'var(--gold-dim)' : 'transparent'}`,
-      borderRadius: 4, fontSize: 12, color: 'var(--light)',
-      maxWidth: 200,
+      display:     'inline-flex',
+      alignItems:  'center',
+      gap:         4,
+      padding:     '3px 8px 3px 7px',
+      background:  isGroup ? 'rgba(237,28,36,0.08)' : 'var(--mid)',
+      border:      `1px solid ${isGroup ? 'rgba(237,28,36,0.3)' : 'transparent'}`,
+      borderRadius: 4,
+      fontSize:    12,
+      color:       'var(--light)',
+      maxWidth:    220,
+      flexShrink:  0,
     }}>
-      {item.type === 'group' && (
+      {isGroup && (
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="2.5">
           <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
           <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
@@ -50,24 +59,40 @@ function RecipientChip({ item, onRemove, onExpand, expandable }) {
       )}
       <span style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
         {item.label}
+        {isGroup && item.memberCount != null && (
+          <span style={{ color:'var(--muted)', fontSize:10, marginLeft:3 }}>({item.memberCount})</span>
+        )}
       </span>
-      {expandable && item.type === 'group' && (
+
+      {/* BCC: expand group button */}
+      {showExpand && (
         <button
           type="button"
-          title="Expand group members"
+          title="Expand group — send to each member individually"
           onClick={onExpand}
+          disabled={expanding}
           style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: 'var(--gold)', padding: '0 2px', fontSize: 11, lineHeight: 1,
+            background: 'none', border: 'none', cursor: expanding ? 'wait' : 'pointer',
+            color: 'var(--gold)', padding: '0 2px', fontSize: 12, lineHeight: 1,
+            display: 'flex', alignItems: 'center',
           }}
-        >⤵</button>
+        >
+          {expanding ? <span style={{fontSize:9}}>…</span> : '⤵'}
+        </button>
       )}
+
+      {/* BCC expanded indicator */}
+      {mode === 'bcc' && isGroup && item.expanded && (
+        <span style={{ fontSize:9, color:'var(--muted)', fontStyle:'italic' }}>expanded</span>
+      )}
+
       <button
         type="button"
         onClick={onRemove}
         style={{
           background: 'none', border: 'none', cursor: 'pointer',
-          color: 'var(--muted)', fontSize: 14, lineHeight: 1, padding: 0,
+          color: 'var(--muted)', fontSize: 15, lineHeight: 1, padding: '0 0 0 2px',
+          transition: 'color 0.15s',
         }}
         onMouseOver={e => e.currentTarget.style.color = 'var(--danger)'}
         onMouseOut={e => e.currentTarget.style.color = 'var(--muted)'}
@@ -79,22 +104,26 @@ function RecipientChip({ item, onRemove, onExpand, expandable }) {
 // ─────────────────────────────────────────────────────────────────
 // RecipientInput — search box + dropdown
 // ─────────────────────────────────────────────────────────────────
-function RecipientInput({ selectedIds, onAdd, groups = [], placeholder }) {
+function RecipientInput({ selectedIds, onAdd, groups, mode, placeholder }) {
   const [query, setQuery] = useState('');
   const [open,  setOpen]  = useState(false);
   const { results: users, loading } = useUserSearch(query);
   const inputRef = useRef(null);
   const dropRef  = useRef(null);
 
-  // Show groups when query empty
-  const groupMatches = groups.filter(g =>
-    !selectedIds.has(String(g.groupId)) &&
-    (!query.trim() || g.groupName.toLowerCase().includes(query.toLowerCase()))
-  );
-  const userResults = users.filter(u => !selectedIds.has(String(u.userId)));
+  // Show groups when query is empty or matches; hide users in group_thread mode
+  const groupMatches = (mode === 'bcc' || mode === 'group_thread')
+    ? groups.filter(g =>
+        !selectedIds.has(String(g.groupId)) &&
+        (!query.trim() || g.groupName.toLowerCase().includes(query.toLowerCase()))
+      )
+    : []; // CC auto-expands groups, so no group chips in CC
+  const userResults = mode !== 'group_thread'
+    ? users.filter(u => !selectedIds.has(String(u.userId)))
+    : [];
 
   useEffect(() => {
-    const h = (e) => {
+    const h = e => {
       if (!dropRef.current?.contains(e.target) && !inputRef.current?.contains(e.target))
         setOpen(false);
     };
@@ -102,7 +131,7 @@ function RecipientInput({ selectedIds, onAdd, groups = [], placeholder }) {
     return () => document.removeEventListener('mousedown', h);
   }, []);
 
-  const select = (item) => {
+  const select = item => {
     onAdd(item);
     setQuery('');
     setOpen(false);
@@ -112,7 +141,7 @@ function RecipientInput({ selectedIds, onAdd, groups = [], placeholder }) {
   const showDrop = open && (loading || groupMatches.length > 0 || userResults.length > 0 || query.trim());
 
   return (
-    <div style={{ position: 'relative', flex: 1 }}>
+    <div style={{ position: 'relative', flex: 1, minWidth: 80 }}>
       <input
         ref={inputRef}
         className="recipient-input"
@@ -123,36 +152,50 @@ function RecipientInput({ selectedIds, onAdd, groups = [], placeholder }) {
         onFocus={() => setOpen(true)}
       />
       {showDrop && (
-        <div ref={dropRef} className="dropdown" style={{ zIndex: 500 }}>
+        <div ref={dropRef} className="dropdown" style={{ zIndex: 600 }}>
           {loading && <div className="dropdown-item" style={{ color:'var(--muted)' }}>Searching…</div>}
           {!loading && !groupMatches.length && !userResults.length && query.trim() && (
             <div className="dropdown-item" style={{ color:'var(--muted)' }}>No results for "{query}"</div>
           )}
-          {groupMatches.map(g => (
-            <div key={`g-${g.groupId}`} className="dropdown-item"
-              onMouseDown={e => { e.preventDefault(); select({ id: String(g.groupId), label: g.groupName, type: 'group', memberCount: g.memberCount }); }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="2">
-                <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
-                <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
-              </svg>
-              <div>
-                <div style={{ color:'var(--light)', fontSize:13 }}>{g.groupName}</div>
-                <div style={{ color:'var(--muted)', fontSize:11 }}>{g.memberCount ?? 0} members · Group</div>
+          {groupMatches.length > 0 && (
+            <>
+              <div style={{ padding:'5px 14px 3px', fontSize:10, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.08em' }}>
+                Groups
               </div>
-            </div>
-          ))}
-          {userResults.map(u => (
-            <div key={`u-${u.userId}`} className="dropdown-item"
-              onMouseDown={e => { e.preventDefault(); select({ id: u.userId, label: `${u.firstName} ${u.lastName}`.trim(), sub: u.email, type: 'user' }); }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--subtle)" strokeWidth="2">
-                <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
-              </svg>
-              <div>
-                <div style={{ color:'var(--light)', fontSize:13 }}>{u.firstName} {u.lastName}</div>
-                <div style={{ color:'var(--muted)', fontSize:11 }}>{u.email}</div>
+              {groupMatches.map(g => (
+                <div key={`g-${g.groupId}`} className="dropdown-item"
+                  onMouseDown={e => { e.preventDefault(); select({ id: String(g.groupId), label: g.groupName, type: 'group', memberCount: g.memberCount }); }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="2">
+                    <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
+                    <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
+                  </svg>
+                  <div>
+                    <div style={{ color:'var(--light)', fontSize:13 }}>{g.groupName}</div>
+                    <div style={{ color:'var(--muted)', fontSize:11 }}>{g.memberCount ?? 0} members</div>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+          {userResults.length > 0 && (
+            <>
+              <div style={{ padding:'5px 14px 3px', fontSize:10, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.08em' }}>
+                People
               </div>
-            </div>
-          ))}
+              {userResults.map(u => (
+                <div key={`u-${u.userId}`} className="dropdown-item"
+                  onMouseDown={e => { e.preventDefault(); select({ id: u.userId, label: `${u.firstName||''} ${u.lastName||''}`.trim() || u.email, sub: u.email, type: 'user' }); }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--subtle)" strokeWidth="2">
+                    <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                  </svg>
+                  <div>
+                    <div style={{ color:'var(--light)', fontSize:13 }}>{`${u.firstName||''} ${u.lastName||''}`.trim()}</div>
+                    <div style={{ color:'var(--muted)', fontSize:11 }}>{u.email}</div>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       )}
     </div>
@@ -160,103 +203,140 @@ function RecipientInput({ selectedIds, onAdd, groups = [], placeholder }) {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Mode pill selector
+// Mode descriptions and labels
 // ─────────────────────────────────────────────────────────────────
 const MODES = [
-  { key: 'bcc',          label: 'Private',      desc: 'Each recipient gets a separate private thread' },
-  { key: 'cc',           label: 'Shared',        desc: 'One shared thread, everyone can see each other' },
-  { key: 'group_thread', label: 'Group Thread',  desc: 'Send to existing group conversation' },
+  {
+    key:   'bcc',
+    label: 'Private',
+    hint:  'Each recipient gets their own separate thread. No one sees others.',
+  },
+  {
+    key:   'cc',
+    label: 'Shared',
+    hint:  'One shared thread. Everyone sees replies. Groups auto-expand. Sender can remove participants.',
+  },
+  {
+    key:   'group_thread',
+    label: 'Group Chat',
+    hint:  'Post into a group\'s shared chat. Members stay in the group conversation.',
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────
-// Main ComposeModal
+// Main ComposeModal — complete rewrite
 // ─────────────────────────────────────────────────────────────────
-export default function ComposeModal({ onClose, onSent, groups = [] }) {
-  // Mode
-  const [mode, setMode] = useState('bcc');
-
-  // Recipients — stored as { id, label, type: 'user'|'group', expanded?: boolean, members?: [] }
-  const [recipients, setRecipients] = useState([]);
-
-  // Subject + body
+export default function ComposeModal({ onClose, onSent, groups = [], initialRecipients = [] }) {
+  const [mode,       setMode]       = useState('bcc');
+  const [recipients, setRecipients] = useState(initialRecipients || []);
   const [subject,    setSubject]    = useState('');
-  const bodyRef = useRef(null);
-
-  // Attachments
-  const [attachments, setAttachments] = useState([]);
-  const fileRef = useRef(null);
-
-  // State
   const [allowReply, setAllowReply] = useState(true);
   const [sending,    setSending]    = useState(false);
   const [error,      setError]      = useState('');
+  const [attachments, setAttachments] = useState([]);
+  const [expanding,  setExpanding]  = useState({}); // groupId → bool
 
-  // Expansion loading state per group chip
-  const [expanding, setExpanding] = useState({});
+  const bodyRef = useRef(null);
+  const fileRef = useRef(null);
 
-  const selectedIds = new Set(recipients.map(r => String(r.id)));
+  // If initial recipients change externally (opened from group card)
+  useEffect(() => {
+    if (initialRecipients?.length) setRecipients(initialRecipients);
+  }, []); // eslint-disable-line
+
+  // Selected IDs for deduplication
+  const selectedIds = new Set(
+    recipients.flatMap(r =>
+      r.expanded && r.members ? r.members.map(m => String(m.id)) : [String(r.id)]
+    )
+  );
+
+  // ── Mode change ──────────────────────────────────────────────────
+  const handleModeChange = async (newMode) => {
+    setMode(newMode);
+    setError('');
+    // When switching TO cc mode, auto-expand any group chips already in list
+    if (newMode === 'cc') {
+      const groups = recipients.filter(r => r.type === 'group');
+      for (const g of groups) await expandGroup(g, true);
+    }
+    // When switching to group_thread, keep only group chips
+    if (newMode === 'group_thread') {
+      setRecipients(prev => prev.filter(r => r.type === 'group'));
+    }
+  };
 
   // ── Add recipient ────────────────────────────────────────────────
-  const addRecipient = (item) => {
-    if (selectedIds.has(String(item.id))) return;
-    // In CC mode, auto-expand groups immediately
-    if (mode === 'cc' && item.type === 'group') {
-      expandGroup(item, true);
+  const addRecipient = useCallback(async (item) => {
+    // Dedupe
+    const idStr = String(item.id);
+    if (selectedIds.has(idStr)) return;
+
+    if (item.type === 'group' && mode === 'cc') {
+      // CC: auto-expand group into individual member chips immediately
+      await expandGroup(item, true);
       return;
     }
+
     setRecipients(prev => [...prev, item]);
-  };
+  }, [selectedIds, mode]); // eslint-disable-line
 
-  const removeRecipient = (id) => {
+  // ── Remove recipient ─────────────────────────────────────────────
+  const removeRecipient = useCallback((id) => {
     setRecipients(prev => prev.filter(r => String(r.id) !== String(id)));
-  };
+  }, []);
 
-  // ── Expand group chip into individual members ────────────────────
+  // ── Expand group chip → individual member chips ──────────────────
   const expandGroup = useCallback(async (groupItem, replace = false) => {
-    const gid = groupItem.id;
+    const gid = String(groupItem.id);
     setExpanding(prev => ({ ...prev, [gid]: true }));
     try {
       const members = await groupApi.getMembers(parseInt(gid, 10));
-      const memberChips = members
-        .filter(m => !selectedIds.has(String(m.userId)))
-        .map(m => ({
-          id:    m.userId,
-          label: m.firstName ? `${m.firstName} ${m.lastName}`.trim() : m.email,
-          sub:   m.email,
-          type:  'user',
-        }));
+      const memberChips = members.map(m => ({
+        id:    m.userId,
+        label: `${m.firstName||''} ${m.lastName||''}`.trim() || m.email,
+        sub:   m.email,
+        type:  'user',
+        fromGroup: groupItem.label,
+      }));
+
       if (replace) {
-        // Replace group chip with individual member chips
-        setRecipients(prev => [
-          ...prev.filter(r => String(r.id) !== String(gid)),
-          ...memberChips.filter(mc => !prev.find(p => String(p.id) === String(mc.id))),
-        ]);
+        // Replace group chip with individual member chips (CC / explicit expand)
+        setRecipients(prev => {
+          const without = prev.filter(r => String(r.id) !== gid);
+          const newOnes = memberChips.filter(mc => !without.find(p => String(p.id) === String(mc.id)));
+          return [...without, ...newOnes];
+        });
       } else {
-        // Add members alongside the group chip (for BCC preview)
-        setRecipients(prev =>
-          prev.map(r => String(r.id) === String(gid)
-            ? { ...r, expanded: true, members: memberChips }
-            : r
-          )
-        );
+        // BCC: mark group as expanded, store members on the chip
+        setRecipients(prev => prev.map(r =>
+          String(r.id) === gid ? { ...r, expanded: true, members: memberChips } : r
+        ));
       }
-    } catch { /**/ }
-    finally { setExpanding(prev => ({ ...prev, [gid]: false })); }
-  }, [selectedIds]);
+    } catch {
+      setError(`Failed to expand group "${groupItem.label}". Try again.`);
+    } finally {
+      setExpanding(prev => ({ ...prev, [gid]: false }));
+    }
+  }, []);
 
   // ── Formatting ───────────────────────────────────────────────────
-  const execCmd = (cmd) => { bodyRef.current?.focus(); document.execCommand(cmd, false, null); };
+  const execCmd = cmd => { bodyRef.current?.focus(); document.execCommand(cmd, false, null); };
 
   // ── File upload ──────────────────────────────────────────────────
-  const ALLOWED = ['application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','image/jpeg','image/png','text/plain'];
+  const ALLOWED = [
+    'application/pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'image/jpeg', 'image/png', 'text/plain',
+  ];
 
-  const handleFile = async (e) => {
+  const handleFile = async e => {
     const files = Array.from(e.target.files || []);
     e.target.value = '';
     for (const file of files) {
-      if (!ALLOWED.includes(file.type)) { setError(`Not allowed: ${file.name}`); continue; }
-      if (file.size > 25 * 1024 * 1024) { setError(`Too large: ${file.name}`); continue; }
+      if (!ALLOWED.includes(file.type)) { setError(`File type not allowed: ${file.name}`); continue; }
+      if (file.size > 25 * 1024 * 1024) { setError(`File too large (max 25 MB): ${file.name}`); continue; }
       setError('');
       const tempId = `tmp_${Date.now()}_${file.name}`;
       setAttachments(prev => [...prev, { tempId, name: file.name, uploading: true, progress: 0 }]);
@@ -274,47 +354,57 @@ export default function ComposeModal({ onClose, onSent, groups = [] }) {
     }
   };
 
-  // ── Build send payload ───────────────────────────────────────────
+  // ── Build payload ────────────────────────────────────────────────
   const buildPayload = () => {
     const bodyHtml = bodyRef.current?.innerHTML?.trim();
     if (!bodyHtml || bodyHtml === '<br>') { setError('Message body is required.'); return null; }
-    if (!subject.trim()) { setError('Subject is required.'); return null; }
-    if (recipients.length === 0) { setError('Add at least one recipient.'); return null; }
+    if (!subject.trim())                  { setError('Subject is required.');       return null; }
+    if (!recipients.length)               { setError('Add at least one recipient.'); return null; }
     if (attachments.some(a => a.uploading)) { setError('Wait for uploads to finish.'); return null; }
 
     const attachmentIds = attachments.filter(a => a.attachmentId).map(a => a.attachmentId);
+    const base = { subject: subject.trim(), bodyHtml, allowReply, attachmentIds, mode };
 
     if (mode === 'group_thread') {
       const groupIds = recipients.filter(r => r.type === 'group').map(r => parseInt(r.id, 10));
-      const recipientIds = recipients.filter(r => r.type === 'user').map(r => r.id);
-      if (!groupIds.length && !recipientIds.length) { setError('Add at least one group or user.'); return null; }
-      return { mode, subject: subject.trim(), bodyHtml, allowReply, attachmentIds, groupIds, recipientIds };
+      if (!groupIds.length) { setError('Select at least one group.'); return null; }
+      return { ...base, groupIds, recipientIds: [] };
     }
 
     if (mode === 'cc') {
-      // All chips should already be expanded to users
+      // All recipients should already be user chips (groups were auto-expanded on add)
       const recipientIds = recipients.filter(r => r.type === 'user').map(r => r.id);
+      // Unexpanded groups fall back to backend expansion
       const groupIds     = recipients.filter(r => r.type === 'group').map(r => parseInt(r.id, 10));
-      return { mode, subject: subject.trim(), bodyHtml, allowReply, attachmentIds, recipientIds, groupIds };
+      if (!recipientIds.length && !groupIds.length) { setError('Add at least one recipient.'); return null; }
+      return { ...base, recipientIds, groupIds };
     }
 
-    // BCC mode
-    // Expanded group chips: use their members list as individual recipients
-    const recipientIds = [];
+    // BCC: collect individual users + expanded group members
+    const recipientIds         = [];
+    const groupIds             = [];
     const expandedGroupMembers = [];
+
     for (const r of recipients) {
-      if (r.type === 'user') { recipientIds.push(r.id); }
-      else if (r.type === 'group' && r.expanded && r.members?.length) {
-        r.members.forEach(m => expandedGroupMembers.push({ id: m.id, userId: m.id }));
-      } else if (r.type === 'group' && !r.expanded) {
-        // Not expanded — backend will expand from group members
-        return {
-          mode, subject: subject.trim(), bodyHtml, allowReply, attachmentIds,
-          recipientIds, groupIds: recipients.filter(rx => rx.type === 'group').map(rx => parseInt(rx.id, 10)),
-        };
+      if (r.type === 'user') {
+        recipientIds.push(r.id);
+      } else if (r.type === 'group') {
+        if (r.expanded && r.members?.length) {
+          // Send individually to each expanded member
+          r.members.forEach(m => expandedGroupMembers.push({ id: m.id, userId: m.id }));
+        } else {
+          // Not expanded — backend handles expansion
+          groupIds.push(parseInt(r.id, 10));
+        }
       }
     }
-    return { mode, subject: subject.trim(), bodyHtml, allowReply, attachmentIds, recipientIds, expandedGroupMembers };
+
+    if (!recipientIds.length && !groupIds.length && !expandedGroupMembers.length) {
+      setError('Add at least one recipient.');
+      return null;
+    }
+
+    return { ...base, recipientIds, groupIds, expandedGroupMembers };
   };
 
   // ── Send ─────────────────────────────────────────────────────────
@@ -325,102 +415,125 @@ export default function ComposeModal({ onClose, onSent, groups = [] }) {
     setSending(true);
     try {
       const data = await messageApi.send(payload);
-      onSent?.(data.results);
+      // messageApi.send returns the raw array or {results:[...]}
+      const results = Array.isArray(data) ? data : (data.results || []);
+      onSent?.(results);
       onClose();
     } catch (err) {
-      setError(err?.response?.data?.message || 'Failed to send. Please try again.');
+      setError(err?.response?.data?.message || err?.response?.data?.error || 'Failed to send. Try again.');
     } finally {
       setSending(false);
     }
   };
 
-  // ── Render ────────────────────────────────────────────────────────
-  const currentMode = MODES.find(m => m.key === mode);
+  const currentModeObj = MODES.find(m => m.key === mode) || MODES[0];
+
+  // Flat list of chips to render in the recipient box
+  // For BCC, expanded groups show their member chips below them
+  const chipRows = [];
+  for (const r of recipients) {
+    chipRows.push(r);
+    if (mode === 'bcc' && r.type === 'group' && r.expanded && r.members?.length) {
+      chipRows.push(...r.members.map(m => ({ ...m, _fromGroup: r.id })));
+    }
+  }
 
   return (
-    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal" style={{ width: 660 }}>
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ width: 680 }}>
 
-        {/* Header */}
+        {/* ── Header ── */}
         <div className="modal-header">
           <h3>New Message</h3>
-          <button type="button" className="icon-btn" onClick={onClose}>
+          <button type="button" className="icon-btn" onClick={onClose} title="Close">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
           </button>
         </div>
 
-        {/* Body */}
+        {/* ── Body ── */}
         <div className="modal-body">
 
           {/* Mode selector */}
           <div>
             <label className="field-label">Send Mode</label>
-            <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+            <div style={{ display:'flex', gap:6, marginBottom:6 }}>
               {MODES.map(m => (
                 <button
                   key={m.key}
                   type="button"
-                  onClick={() => { setMode(m.key); setRecipients([]); }}
+                  onClick={() => handleModeChange(m.key)}
                   style={{
-                    padding: '5px 14px',
-                    borderRadius: 'var(--radius)',
-                    border: `1px solid ${mode === m.key ? 'var(--gold)' : 'var(--divider)'}`,
-                    background: mode === m.key ? 'rgba(201,169,110,0.12)' : 'none',
-                    color: mode === m.key ? 'var(--gold)' : 'var(--muted)',
-                    fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                    flex:          1,
+                    padding:       '7px 12px',
+                    borderRadius:  'var(--radius)',
+                    border:        `1px solid ${mode === m.key ? 'var(--gold)' : 'var(--divider)'}`,
+                    background:    mode === m.key ? 'rgba(237,28,36,0.08)' : 'none',
+                    color:         mode === m.key ? 'var(--gold)' : 'var(--muted)',
+                    fontSize:      12,
+                    fontWeight:    600,
+                    cursor:        'pointer',
                     letterSpacing: '.04em',
+                    transition:    'all 0.15s',
                   }}
                 >
                   {m.label}
                 </button>
               ))}
             </div>
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>
-              {currentMode?.desc}
+            <div style={{
+              fontSize: 11, color: 'var(--muted)',
+              padding: '6px 10px',
+              background: 'var(--slate)',
+              border: '1px solid var(--divider)',
+              borderRadius: 'var(--radius)',
+              lineHeight: 1.5,
+            }}>
+              {currentModeObj.hint}
             </div>
           </div>
 
           {/* Recipients */}
           <div>
             <label className="field-label">
-              {mode === 'bcc' ? 'To (Private)' : mode === 'cc' ? 'To (Shared)' : 'Group / Users'}
+              {mode === 'bcc' && 'To — Private (separate threads)'}
+              {mode === 'cc' && 'To — Shared thread (all see each other)'}
+              {mode === 'group_thread' && 'Group(s)'}
             </label>
 
-            {/* Chips */}
-            <div className="recipient-box" style={{ flexWrap: 'wrap', minHeight: 42 }}>
-              {recipients.map(r => (
-                <RecipientChip
-                  key={r.id}
-                  item={r}
-                  onRemove={() => removeRecipient(r.id)}
-                  expandable={mode === 'bcc' && r.type === 'group'}
-                  onExpand={() => expandGroup(r)}
-                />
-              ))}
-              {/* Show expanded member chips for BCC groups */}
-              {mode === 'bcc' && recipients.filter(r => r.type === 'group' && r.expanded).flatMap(r =>
-                (r.members || []).map(m => (
+            <div className="recipient-box" style={{ flexWrap: 'wrap', minHeight: 44, alignItems:'flex-start', paddingTop:8 }}>
+              {chipRows.map(r => {
+                const isExpandedMember = !!r._fromGroup;
+                const parentGroupId    = r._fromGroup;
+                return (
                   <RecipientChip
-                    key={`exp-${m.id}`}
-                    item={{ ...m, label: m.label }}
+                    key={isExpandedMember ? `exp-${r.id}` : r.id}
+                    item={r}
+                    mode={mode}
+                    expanding={!!expanding[r.id]}
+                    onExpand={() => expandGroup(r)}
                     onRemove={() => {
-                      // Remove from parent group's members list
-                      setRecipients(prev => prev.map(p =>
-                        p.id === r.id
-                          ? { ...p, members: p.members.filter(x => x.id !== m.id) }
-                          : p
-                      ));
+                      if (isExpandedMember) {
+                        // Remove from expanded members list of the parent group chip
+                        setRecipients(prev => prev.map(p =>
+                          String(p.id) === String(parentGroupId)
+                            ? { ...p, members: (p.members || []).filter(m => String(m.id) !== String(r.id)) }
+                            : p
+                        ));
+                      } else {
+                        removeRecipient(r.id);
+                      }
                     }}
-                    expandable={false}
                   />
-                ))
-              )}
+                );
+              })}
+
               <RecipientInput
                 selectedIds={selectedIds}
                 onAdd={addRecipient}
-                groups={mode === 'group_thread' || mode === 'bcc' ? groups : []}
+                groups={groups}
+                mode={mode}
                 placeholder={
                   mode === 'group_thread'
                     ? 'Select a group…'
@@ -431,21 +544,16 @@ export default function ComposeModal({ onClose, onSent, groups = [] }) {
               />
             </div>
 
-            {/* BCC group expansion hint */}
+            {/* Context hints per mode */}
             {mode === 'bcc' && recipients.some(r => r.type === 'group' && !r.expanded) && (
-              <div style={{
-                fontSize: 11, color: 'var(--gold-dim)', marginTop: 4,
-                display: 'flex', alignItems: 'center', gap: 4,
-              }}>
+              <div style={{ fontSize:11, color:'var(--gold-dim)', marginTop:5, display:'flex', gap:5, alignItems:'center' }}>
                 <span>⤵</span>
-                <span>Click ⤵ on a group chip to expand members and send individually</span>
+                <span>Click ⤵ on a group chip to expand and send individually to each member. Otherwise the group sends as a whole.</span>
               </div>
             )}
-
-            {/* CC auto-expand note */}
             {mode === 'cc' && (
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                Groups are auto-expanded in Shared mode. All members will see each other.
+              <div style={{ fontSize:11, color:'var(--muted)', marginTop:5 }}>
+                Groups are auto-expanded into individual members. Remove specific people using × on their chip.
               </div>
             )}
           </div>
@@ -456,17 +564,17 @@ export default function ComposeModal({ onClose, onSent, groups = [] }) {
             <input
               className="field-input"
               type="text"
-              placeholder="Enter subject…"
+              placeholder="What is this about?"
               value={subject}
               onChange={e => setSubject(e.target.value)}
               maxLength={200}
             />
           </div>
 
-          {/* Message body with formatting toolbar */}
+          {/* Message body */}
           <div>
             <label className="field-label">Message</label>
-            <div className="composer-toolbar" style={{ marginBottom: 6 }}>
+            <div className="composer-toolbar" style={{ marginBottom:6 }}>
               <button type="button" className="fmt-btn" title="Bold"
                 onMouseDown={e => { e.preventDefault(); execCmd('bold'); }}><strong>B</strong></button>
               <button type="button" className="fmt-btn" title="Italic"
@@ -479,8 +587,9 @@ export default function ComposeModal({ onClose, onSent, groups = [] }) {
               <button type="button" className="fmt-btn" title="Bullet list"
                 onMouseDown={e => { e.preventDefault(); execCmd('insertUnorderedList'); }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/>
-                  <circle cx="4" cy="6" r="1.5" fill="currentColor"/>
+                  <line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/>
+                  <line x1="9" y1="18" x2="20" y2="18"/>
+                  <circle cx="4" cy="6"  r="1.5" fill="currentColor"/>
                   <circle cx="4" cy="12" r="1.5" fill="currentColor"/>
                   <circle cx="4" cy="18" r="1.5" fill="currentColor"/>
                 </svg>
@@ -501,8 +610,8 @@ export default function ComposeModal({ onClose, onSent, groups = [] }) {
               className="composer-area"
               contentEditable={!sending}
               suppressContentEditableWarning
-              data-placeholder="Write your message…"
-              style={{ minHeight: 110 }}
+              data-placeholder="Write your message… (Ctrl+Enter to send)"
+              style={{ minHeight: 120 }}
               onKeyDown={e => {
                 if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
                   e.preventDefault(); handleSend();
@@ -511,7 +620,7 @@ export default function ComposeModal({ onClose, onSent, groups = [] }) {
             />
           </div>
 
-          {/* Pending attachments */}
+          {/* Attachments */}
           {attachments.length > 0 && (
             <div className="composer-attachments">
               {attachments.map(a => (
@@ -530,12 +639,12 @@ export default function ComposeModal({ onClose, onSent, groups = [] }) {
             </div>
           )}
 
-          {/* Allow reply toggle — not shown in group_thread (always true) */}
+          {/* Allow reply toggle — not needed for group_thread */}
           {mode !== 'group_thread' && (
             <div className="toggle-row">
               <div>
                 <div className="toggle-label">Allow Replies</div>
-                <div className="toggle-sub">Disable for broadcast-only</div>
+                <div className="toggle-sub">Disable for broadcast-only announcements</div>
               </div>
               <label className="toggle">
                 <input type="checkbox" checked={allowReply} onChange={e => setAllowReply(e.target.checked)}/>
@@ -546,23 +655,26 @@ export default function ComposeModal({ onClose, onSent, groups = [] }) {
 
           {error && (
             <div style={{
-              color: 'var(--danger)', fontSize: 12, padding: '7px 10px',
-              background: 'rgba(192,57,43,0.1)', borderRadius: 'var(--radius)',
+              color: 'var(--danger)', fontSize: 12, padding: '8px 12px',
+              background: 'rgba(196,24,31,0.08)',
+              border: '1px solid rgba(196,24,31,0.25)',
+              borderRadius: 'var(--radius)',
             }}>
               {error}
             </div>
           )}
         </div>
 
-        {/* Footer */}
+        {/* ── Footer ── */}
         <div className="modal-footer">
+          <span style={{ fontSize:11, color:'var(--muted)' }}>Ctrl+Enter to send</span>
           <button type="button" className="btn btn-ghost" onClick={onClose} disabled={sending}>
             Cancel
           </button>
           <button type="button" className="btn btn-primary" onClick={handleSend} disabled={sending}>
             {sending
-              ? <><div className="spinner" style={{ width:14, height:14, borderWidth:2, display:'inline-block', marginRight:6 }}/> Sending…</>
-              : 'Send Message'
+              ? <><div className="spinner" style={{ width:13, height:13, borderWidth:2, display:'inline-block', marginRight:6, verticalAlign:'middle' }}/> Sending…</>
+              : 'Send'
             }
           </button>
         </div>
