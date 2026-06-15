@@ -157,6 +157,12 @@ CREATE TABLE IF NOT EXISTS comm_read_receipts (
   PRIMARY KEY (message_id, user_id)
 );
 
+-- Fix: add conv_type column to comm_conversations
+-- Run: psql -U postgres -p 5433 -d ievo_erp -f fix_conv_type.sql
+
+ALTER TABLE comm_conversations
+  ADD COLUMN IF NOT EXISTS conv_type VARCHAR(10) NOT NULL DEFAULT 'bcc'
+    CHECK (conv_type IN ('bcc','cc','group_thread'));
 -- ════════════════════════════════════════════════════════════
 -- 4. PROJECT MANAGEMENT MODULE  (prefix: pm_)
 -- ════════════════════════════════════════════════════════════
