@@ -10,8 +10,6 @@ export const messageApi = {
   getUnreadCount: () =>
     api.get('/api/messages/unread-count').then(r => r.data.count),
 
-  // NEW: returns array of conversationIds with unread messages
-  // Lighter than fetching the full inbox — used by useUnreadCount to build ref
   getUnreadConversationIds: () =>
     api.get('/api/messages/unread-conversation-ids').then(r => r.data.ids),
 
@@ -21,6 +19,7 @@ export const messageApi = {
   getThread: (conversationId) =>
     api.get(`/api/messages/${conversationId}/thread`).then(r => r.data),
 
+  // Returns { results: [...] } — array of conversations created
   send: (payload) =>
     api.post('/api/messages/send', payload).then(r => r.data),
 
@@ -32,6 +31,10 @@ export const messageApi = {
 
   archive: (conversationId) =>
     api.patch(`/api/messages/${conversationId}/archive`).then(r => r.data),
+
+  // Remove a participant from a CC thread (sender only)
+  removeParticipant: (conversationId, userId) =>
+    api.delete(`/api/messages/${conversationId}/participants/${userId}`).then(r => r.data),
 
   deleteMessage: (messageId) =>
     api.delete(`/api/messages/${messageId}`).then(r => r.data),

@@ -1,8 +1,3 @@
-/**
- * PostgreSQL connection pool — drop-in replacement for the MSSQL db.js.
- * Install: npm install pg
- * Remove:  npm uninstall mssql
- */
 const { Pool } = require('pg');
 
 const pool = new Pool({

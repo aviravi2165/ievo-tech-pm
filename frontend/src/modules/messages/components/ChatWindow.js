@@ -12,15 +12,7 @@ export default function ChatWindow({ conversation, currentUserId, onArchive, onB
   // Track whether we've already called markAllRead for this conversation open
   const markedAllRef  = useRef(null);
 
-  /**
-   * isGroup: true when the conversation has more than 2 participants.
-   *
-   * FIX: The old code used conversation.participants.length but
-   * conversation comes from the inbox list which does NOT include participants[].
-   * Only getThread returns participants[]. So we now use participantCount
-   * (a new scalar field returned by getInbox/getSent) as the primary signal,
-   * falling back to participants[] length once the thread loads.
-   */
+  
   const isGroup = useMemo(() => {
     // participantCount from inbox row (available immediately)
     if (conversation?.participantCount != null) {
