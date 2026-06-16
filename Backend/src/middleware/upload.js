@@ -22,41 +22,58 @@ const ALLOWED_MIME_TYPES = new Set([
 ]);
 
 const STORAGE_ROOT =
-  process.env.FILE_STORAGE_ROOT || './storage';
+  process.env.FILE_STORAGE_ROOT;
+
+if (!STORAGE_ROOT) {
+  throw new Error(
+    'FILE_STORAGE_ROOT environment variable is required'
+  );
+}
 
 if (!fs.existsSync(STORAGE_ROOT)) {
-  fs.mkdirSync(STORAGE_ROOT, { recursive: true });
+  fs.mkdirSync(STORAGE_ROOT, {
+    recursive: true,
+  });
 }
 
 const maxSizeBytes =
-  parseInt(process.env.MAX_FILE_SIZE_MB || '25', 10) * 1024 * 1024;
+  parseInt(
+    process.env.MAX_FILE_SIZE_MB || '25',
+    10
+  ) * 1024 * 1024;
 
 const storage = multer.diskStorage({
- destination(_req, _file, cb) {
-  const now = new Date();
+  destination(_req, _file, cb) {
+    const now = new Date();
 
-  const year = now.getFullYear();
+    const year = String(
+      now.getFullYear()
+    );
 
-  const month = String(
-    now.getMonth() + 1
-  ).padStart(2, '0');
+    const month = String(
+      now.getMonth() + 1
+    ).padStart(2, '0');
 
-  const targetDir = path.join(
-    STORAGE_ROOT,
-    'attachments',
-    'comm',
-    String(year),
-    month
-  );
+    const uploadPath = path.join(
+      STORAGE_ROOT,
+      'attachments',
+      'comm',
+      year,
+      month
+    );
 
-  fs.mkdirSync(targetDir, {
-    recursive: true,
-  });
+    fs.mkdirSync(uploadPath, {
+      recursive: true,
+    });
 
-  cb(null, targetDir);
-},
+    cb(null, uploadPath);
+  },
+
   filename(_req, file, cb) {
-    const ext = path.extname(file.originalname).toLowerCase();
+    const ext = path
+      .extname(file.originalname)
+      .toLowerCase();
+
     cb(null, `${uuidv4()}${ext}`);
   },
 });
@@ -66,7 +83,12 @@ function fileFilter(_req, file, cb) {
     cb(null, true);
     return;
   }
-  cb(new Error(`File type not allowed: ${file.mimetype}`));
+
+  cb(
+    new Error(
+      `File type not allowed: ${file.mimetype}`
+    )
+  );
 }
 
 const upload = multer({
@@ -78,10 +100,12 @@ const upload = multer({
   },
 });
 
-/**
- * Maps Multer / upload errors to HTTP-friendly responses.
- */
-function handleUploadError(err, req, res, next) {
+function handleUploadError(
+  err,
+  req,
+  res,
+  next
+) {
   if (!err) {
     return next();
   }
@@ -89,17 +113,32 @@ function handleUploadError(err, req, res, next) {
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
       return res.status(413).json({
-        error: `File exceeds maximum size of ${process.env.MAX_FILE_SIZE_MB || 25}MB`,
+        error: `File exceeds maximum size of ${
+          process.env.MAX_FILE_SIZE_MB || 25
+        }MB`,
       });
     }
+
     if (err.code === 'LIMIT_FILE_COUNT') {
-      return res.status(400).json({ error: 'Too many files uploaded' });
+      return res.status(400).json({
+        error: 'Too many files uploaded',
+      });
     }
-    return res.status(400).json({ error: err.message });
+
+    return res.status(400).json({
+      error: err.message,
+    });
   }
 
-  if (err.message && err.message.startsWith('File type not allowed')) {
-    return res.status(415).json({ error: err.message });
+  if (
+    err.message &&
+    err.message.startsWith(
+      'File type not allowed'
+    )
+  ) {
+    return res.status(415).json({
+      error: err.message,
+    });
   }
 
   return next(err);

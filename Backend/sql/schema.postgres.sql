@@ -164,7 +164,7 @@ CREATE TABLE IF NOT EXISTS comm_messages (
 
 CREATE TABLE IF NOT EXISTS comm_attachments (
   attachment_id SERIAL        PRIMARY KEY,
-  message_id    INT           REFERENCES comm_messages(message_id),
+  message_id INT REFERENCES comm_messages(message_id) ON DELETE CASCADE,
   uploaded_by   UUID          NOT NULL REFERENCES auth_users(user_id),
   original_name VARCHAR(500)  NOT NULL,
   stored_name   VARCHAR(500)  NOT NULL,

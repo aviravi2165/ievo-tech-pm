@@ -10,7 +10,6 @@ async function createAttachment({
   mimeType,
   fileSize,
   storagePath,
-  storageMode = 'disk',
 }) {
   const pool = getPool();
 
@@ -23,8 +22,7 @@ async function createAttachment({
       original_name,
       mime_type,
       file_size,
-      storage_path,
-      storage_mode
+      storage_path
     )
     VALUES
     (
@@ -33,15 +31,13 @@ async function createAttachment({
       $3,
       $4,
       $5,
-      $6,
-      $7
+      $6
     )
     RETURNING
       attachment_id AS "attachmentId",
       original_name AS "originalName",
       mime_type     AS "mimeType",
-      file_size     AS "fileSize",
-      storage_mode  AS "storageMode"
+      file_size     AS "fileSize"
     `,
     [
       uploadedByUserId,
@@ -50,7 +46,6 @@ async function createAttachment({
       mimeType,
       fileSize,
       storagePath || storedFileName,
-      storageMode,
     ]
   );
 
@@ -118,8 +113,7 @@ async function getAttachmentForUser(
       a.storage_path AS "storagePath",
       a.original_name AS "originalName",
       a.mime_type AS "mimeType",
-      a.file_size AS "fileSize",
-      a.storage_mode AS "storageMode"
+      a.file_size AS "fileSize"
     FROM comm_attachments a
     WHERE a.attachment_id = $1
       AND a.is_deleted = FALSE
