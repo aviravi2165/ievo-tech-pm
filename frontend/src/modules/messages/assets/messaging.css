@@ -920,6 +920,42 @@ html, body, #root {
 .gap-2 { gap: 8px; }
 .ml-auto { margin-left: auto; }
 
+/* oo*/
+@media (max-width: 1400px) {
+  .msg-layout--split .msg-sidebar {
+    width: 260px;
+    min-width: 260px;
+  }
+
+  .thread-messages {
+    padding: 16px;
+  }
+
+  .composer {
+    padding: 12px 16px;
+  }
+
+  .thread-header {
+    padding: 12px 16px;
+  }
+}
+
+@media (max-width: 1200px) {
+  .msg-layout--split {
+    flex-direction: column;
+  }
+
+  .msg-layout--split .msg-sidebar {
+    width: 100%;
+    min-width: 0;
+    border-right: none;
+    border-bottom: 1px solid var(--divider);
+  }
+
+  .msg-layout--split .msg-main {
+    width: 100%;
+  }
+}
 /* ── Responsive ── */
 @media (max-width: 768px) {
   :root { --sidebar-w: 100vw; }
