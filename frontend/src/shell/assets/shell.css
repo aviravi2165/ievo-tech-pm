@@ -229,6 +229,7 @@
 .erp-main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -247,8 +248,8 @@
 }
 
 .erp-message-panel.open {
-  width: min(720px, 48vw);
-  min-width: 360px;
+  width: clamp(420px, 45vw, 900px);
+  min-width: 420px;
 }
 
 .erp-message-panel.collapsed {
@@ -320,6 +321,8 @@
 
 /* ── Module content (center) ── */
 .erp-module {
+  flex: 1;
+  min-width: 0;
   max-width: 1100px;
   padding: 24px 28px;
   overflow-y: auto;
@@ -499,17 +502,26 @@
 }
 
 @media (max-width: 768px) {
-  .erp-module-drawer { width: 72px; min-width: 72px; }
+  .erp-module-drawer {
+    width: 72px;
+    min-width: 72px;
+  }
+
   .erp-module-name,
-  .erp-module-badge { display: none; }
+  .erp-module-badge {
+    display: none;
+  }
+
   .erp-message-panel.open {
     position: absolute;
     right: 0;
     top: var(--topbar-h, 56px);
     bottom: 0;
     z-index: 100;
-    width: 100%;
-    max-width: 100%;
+
+    width: calc(100vw - 72px);
+    min-width: 0;
+    max-width: none;
   }
 }
 /* ── Add this block to the bottom of shell/assets/shell.css ── */

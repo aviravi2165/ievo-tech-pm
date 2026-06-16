@@ -38,20 +38,20 @@ export default function MessagingPage({ currentUser }) {
   // FIX Bug 2: pre-filled recipients when opening compose from a group card
   const [composeInitialRecipients, setComposeInitialRecipients] = useState([]);
 
-  const [isNarrow,    setIsNarrow]    = useState(true);
+ const isNarrow = true;
   const layoutRef = useRef(null);
   const { toasts, toast } = useToast();
 
   // ── Responsive layout ─────────────────────────────────────────────────────
-  useEffect(() => {
-    const el = layoutRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(([entry]) => {
-      setIsNarrow(entry.contentRect.width < 640);
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
+  // useEffect(() => {
+  //   const el = layoutRef.current;
+  //   if (!el || typeof ResizeObserver === 'undefined') return;
+  //   const observer = new ResizeObserver(([entry]) => {
+  //     setIsNarrow(entry.contentRect.width < 640);
+  //   });
+  //   observer.observe(el);
+  //   return () => observer.disconnect();
+  // }, []);
 
   // ── Load sent tab ─────────────────────────────────────────────────────────
   const fetchSent = useCallback(() => {
@@ -151,7 +151,7 @@ export default function MessagingPage({ currentUser }) {
   };
 
   // ── Layout flags ──────────────────────────────────────────────────────────
-  const showList      = isMailTab && (!activeConv || !isNarrow);
+ const showList = isMailTab && !activeConv;
   const showThread    = isMailTab && !!activeConv;
   const showGroups    = tab === 'groups';
   const showEmptyHint = !isNarrow && isMailTab && !activeConv;
@@ -165,9 +165,9 @@ export default function MessagingPage({ currentUser }) {
       />
 
       <div
-        ref={layoutRef}
-        className={`msg-layout ${isNarrow ? 'msg-layout--stacked' : 'msg-layout--split'}`}
-      >
+  ref={layoutRef}
+  className="msg-layout msg-layout--stacked"
+>
         {showList && (
           <InboxSidebar
             hideTabs
