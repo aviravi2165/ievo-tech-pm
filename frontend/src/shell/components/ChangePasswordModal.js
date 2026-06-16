@@ -70,12 +70,23 @@ export default function ChangePasswordModal({
     }
   };
 
+  const inputStyle = {
+    width: '100%',
+    height: '40px',
+    padding: '0 12px',
+    marginTop: '6px',
+    border: '1px solid #d0d5dd',
+    borderRadius: '6px',
+    boxSizing: 'border-box',
+    fontSize: '14px',
+  };
+
   return (
     <div
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0,0,0,.45)',
+        background: 'rgba(0,0,0,0.35)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -84,71 +95,95 @@ export default function ChangePasswordModal({
     >
       <div
         style={{
-          width: 420,
+          width: '500px',
           background: '#fff',
-          borderRadius: 12,
-          padding: 20,
-          boxShadow: '0 12px 40px rgba(0,0,0,.25)',
+          borderRadius: '8px',
+          border: '1px solid #d9d9d9',
+          padding: '24px',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
         }}
       >
-        <h3 style={{ marginTop: 0 }}>
+        <h3
+          style={{
+            margin: '0 0 20px 0',
+            fontSize: '22px',
+            fontWeight: 600,
+            color: '#222',
+          }}
+        >
           Change Password
         </h3>
 
         <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: 12 }}>
-            <label>Current Password</label>
+          <div style={{ marginBottom: '16px' }}>
+            <label
+              style={{
+                display: 'block',
+                fontWeight: 500,
+                color: '#444',
+              }}
+            >
+              Current Password
+            </label>
+
             <input
               type="password"
               value={currentPassword}
               onChange={(e) =>
                 setCurrentPassword(e.target.value)
               }
-              style={{
-                width: '100%',
-                padding: 8,
-                marginTop: 4,
-              }}
+              style={inputStyle}
             />
           </div>
 
-          <div style={{ marginBottom: 12 }}>
-            <label>New Password</label>
+          <div style={{ marginBottom: '16px' }}>
+            <label
+              style={{
+                display: 'block',
+                fontWeight: 500,
+                color: '#444',
+              }}
+            >
+              New Password
+            </label>
+
             <input
               type="password"
               value={newPassword}
               onChange={(e) =>
                 setNewPassword(e.target.value)
               }
-              style={{
-                width: '100%',
-                padding: 8,
-                marginTop: 4,
-              }}
+              style={inputStyle}
             />
           </div>
 
-          <div style={{ marginBottom: 12 }}>
-            <label>Confirm Password</label>
+          <div style={{ marginBottom: '16px' }}>
+            <label
+              style={{
+                display: 'block',
+                fontWeight: 500,
+                color: '#444',
+              }}
+            >
+              Confirm Password
+            </label>
+
             <input
               type="password"
               value={confirmPassword}
               onChange={(e) =>
                 setConfirmPassword(e.target.value)
               }
-              style={{
-                width: '100%',
-                padding: 8,
-                marginTop: 4,
-              }}
+              style={inputStyle}
             />
           </div>
 
           {error && (
             <div
               style={{
-                color: 'red',
-                marginBottom: 12,
+                color: '#dc2626',
+                marginBottom: '16px',
+                fontSize: '14px',
               }}
             >
               {error}
@@ -158,8 +193,9 @@ export default function ChangePasswordModal({
           {success && (
             <div
               style={{
-                color: 'green',
-                marginBottom: 12,
+                color: '#16a34a',
+                marginBottom: '16px',
+                fontSize: '14px',
               }}
             >
               {success}
@@ -170,13 +206,22 @@ export default function ChangePasswordModal({
             style={{
               display: 'flex',
               justifyContent: 'flex-end',
-              gap: 8,
+              gap: '10px',
+              marginTop: '20px',
             }}
           >
             <button
               type="button"
               onClick={onClose}
               disabled={loading}
+              style={{
+                padding: '10px 18px',
+                border: '1px solid #d0d5dd',
+                borderRadius: '6px',
+                background: '#fff',
+                cursor: 'pointer',
+                fontSize: '14px',
+              }}
             >
               Cancel
             </button>
@@ -184,10 +229,18 @@ export default function ChangePasswordModal({
             <button
               type="submit"
               disabled={loading}
+              style={{
+                padding: '10px 18px',
+                border: 'none',
+                borderRadius: '6px',
+                background: '#e31b23',
+                color: '#fff',
+                fontWeight: 600,
+                cursor: 'pointer',
+                fontSize: '14px',
+              }}
             >
-              {loading
-                ? 'Saving...'
-                : 'Change Password'}
+              {loading ? 'Saving...' : 'Change Password'}
             </button>
           </div>
         </form>

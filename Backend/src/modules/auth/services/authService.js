@@ -126,7 +126,9 @@ async function changePassword(
   currentPassword,
   newPassword
 ) {
-  const result = await db.query(
+  const pool = getPool();
+
+  const { rows } = await pool.query(
     `
     SELECT password_hash
     FROM auth_users
@@ -135,11 +137,13 @@ async function changePassword(
     [userId]
   );
 
-  if (!result.rows.length) {
-    throw new Error('User not found');
+  if (!rows.length) {
+    const err = new Error('User not found');
+    err.statusCode = 404;
+    throw err;
   }
 
-  const user = result.rows[0];
+  const user = rows[0];
 
   const valid = await bcrypt.compare(
     currentPassword,
@@ -147,7 +151,9 @@ async function changePassword(
   );
 
   if (!valid) {
-    throw new Error('Current password is incorrect');
+    const err = new Error('Current password is incorrect');
+    err.statusCode = 400;
+    throw err;
   }
 
   const newHash = await bcrypt.hash(
@@ -155,7 +161,7 @@ async function changePassword(
     10
   );
 
-  await db.query(
+  await pool.query(
     `
     UPDATE auth_users
     SET password_hash = $1
