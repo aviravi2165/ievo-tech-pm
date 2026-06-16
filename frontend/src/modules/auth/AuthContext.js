@@ -33,6 +33,26 @@ export function AuthProvider({ children }) {
     setUser(data.user);
     return data;
   }, []);
+  
+  const changePassword = useCallback(
+  async ({ currentPassword, newPassword }) => {
+    const { data } = await axios.post(
+      `${BASE_URL}/auth/change-password`,
+      {
+        currentPassword,
+        newPassword,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    return data;
+  },
+  [token]
+);
 
   const logout = useCallback(() => {
     localStorage.removeItem('erp_token');
@@ -41,7 +61,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, token, loading, login, logout,  changePassword, }}>
       {children}
     </AuthContext.Provider>
   );

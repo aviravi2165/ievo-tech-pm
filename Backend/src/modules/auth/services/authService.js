@@ -121,5 +121,49 @@ async function searchUsers(q, limit = 10, excludeUserId = null) {
   );
   return rows;
 }
+async function changePassword(
+  userId,
+  currentPassword,
+  newPassword
+) {
+  const result = await db.query(
+    `
+    SELECT password_hash
+    FROM auth_users
+    WHERE user_id = $1
+    `,
+    [userId]
+  );
 
-module.exports = { login, getMe, searchUsers };
+  if (!result.rows.length) {
+    throw new Error('User not found');
+  }
+
+  const user = result.rows[0];
+
+  const valid = await bcrypt.compare(
+    currentPassword,
+    user.password_hash
+  );
+
+  if (!valid) {
+    throw new Error('Current password is incorrect');
+  }
+
+  const newHash = await bcrypt.hash(
+    newPassword,
+    10
+  );
+
+  await db.query(
+    `
+    UPDATE auth_users
+    SET password_hash = $1
+    WHERE user_id = $2
+    `,
+    [newHash, userId]
+  );
+
+  return true;
+}
+module.exports = { login, getMe, searchUsers,changePassword, };

@@ -28,5 +28,27 @@ async function handleUserSearch(req, res, next) {
     next(err);
   }
 }
+async function handleChangePassword(req, res, next) {
+  try {
+    const { currentPassword, newPassword } = req.body;
 
-module.exports = { handleLogin, handleMe, handleUserSearch };
+    await changePassword(
+      req.user.userId,
+      currentPassword,
+      newPassword
+    );
+
+    res.json({
+      success: true,
+      message: 'Password changed successfully'
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+module.exports = {
+  handleLogin,
+  handleMe,
+  handleUserSearch,
+  handleChangePassword
+};

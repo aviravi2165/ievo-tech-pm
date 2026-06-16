@@ -84,14 +84,36 @@ export function useUnreadCount() {
    * drops right away, then re-syncs with the server shortly after
    * to catch any additional messages marked read inside the thread.
    */
-  const decrement = useCallback((conversationId) => {
+const decrement = useCallback((conversationId) => {
+  if (unreadConvIds.current.has(conversationId)) {
+    unreadConvIds.current.delete(conversationId);
+    setCount(prev => Math.max(0, prev - 1));
+  }
+
+  // Notify other hook instances immediately
+  window.dispatchEvent(
+    new CustomEvent('messages-unread-decrement', {
+      detail: { conversationId }
+    })
+  );
+
+  setTimeout(() => refresh(), 800);
+}, [refresh]);
+useEffect(() => {
+  const handler = ({ detail }) => {
+    const conversationId = detail?.conversationId;
+
     if (unreadConvIds.current.has(conversationId)) {
       unreadConvIds.current.delete(conversationId);
       setCount(prev => Math.max(0, prev - 1));
     }
-    // Re-sync after a short delay so thread read-receipts are reflected
-    setTimeout(() => refresh(), 800);
-  }, [refresh]);
+  };
+
+  window.addEventListener('messages-unread-decrement', handler);
+
+  return () =>
+    window.removeEventListener('messages-unread-decrement', handler);
+}, []);
 
   return { count, decrement, refresh };
 }

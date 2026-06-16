@@ -1,8 +1,13 @@
 import { useAuth } from '../../modules/auth/AuthContext';
 import logo from "../assets/logo.png";
+import { useState } from 'react';
+import ProfileMenu from './ProfileMenu';
+import ChangePasswordModal from './ChangePasswordModal';
 
 export default function TopBanner({ currentUser, activeModule }) {
   const { logout } = useAuth();
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
 
   const displayName = [currentUser?.firstName, currentUser?.lastName]
     .filter(Boolean)
@@ -36,10 +41,32 @@ export default function TopBanner({ currentUser, activeModule }) {
           Online
         </span>
 
-        <button type="button" className="erp-topbar-profile" title={displayName}>
-          <span className="erp-topbar-avatar">{initials}</span>
-          <span className="erp-topbar-name">{displayName}</span>
-        </button>
+        <div style={{ position: 'relative' }}>
+  <button
+    type="button"
+    className="erp-topbar-profile"
+    title={displayName}
+    onClick={() => setProfileOpen(v => !v)}
+  >
+    <span className="erp-topbar-avatar">{initials}</span>
+    <span className="erp-topbar-name">{displayName}</span>
+  </button>
+
+  <ProfileMenu
+  open={profileOpen}
+  user={currentUser}
+  onClose={() => setProfileOpen(false)}
+  onChangePassword={() => {
+    setProfileOpen(false);
+    setPasswordOpen(true);
+  }}
+/>
+
+<ChangePasswordModal
+  open={passwordOpen}
+  onClose={() => setPasswordOpen(false)}
+/>
+</div>
 
         <button
           type="button"

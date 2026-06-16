@@ -1,5 +1,10 @@
 const { Router } = require('express');
-const { handleLogin, handleMe, handleUserSearch } = require('../controllers/authController');
+const {
+  handleLogin,
+  handleMe,
+  handleUserSearch,
+  handleChangePassword
+} = require('../controllers/authController');
 const { authenticate } = require('../../../middleware/auth');
 
 const router = Router();
@@ -14,4 +19,9 @@ router.get('/me', authenticate, handleMe);
 // Mounted separately in auth/index.js as /api/users
 router.get('/search', authenticate, handleUserSearch);
 
+router.post(
+  '/change-password',
+  authenticate,
+  handleChangePassword
+);
 module.exports = router;
