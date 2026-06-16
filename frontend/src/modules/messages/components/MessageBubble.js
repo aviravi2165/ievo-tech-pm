@@ -1,20 +1,3 @@
-/**
- * MessageBubble.js
- *
- * Read receipt rules (PRD):
- *
- * 1-on-1 conversation:
- *   - Own last message shows "Sent" (single grey tick)
- *   - Once the other person reads it → "Seen" (blue tick) on that message only
- *   - If a new message arrives after, the "Seen" badge moves to the new last-read position
- *     (handled by parent — only render isSeen on the lastSeenMessageId)
- *
- * Group conversation:
- *   - Own last message shows "Sent"
- *   - "Seen by X, Y" shown under the message — tappable to expand full list
- *   - The seen indicator moves with new messages (parent controls lastSeenMessageId)
- */
-
 import { useState } from 'react';
 import DOMPurify from 'dompurify';
 import { fileApi } from '../api/fileApi';

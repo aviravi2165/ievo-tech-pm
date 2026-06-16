@@ -52,9 +52,7 @@ async function login({ username, password }) {
   };
 }
 
-// ── Get me — FIX: now returns camelCase matching login response ───────────────
-// The old version returned raw snake_case from the DB query.
-// This caused user.userId to be undefined on page reload, breaking all
+
 // UUID-based checks (send, reply, read receipts) for every user.
 
 async function getMe(userId) {

@@ -1,5 +1,3 @@
-import DashboardModule from '../../modules/dashboard/DashboardModule';
-import ProjectManagementModule from '../../modules/project-management/ProjectManagementModule';
 
 /**
  * ERP module registry. Add new modules here when integrating.
@@ -12,16 +10,16 @@ export const ERP_MODULES = [
     label: 'Dashboard',
     shortLabel: 'Home',
     description: 'Overview, recent activity & assignments',
-    status: 'active',
-    component: DashboardModule,
+    status: 'coming-soon',
+    component: null,
   },
   {
     id: 'project-management',
     label: 'Project Management',
     shortLabel: 'Projects',
     description: 'Projects, tasks & milestones',
-    status: 'active',
-    component: ProjectManagementModule,
+    status: 'coming-soon',
+    component: null,
   },
   {
     id: 'inventory',

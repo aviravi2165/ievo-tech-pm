@@ -1,15 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import api from '../api/axiosInstance';
 
-/**
- * RecipientPicker
- * Allows selecting multiple users and/or groups.
- *
- * Props:
- *   value     — [{ id, label, type: 'user'|'group' }]
- *   onChange(newValue)
- *   groups    — [{ groupId, groupName }] from useGroups
- */
+
 export default function RecipientPicker({ value = [], onChange, groups = [] }) {
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);

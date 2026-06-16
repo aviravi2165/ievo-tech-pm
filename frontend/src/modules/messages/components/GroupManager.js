@@ -1,21 +1,3 @@
-/**
- * GroupManager.js
- *
- * FIXES in this version:
- *
- *  1. handleOpenThread — on 404 (no existing conversation for the group),
- *     instead of showing a dead-end inline error message, it now calls the
- *     new onComposeToGroup(group) prop. MessagingPage uses this to open
- *     ComposeModal with the group pre-filled as a recipient so the user can
- *     start the first conversation immediately.
- *
- *  2. The inline open-error state is removed entirely — it was confusing UX.
- *     The 404 path is now an action (open compose) not an error.
- *
- *  3. Any non-404 network error still shows a brief toast-style message
- *     using the existing openError map, but only for genuine failures.
- */
-
 import { useState } from 'react';
 import { groupApi } from '../api/groupApi';
 import RecipientPicker from './RecipientPicker';

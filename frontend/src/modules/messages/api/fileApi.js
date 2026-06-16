@@ -1,23 +1,3 @@
-/**
- * fileApi.js
- *
- * FIXES:
- *  1. download(attachmentId, originalName) — REPLACES the old getDownloadUrl()
- *     helper.  The old approach built a plain URL and opened it in a new tab,
- *     which means the browser sent NO Authorization header.  Any route
- *     protected by JWT middleware would return 401.
- *
- *     The new approach:
- *       a) Uses fetch() with the same Bearer token that axios uses.
- *       b) Converts the response to a Blob.
- *       c) Creates a temporary object URL and clicks a hidden <a> to trigger
- *          the browser's "Save file" dialog with the correct filename.
- *       d) Revokes the object URL after the click to avoid memory leaks.
- *
- *  2. getDownloadUrl() is kept as a deprecated alias so any existing callers
- *     don't crash, but it logs a warning.
- */
-
 import api from './axiosInstance';
 
 export const fileApi = {

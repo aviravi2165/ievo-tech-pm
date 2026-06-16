@@ -1,12 +1,3 @@
-/**
- * groupService.js — PostgreSQL version
- * Tables: comm_groups, comm_group_members, auth_users, comm_conversations
- *
- * CHANGES:
- *  1. NEW: getLatestGroupConversation(groupId, userId) — returns the most recent
- *     comm_conversation row that has group_id = groupId AND has the requesting
- *     user as a participant.  Used by the Groups panel "open thread" feature.
- */
 
 const { getPool } = require('../../../config/db');
 

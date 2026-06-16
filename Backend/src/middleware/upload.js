@@ -21,19 +21,40 @@ const ALLOWED_MIME_TYPES = new Set([
   'application/x-zip-compressed',
 ]);
 
-const uploadDir = path.resolve(process.cwd(), process.env.UPLOAD_DIR || 'uploads');
+const STORAGE_ROOT =
+  process.env.FILE_STORAGE_ROOT || './storage';
 
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+if (!fs.existsSync(STORAGE_ROOT)) {
+  fs.mkdirSync(STORAGE_ROOT, { recursive: true });
 }
 
 const maxSizeBytes =
   parseInt(process.env.MAX_FILE_SIZE_MB || '25', 10) * 1024 * 1024;
 
 const storage = multer.diskStorage({
-  destination(_req, _file, cb) {
-    cb(null, uploadDir);
-  },
+ destination(_req, _file, cb) {
+  const now = new Date();
+
+  const year = now.getFullYear();
+
+  const month = String(
+    now.getMonth() + 1
+  ).padStart(2, '0');
+
+  const targetDir = path.join(
+    STORAGE_ROOT,
+    'attachments',
+    'comm',
+    String(year),
+    month
+  );
+
+  fs.mkdirSync(targetDir, {
+    recursive: true,
+  });
+
+  cb(null, targetDir);
+},
   filename(_req, file, cb) {
     const ext = path.extname(file.originalname).toLowerCase();
     cb(null, `${uuidv4()}${ext}`);
@@ -85,7 +106,7 @@ function handleUploadError(err, req, res, next) {
 }
 
 module.exports = {
-  uploadDir,
+  STORAGE_ROOT,
   uploadSingle: upload.single('file'),
   uploadMultiple: upload.array('files', 10),
   handleUploadError,

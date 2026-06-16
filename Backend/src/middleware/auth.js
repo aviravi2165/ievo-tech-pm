@@ -22,10 +22,6 @@ function verifyToken(token) {
   };
 }
 
-/**
- * Express middleware — requires `Authorization: Bearer <token>`.
- * Attaches `req.user` on success.
- */
 function extractBearerToken(req) {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {

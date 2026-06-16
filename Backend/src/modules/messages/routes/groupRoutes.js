@@ -1,11 +1,3 @@
-/**
- * groupRoutes.js
- *
- * CHANGE: Added GET /:groupId/conversation route that returns the most-recent
- * existing conversation thread for a group.  The Groups panel uses this to
- * open the thread directly in Inbox when the user clicks a group card.
- */
-
 const express = require('express');
 const { authenticate } = require('../../../middleware/auth');
 const groupController = require('../controllers/groupController');

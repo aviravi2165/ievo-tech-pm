@@ -1,18 +1,3 @@
-/**
- * groupController.js
- *
- * FIXES:
- *  1. removeMember() — was calling parseInt() on req.params.userId, which is a
- *     UUID string.  parseInt('550e8400-...') === 550, so the DELETE always
- *     targeted the wrong user or silently no-oped.  Now the raw UUID string is
- *     passed directly to groupService.removeMember().
- *
- *  2. NEW: getGroupConversation() — returns the most-recent conversation that
- *     belongs to this group (group_id column on comm_conversations), so the
- *     frontend can open an existing group chat thread directly from the Groups
- *     panel.  Returns { conversationId } or 404 when no thread exists yet.
- */
-
 const groupService = require('../services/groupService');
 
 function handleError(res, err) {

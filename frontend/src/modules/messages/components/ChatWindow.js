@@ -1,11 +1,3 @@
-/**
- * ChatWindow.js — fixed:
- *  1. Shows participant list panel for CC threads (sender can remove others)
- *  2. Shows conv type badge (Private / Shared / Group Chat)
- *  3. Reads convType + createdBy from thread data (not just inbox row)
- *  4. Remove-participant calls messageApi.removeParticipant and refreshes thread
- */
-
 import { useEffect, useRef, useMemo, useState } from 'react';
 import MessageBubble from './MessageBubble';
 import Composer      from './Composer';

@@ -1,28 +1,3 @@
-/**
- * messageService.js  — I.EVO ERP Messaging
- *
- * Send modes
- * ──────────
- *  'bcc'          — One private conversation per recipient. Nobody sees others.
- *                   Groups can be left unexpanded (backend expands) or
- *                   pre-expanded by frontend (expandedGroupMembers).
- *                   Sender NEVER gets their own copy (excluded from recipient list).
- *
- *  'cc'           — One shared conversation. All participants see each other and
- *                   can see replies. The sender can remove any participant later.
- *                   Groups are auto-expanded server-side (every member added).
- *                   Sender EXCLUDED from group expansion (won't see themselves twice).
- *
- *  'group_thread' — Sends into the group's existing shared conversation, or creates
- *                   one if none exists. All group members participate.
- *
- * Schema requirements (already in schema.postgres.sql):
- *   comm_conversations.conv_type  VARCHAR(12) DEFAULT 'bcc'
- *   comm_participants.participant_type  VARCHAR(10) DEFAULT 'to'
- *
- * For existing DBs run:  sql/migrate_participant_type.sql
- */
-
 'use strict';
 const { getPool } = require('../../../config/db');
 

@@ -1,22 +1,7 @@
-/**
- * fileController.js
- *
- * FIXES:
- *  1. upload()   — passes full absolute storagePath to createAttachment.
- *                  When FILE_STORAGE=postgres, reads the file Multer wrote,
- *                  stores it as a BYTEA blob in Postgres, then deletes the
- *                  temp file from disk so no disk accumulation occurs.
- *  2. download() — uses Number() instead of parseInt() for attachmentId.
- *                  Uses res.download() (authenticated stream) instead of the
- *                  old _blank anchor-click trick that could not attach a
- *                  Bearer token.
- *                  When FILE_STORAGE=postgres, streams the BYTEA blob from DB.
- */
-
 const path = require('path');
 const fs   = require('fs');
 const fileService = require('../services/fileService');
-const { uploadDir } = require('../../../middleware/upload');
+const { STORAGE_ROOT } = require('../../../middleware/upload');
 
 function handleError(res, err) {
   const status = err.statusCode || 500;
@@ -31,50 +16,21 @@ async function upload(req, res) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    const diskPath = path.join(uploadDir, req.file.filename);
-
-    if (fileService.STORAGE_MODE === 'postgres') {
-      // Read the temp file Multer wrote, push bytes to Postgres, then clean up
-      let buffer;
-      try {
-        buffer = fs.readFileSync(diskPath);
-      } catch {
-        return res.status(500).json({ error: 'Failed to read uploaded file' });
-      }
-
-      const record = await fileService.createAttachment({
-        uploadedByUserId: req.user.userId,
-        storedFileName:   req.file.filename,
-        originalName:     req.file.originalname,
-        mimeType:         req.file.mimetype,
-        fileSize:         req.file.size,
-        storagePath:      '', // not used for postgres mode
-        storageMode:      'postgres',
-      });
-
-      await fileService.storeBlob(record.attachmentId, buffer);
-
-      // Remove temp file — data now lives in Postgres
-      fs.unlink(diskPath, () => {});
-
-      return res.status(201).json({
-        attachmentId: record.attachmentId,
-        originalName: record.originalName,
-        mimeType:     record.mimeType,
-        fileSize:     record.fileSize,
-      });
-    }
+const relativePath = path.relative(
+  STORAGE_ROOT,
+  req.file.path
+);
 
     // ── Disk mode (default) ────────────────────────────────────────────────
     const record = await fileService.createAttachment({
-      uploadedByUserId: req.user.userId,
-      storedFileName:   req.file.filename,
-      originalName:     req.file.originalname,
-      mimeType:         req.file.mimetype,
-      fileSize:         req.file.size,
-      storagePath:      diskPath,  // FIX: full absolute path
-      storageMode:      'disk',
-    });
+  uploadedByUserId: req.user.userId,
+  storedFileName: req.file.filename,
+  originalName: req.file.originalname,
+  mimeType: req.file.mimetype,
+  fileSize: req.file.size,
+  storagePath: relativePath,
+  storageMode: 'disk',
+});
 
     return res.status(201).json({
       attachmentId: record.attachmentId,
@@ -84,7 +40,10 @@ async function upload(req, res) {
     });
   } catch (err) {
     if (req.file) {
-      fs.unlink(path.join(uploadDir, req.file.filename), () => {});
+   fs.unlink(
+  req.file.path,
+  () => {}
+);
     }
     return handleError(res, err);
   }
@@ -111,25 +70,12 @@ async function download(req, res) {
 
     const safeName = attachment.originalName || 'download';
 
-    // ── Postgres blob mode ─────────────────────────────────────────────────
-    if (attachment.storageMode === 'postgres') {
-      const result = await fileService.getAttachmentBlob(attachmentId, req.user.userId);
-      if (!result) {
-        return res.status(404).json({ error: 'File data not found in database' });
-      }
-
-      res.setHeader('Content-Type', attachment.mimeType || 'application/octet-stream');
-      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeName)}"`);
-      res.setHeader('Content-Length', result.buffer.length);
-      return res.end(result.buffer);
-    }
-
     // ── Disk mode ──────────────────────────────────────────────────────────
-    // FIX: prefer stored absolute storagePath; fall back to uploadDir join
-    const filePath =
-      attachment.storagePath && path.isAbsolute(attachment.storagePath)
-        ? attachment.storagePath
-        : path.join(uploadDir, attachment.storedFileName);
+    
+  const filePath = path.join(
+  STORAGE_ROOT,
+  attachment.storagePath
+);
 
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: 'File not found on disk' });

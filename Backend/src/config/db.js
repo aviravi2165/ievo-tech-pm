@@ -15,10 +15,6 @@ pool.on('error', (err) => {
   console.error('PostgreSQL pool error:', err);
 });
 
-/**
- * Returns the shared pool.
- * Usage: const { rows } = await getPool().query('SELECT ...', [params])
- */
 function getPool() {
   return pool;
 }

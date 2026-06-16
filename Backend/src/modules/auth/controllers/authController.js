@@ -1,9 +1,4 @@
-const {
-  login,
-  getMe,
-  searchUsers,
-  changePassword
-} = require('../services/authService');
+const {login,getMe,searchUsers,changePassword} = require('../services/authService');
 
 async function handleLogin(req, res, next) {
   try {

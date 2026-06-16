@@ -3,26 +3,6 @@ import { messageApi } from '../api/messageApi';
 import { useSocket }  from '../context/SocketContext';
 import { useAuth }    from '../../auth/AuthContext';
 
-/**
- * useUnreadCount — tracks unread CONVERSATION count (not message count).
- *
- * FIXES applied:
- *  1. refresh() now uses the dedicated /api/messages/unread-conversation-ids
- *     endpoint instead of fetching the full inbox. This is a single lightweight
- *     query and correctly rebuilds the ref + count atomically.
- *
- *  2. The old code used Promise.all([getUnreadCount(), getInbox()]) and then
- *     tried to derive unread conv IDs from the inbox response. The inbox paging
- *     and response shape made this fragile — if the inbox returned 0 items on
- *     first render (race condition), the ref was empty and subsequent socket
- *     events double-counted. Now the ref is always sourced from the dedicated
- *     endpoint which returns exactly the unread conv IDs and nothing else.
- *
- *  3. decrement() is called by MessagingPage when a conversation is opened.
- *     It now also fires a silent refresh after 800ms to keep the count
- *     accurate when the user has marked messages read via the thread
- *     (where multiple messages may be read at once).
- */
 export function useUnreadCount() {
   const { socket } = useSocket();
   const { user }   = useAuth();

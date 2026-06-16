@@ -1,16 +1,3 @@
-/**
- * ComposeModal.js — complete, all bugs fixed
- *
- * Bugs fixed vs previous version:
- *  1. Numbered list button was missing (only bullet was present)
- *  2. Groups not shown in CC/Shared mode — RecipientInput was filtering groups out
- *     entirely. Fixed: groups show in all modes; CC mode auto-expands them.
- *  3. Sender added as own recipient via group expansion — fixed by passing
- *     currentUserId to expandGroup and filtering them out before buildPayload.
- *  4. expandGroup stale-closure bug — expandGroup used stale `mode` from closure,
- *     fixed by accepting `replaceMode` param from the call site.
- */
-
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { messageApi } from '../api/messageApi';
 import { groupApi }   from '../api/groupApi';
