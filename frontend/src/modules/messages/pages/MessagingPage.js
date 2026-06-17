@@ -149,7 +149,9 @@ export default function MessagingPage({ currentUser }) {
   const showList      = isMailTab && !activeConv;
   const showThread     = isMailTab && !!activeConv;
   const showGroups     = tab === 'groups';
-  const showEmptyHint  = isMailTab && !activeConv && tab !== 'groups';
+  // In stacked layout, the list already fills the panel when no conv is open,
+  // so we never show the empty hint alongside it.
+  const showEmptyHint  = false;
 
   return (
     <div className="msg-module-screen">
