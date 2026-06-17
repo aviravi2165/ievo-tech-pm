@@ -38,20 +38,13 @@ export default function MessagingPage({ currentUser }) {
   // FIX Bug 2: pre-filled recipients when opening compose from a group card
   const [composeInitialRecipients, setComposeInitialRecipients] = useState([]);
 
- const isNarrow = true;
+  // Always stacked: open conversation takes the full panel width with no
+  // inbox list beside it, regardless of screen resolution. The list and
+  // the thread are mutually exclusive — selecting a conversation hides
+  // the list, and "back" returns to the list.
+  const isNarrow = true;
   const layoutRef = useRef(null);
   const { toasts, toast } = useToast();
-
-  // ── Responsive layout ─────────────────────────────────────────────────────
-  // useEffect(() => {
-  //   const el = layoutRef.current;
-  //   if (!el || typeof ResizeObserver === 'undefined') return;
-  //   const observer = new ResizeObserver(([entry]) => {
-  //     setIsNarrow(entry.contentRect.width < 640);
-  //   });
-  //   observer.observe(el);
-  //   return () => observer.disconnect();
-  // }, []);
 
   // ── Load sent tab ─────────────────────────────────────────────────────────
   const fetchSent = useCallback(() => {
@@ -151,10 +144,12 @@ export default function MessagingPage({ currentUser }) {
   };
 
   // ── Layout flags ──────────────────────────────────────────────────────────
- const showList = isMailTab && !activeConv;
-  const showThread    = isMailTab && !!activeConv;
-  const showGroups    = tab === 'groups';
-  const showEmptyHint = !isNarrow && isMailTab && !activeConv;
+  // Stacked layout only: show the list OR the open thread, never both —
+  // an open thread always takes the full panel width.
+  const showList      = isMailTab && !activeConv;
+  const showThread     = isMailTab && !!activeConv;
+  const showGroups     = tab === 'groups';
+  const showEmptyHint  = isMailTab && !activeConv && tab !== 'groups';
 
   return (
     <div className="msg-module-screen">
@@ -165,9 +160,9 @@ export default function MessagingPage({ currentUser }) {
       />
 
       <div
-  ref={layoutRef}
-  className="msg-layout msg-layout--stacked"
->
+        ref={layoutRef}
+        className="msg-layout msg-layout--stacked"
+      >
         {showList && (
           <InboxSidebar
             hideTabs

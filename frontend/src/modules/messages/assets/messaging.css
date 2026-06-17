@@ -207,20 +207,23 @@ html, body, #root {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 16px;
+  padding: 10px 18px;
   background: var(--ievo-red);
   color: #ffffff;
   border: none;
-  border-radius: var(--radius);
+  /* FIX (informal look): Gmail-style pill-shaped compose button with
+     normal-case label, rather than uppercase tracked "app" button text. */
+  border-radius: 20px;
   font-family: var(--font-body);
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  text-transform: none;
   cursor: pointer;
-  transition: background var(--transition);
+  box-shadow: 0 1px 3px rgba(26, 29, 35, 0.15);
+  transition: background var(--transition), box-shadow var(--transition);
 }
-.msg-compose-btn:hover { background: var(--ievo-red-light); }
+.msg-compose-btn:hover { background: var(--ievo-red-light); box-shadow: 0 2px 6px rgba(26, 29, 35, 0.2); }
 .msg-compose-btn svg { flex-shrink: 0; }
 
 /* Search */
@@ -253,16 +256,16 @@ html, body, #root {
 }
 .msg-nav-btn {
   flex: 1;
-  padding: 8px 4px;
+  padding: 9px 4px;
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
   color: var(--muted);
   font-family: var(--font-body);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  text-transform: none;
   cursor: pointer;
   transition: color var(--transition), border-color var(--transition);
   display: flex;
@@ -271,10 +274,11 @@ html, body, #root {
   gap: 5px;
 }
 .msg-nav-btn.active {
-  color: var(--gold);
+  color: var(--gold-dim);
   border-bottom-color: var(--gold);
+  font-weight: 600;
 }
-.msg-nav-btn:hover:not(.active) { color: var(--ievo-red-dark); }
+.msg-nav-btn:hover:not(.active) { color: var(--coal); }
 
 /* Badge */
 .badge {
@@ -309,25 +313,27 @@ html, body, #root {
   position: relative;
 }
 .msg-conv-item:hover { background: var(--slate); }
+/* FIX (informal look): selected row uses a quiet neutral fill with a
+   slim red accent rule, instead of a saturated red glow wash. */
 .msg-conv-item.active {
-  background: var(--ievo-red-glow);
+  background: var(--mid);
   border-left-color: var(--ievo-red);
 }
 .msg-conv-item.unread .conv-subject { color: var(--coal); font-weight: 600; }
 
 .conv-avatar {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
-  background: var(--ievo-red-glow);
-  border: 1px solid rgba(237, 28, 36, 0.25);
+  background: var(--mid);
+  border: 1px solid var(--divider);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: var(--font-display);
-  font-size: 15px;
+  font-family: var(--font-body);
+  font-size: 13px;
   font-weight: 600;
-  color: var(--ievo-red);
+  color: var(--muted);
   flex-shrink: 0;
   text-transform: uppercase;
 }
@@ -432,64 +438,85 @@ html, body, #root {
 .thread-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 20px 24px;
+  padding: 18px 24px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
+  background: var(--slate);
 }
 
 .message-bubble {
   display: flex;
   gap: 12px;
-  animation: fadeSlideIn 0.2s ease;
+  animation: fadeSlideIn 0.15s ease;
 }
 
 @keyframes fadeSlideIn {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* FIX (informal/casual look): a flatter, more neutral avatar — initials
+   in a quiet grey circle rather than a bright red-tinted "chat app" badge.
+   The brand red is reserved for actionable accents (links, CTAs, unread). */
 .msg-avatar {
-  width: 34px; height: 34px;
+  width: 32px; height: 32px;
   border-radius: 50%;
-  background: var(--ievo-red-glow);
-  border: 1px solid rgba(237, 28, 36, 0.25);
+  background: var(--mid);
+  border: 1px solid var(--divider);
   display: flex; align-items: center; justify-content: center;
-  font-family: var(--font-display);
-  font-size: 14px; font-weight: 600;
-  color: var(--ievo-red);
+  font-family: var(--font-body);
+  font-size: 12px; font-weight: 600;
+  color: var(--muted);
   flex-shrink: 0;
   text-transform: uppercase;
   margin-top: 2px;
 }
 
 .msg-content { flex: 1; min-width: 0; }
-.msg-meta { display: flex; align-items: baseline; gap: 10px; margin-bottom: 5px; }
+.msg-meta { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
 .msg-sender {
-  font-size: 13px; font-weight: 600;
+  font-size: 12.5px; font-weight: 600;
   color: var(--warm-white);
+  letter-spacing: 0.01em;
 }
-.msg-timestamp { font-size: 11px; color: var(--muted); }
+.msg-timestamp { font-size: 11px; color: var(--subtle); }
 
+/* FIX (informal look): message card reads like an email thread item —
+   flat neutral card, subtle border, no drop-shadow "bubble" feel.
+   FIX (wrapping bugs): overflow-wrap / word-break / pre-wrap as before. */
 .msg-body {
   background: var(--charcoal);
   border: 1px solid var(--divider);
-  border-radius: var(--radius-lg);
-  padding: 12px 16px;
+  border-radius: 6px;
+  padding: 11px 15px;
   color: var(--body-text);
   font-size: 13.5px;
-  line-height: 1.7;
+  line-height: 1.65;
   max-width: 680px;
-  box-shadow: 0 1px 2px rgba(26, 29, 35, 0.04);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
 }
-.msg-body p { margin: 0; }
-.msg-body a { color: var(--gold); }
-.msg-body ul, .msg-body ol { padding-left: 18px; }
+.msg-body p { margin: 0; white-space: pre-wrap; }
+.msg-body a { color: var(--gold-dim); text-decoration: underline; overflow-wrap: anywhere; word-break: break-word; }
+.msg-body ul, .msg-body ol {
+  padding-left: 22px;
+  margin: 6px 0;
+  white-space: normal;
+}
+.msg-body li { white-space: pre-wrap; margin: 2px 0; }
+.msg-body table { max-width: 100%; }
 
 .msg-own .msg-content { align-items: flex-end; display: flex; flex-direction: column; }
+/* FIX (informal look): own messages get a thin left accent border in
+   brand red instead of a pink/red background fill — reads as "your
+   sent item" the way Gmail/Outlook denote sent mail, not as a chat
+   bubble color. */
 .msg-own .msg-body {
-  background: var(--ievo-red-glow);
-  border-color: rgba(237, 28, 36, 0.22);
+  background: var(--charcoal);
+  border-color: var(--divider);
+  border-left: 3px solid var(--ievo-red);
 }
 .msg-own .msg-meta { flex-direction: row-reverse; }
 
@@ -573,6 +600,11 @@ html, body, #root {
   outline: none;
   transition: border-color var(--transition);
   overflow-y: auto;
+  /* FIX: same wrapping + manual-whitespace handling as .msg-body, so what
+     you see while typing matches what recipients will see after sending. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
 }
 .composer-area:focus { border-color: var(--gold-dim); }
 .composer-area[data-placeholder]:empty::before {
@@ -580,6 +612,14 @@ html, body, #root {
   color: var(--muted);
   pointer-events: none;
 }
+.composer-area ul, .composer-area ol {
+  /* FIX (no left padding after bullets/numbers while composing) */
+  padding-left: 22px;
+  margin: 6px 0;
+  white-space: normal;
+}
+.composer-area li { white-space: pre-wrap; margin: 2px 0; }
+.composer-area p { margin: 0; white-space: pre-wrap; }
 
 .composer-footer {
   display: flex;

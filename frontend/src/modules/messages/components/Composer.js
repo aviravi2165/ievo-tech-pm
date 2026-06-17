@@ -173,6 +173,17 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
           if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
             handleSend();
+            return;
+          }
+          // FIX (manual formatting not sending as typed): plain Enter in a
+          // contentEditable div normally splits into a new <div>, which
+          // collapses visually/semantically compared to pasted HTML that
+          // already contains <br>/<p> tags. Force a real <br> insertion so
+          // manually typed line breaks are preserved the same way pasted
+          // content is.
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            document.execCommand('insertLineBreak');
           }
         }}
       />

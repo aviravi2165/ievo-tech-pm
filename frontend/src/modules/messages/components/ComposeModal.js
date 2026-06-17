@@ -647,6 +647,12 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
               onKeyDown={e => {
                 if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
                   e.preventDefault(); handleSend();
+                  return;
+                }
+                // FIX: same manual line-break normalization as Composer.js
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  document.execCommand('insertLineBreak');
                 }
               }}
             />
