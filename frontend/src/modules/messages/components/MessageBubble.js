@@ -143,107 +143,116 @@ export default function MessageBubble({
   };
 
   return (
-    <div className={`message-bubble ${isMine ? 'msg-own' : ''}`}>
-      {!isMine && (
-        <div className="msg-avatar">{initials(message.senderName)}</div>
-      )}
+  <div className="thread-message">
 
-      <div className="msg-content">
-        <div className="msg-meta">
-          {!isMine && (
-            <span className="msg-sender">{message.senderName}</span>
-          )}
-          <span className="msg-timestamp">{fmtTs(message.sentAt)}</span>
-          {isMine && (
-            <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
-              <button
-                className="icon-btn danger"
-                title="Delete message"
-                onClick={() => onDelete?.(message.messageId)}
-                style={{ width: 24, height: 24 }}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="3 6 5 6 21 6"/>
-                  <path d="M19 6l-1 14H6L5 6"/>
-                  <path d="M10 11v6M14 11v6"/>
-                  <path d="M9 6V4h6v2"/>
-                </svg>
-              </button>
-            </div>
-          )}
+    {/* Header */}
+    <div className="thread-message-header">
+
+      <div className="thread-message-user">
+        <div className="thread-sender">
+          {message.senderName || 'Unknown User'}
         </div>
 
-        {/* Reply context */}
-        {message.parentMessage && (
-          <div className="msg-reply-strip">
-            ↩ Replying to <strong>{message.parentMessage.senderName}</strong>:{' '}
-            <span dangerouslySetInnerHTML={{
-              __html: DOMPurify.sanitize(
-                (message.parentMessage.bodyHtml || '').replace(/<[^>]+>/g, '').slice(0, 80) + '…'
-              ),
-            }} />
-          </div>
-        )}
-
-        {/* Body */}
-        <div className="msg-body" dangerouslySetInnerHTML={{ __html: cleanHtml }} />
-
-        {/* Attachments */}
-        {message.attachments?.length > 0 && (
-          <div className="msg-attachments">
-            {downloadError && (
-              <div style={{ color: 'var(--danger)', fontSize: 11, marginBottom: 4 }}>{downloadError}</div>
-            )}
-            {message.attachments.map(att => (
-              <button
-                key={att.attachmentId}
-                className="attach-chip"
-                onClick={() => handleDownload(att)}
-                title={`Download ${att.originalName}`}
-                disabled={downloadingId === att.attachmentId}
-              >
-                {downloadingId === att.attachmentId
-                  ? <span style={{ fontSize: 11 }}>⏳</span>
-                  : <span>{fileIcon(att.mimeType)}</span>
-                }
-                <span>{att.originalName}</span>
-                <span style={{ color: 'var(--muted)', fontSize: 11 }}>
-                  ({(att.fileSize / 1024).toFixed(0)} KB)
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Reply button */}
-        {onReply && (
-          <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-            <button
-              onClick={() => onReply(message)}
-              style={{
-                background: 'none', border: 'none', color: 'var(--muted)',
-                fontSize: 12, cursor: 'pointer', display: 'flex',
-                alignItems: 'center', gap: 4, padding: '2px 0', transition: 'color 0.15s',
-              }}
-              onMouseOver={e => e.currentTarget.style.color = 'var(--gold)'}
-              onMouseOut={e  => e.currentTarget.style.color = 'var(--muted)'}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polyline points="9 17 4 12 9 7"/>
-                <path d="M20 18v-2a4 4 0 00-4-4H4"/>
-              </svg>
-              Reply
-            </button>
-          </div>
-        )}
-
-        {/* Sent / Seen receipt badge — only on last own message */}
-        {renderReceiptBadge()}
+        <div className="thread-time">
+          {fmtTs(message.sentAt)}
+        </div>
       </div>
 
       {isMine && (
-        <div className="msg-avatar">{initials(message.senderName)}</div>
+        <button
+          className="icon-btn danger"
+          title="Delete message"
+          onClick={() => onDelete?.(message.messageId)}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <polyline points="3 6 5 6 21 6" />
+            <path d="M19 6l-1 14H6L5 6" />
+            <path d="M10 11v6M14 11v6" />
+            <path d="M9 6V4h6v2" />
+          </svg>
+        </button>
       )}
+
     </div>
-  );
+
+    {/* Reply Reference */}
+    {message.parentMessage && (
+      <div className="thread-reply-context">
+        <strong>
+          Replying to {message.parentMessage.senderName}
+        </strong>
+
+        <div className="thread-reply-preview">
+          {(message.parentMessage.bodyHtml || '')
+            .replace(/<[^>]+>/g, '')
+            .slice(0, 120)}
+          ...
+        </div>
+      </div>
+    )}
+
+    {/* Body */}
+    <div
+      className="thread-message-body"
+      dangerouslySetInnerHTML={{ __html: cleanHtml }}
+    />
+
+    {/* Attachments */}
+    {message.attachments?.length > 0 && (
+      <div className="thread-attachments">
+
+        {downloadError && (
+          <div className="attachment-error">
+            {downloadError}
+          </div>
+        )}
+
+        {message.attachments.map(att => (
+          <button
+            key={att.attachmentId}
+            className="attach-chip"
+            onClick={() => handleDownload(att)}
+            disabled={downloadingId === att.attachmentId}
+          >
+            {downloadingId === att.attachmentId
+              ? '⏳'
+              : fileIcon(att.mimeType)}
+
+            <span>{att.originalName}</span>
+
+            <span className="attach-size">
+              ({(att.fileSize / 1024).toFixed(0)} KB)
+            </span>
+          </button>
+        ))}
+      </div>
+    )}
+
+    {/* Footer Actions */}
+    <div className="thread-footer">
+
+      {onReply && (
+        <button
+          className="thread-reply-btn"
+          onClick={() => onReply(message)}
+        >
+          ↩ Reply
+        </button>
+      )}
+
+      <div className="thread-receipt">
+        {renderReceiptBadge()}
+      </div>
+
+    </div>
+
+  </div>
+);
 }

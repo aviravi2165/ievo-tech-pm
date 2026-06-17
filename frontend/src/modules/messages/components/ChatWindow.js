@@ -40,9 +40,10 @@ export default function ChatWindow({ conversation, currentUserId, onArchive, onB
   }, [conv.participantCount, conv.participants?.length]);
 
   // Scroll to bottom on new messages
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length]);
+useEffect(() => {
+  console.log('AUTOSCROLL FIRED');
+  bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+}, [messages.length]);
 
   // Mark all unread once on open
   useEffect(() => {
@@ -105,8 +106,14 @@ export default function ChatWindow({ conversation, currentUserId, onArchive, onB
           </button>
         )}
 
-        <div className="thread-header-info" style={{ flex: 1, minWidth: 0 }}>
-          <div className="thread-subject">{conv.subject}</div>
+       <div className="thread-header-info" style={{ flex: 1, minWidth: 0 }}>
+  <div className="thread-subject">
+    {conv.subject}
+  </div>
+
+  <div className="thread-count">
+    {messages.length} message{messages.length !== 1 ? 's' : ''}
+  </div>
           <div className="thread-meta" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             {/* Conv type badge */}
             <span style={{
@@ -229,7 +236,7 @@ export default function ChatWindow({ conversation, currentUserId, onArchive, onB
       )}
 
       {/* ── Messages ── */}
-      <div className="thread-messages">
+      <div className="gmail-thread-view">
         {loading && <div className="loader-wrap"><div className="spinner"/></div>}
         {error && (
           <div style={{ color: 'var(--danger)', padding: 16, fontSize: 13 }}>

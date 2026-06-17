@@ -1079,3 +1079,99 @@ html, body, #root {
   .thread-messages { padding: 12px 14px; }
   .composer { padding: 10px 14px 12px; }
 }
+.thread-message {
+  padding: 24px 32px;
+  border-top: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+.thread-message:first-child {
+  border-top: none;
+}
+
+.thread-message-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.thread-sender {
+  font-size: 15px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.thread-time {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.thread-message-body {
+  font-size: 14px;
+  line-height: 1.7;
+  color: #374151;
+  word-break: break-word;
+}
+
+.thread-reply-context {
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  background: #f9fafb;
+  border-left: 3px solid #d1d5db;
+  border-radius: 4px;
+}
+
+.thread-reply-preview {
+  margin-top: 4px;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.thread-attachments {
+  margin-top: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.attach-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.attach-size {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.thread-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 16px;
+}
+
+.thread-reply-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.thread-reply-btn:hover {
+  color: #111827;
+}
+
+.attachment-error {
+  color: #dc2626;
+  font-size: 12px;
+}
