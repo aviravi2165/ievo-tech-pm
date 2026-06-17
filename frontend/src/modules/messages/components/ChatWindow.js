@@ -20,6 +20,7 @@ export default function ChatWindow({ conversation, currentUserId, onArchive, onB
   const [removeError,      setRemoveError]       = useState('');
   const markedAllRef = useRef(null);
   const bottomRef    = useRef(null);
+ 
 
   // Merge inbox-row data with thread-loaded data (thread data wins for convType/createdBy)
   const conv = useMemo(() => ({
@@ -40,11 +41,44 @@ export default function ChatWindow({ conversation, currentUserId, onArchive, onB
   }, [conv.participantCount, conv.participants?.length]);
 
   // Scroll to bottom on new messages
+const firstLoadRef = useRef(true);
+
 useEffect(() => {
-  console.log('AUTOSCROLL FIRED');
-  bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  firstLoadRef.current = true;
+}, [conversation?.conversationId]);
+
+useEffect(() => {
+  if (
+    firstLoadRef.current &&
+    messages.length > 0
+  ) {
+    setTimeout(() => {
+      bottomRef.current?.scrollIntoView({
+        behavior: 'auto',
+        block: 'end',
+      });
+    }, 50);
+
+    firstLoadRef.current = false;
+  }
 }, [messages.length]);
 
+useEffect(() => {
+  const container = document.querySelector('.gmail-thread-view');
+
+  if (!container) return;
+
+  const distanceFromBottom =
+    container.scrollHeight -
+    container.scrollTop -
+    container.clientHeight;
+
+  if (distanceFromBottom < 120) {
+    bottomRef.current?.scrollIntoView({
+      behavior: 'smooth',
+    });
+  }
+}, [messages.length]);
   // Mark all unread once on open
   useEffect(() => {
     if (!messages.length || !currentUserId) return;
