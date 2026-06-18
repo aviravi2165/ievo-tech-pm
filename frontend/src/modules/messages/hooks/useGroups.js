@@ -28,5 +28,10 @@ export function useGroups() {
     setGroups(prev => prev.filter(g => g.groupId !== groupId));
   }, []);
 
-  return { groups, loading, createGroup, deleteGroup, refetch: fetchGroups };
+  const leaveGroup = useCallback(async (groupId, deleteChat = false) => {
+    await groupApi.leaveGroup(groupId, deleteChat);
+    await fetchGroups();
+  }, [fetchGroups]);
+
+  return { groups, loading, createGroup, deleteGroup, leaveGroup, refetch: fetchGroups };
 }

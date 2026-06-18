@@ -24,7 +24,7 @@ function useToast() {
 export default function MessagingPage({ currentUser }) {
   const { conversations, loading, error: inboxError, refetch, archiveConversation, clearUnreadDot } = useInbox();
   const { count: unreadCount, decrement } = useUnreadCount();
-  const { groups, loading: groupsLoading, createGroup, deleteGroup } = useGroups();
+  const { groups, loading: groupsLoading, createGroup, deleteGroup, leaveGroup } = useGroups();
   const { socket } = useSocket();
   const { user }   = useAuth();
 
@@ -124,6 +124,12 @@ export default function MessagingPage({ currentUser }) {
     setComposeInitialRecipients([]);
   }, []);
 
+  const handleLeaveGroup = useCallback(async (groupId, deleteChat = false) => {
+    await leaveGroup(groupId, deleteChat);
+    refetch();
+    fetchSent();
+  }, [leaveGroup, refetch, fetchSent]);
+
   // ── Archive ───────────────────────────────────────────────────────────────
   const handleArchive = async () => {
     if (!activeConv) return;
@@ -198,6 +204,7 @@ export default function MessagingPage({ currentUser }) {
               loading={groupsLoading}
               onCreate={createGroup}
               onDelete={deleteGroup}
+              onLeave={handleLeaveGroup}
               onOpenConversation={handleOpenGroupConversation}
               onComposeToGroup={handleComposeToGroup}
             />

@@ -34,6 +34,7 @@ export default function ChatWindow({ conversation, currentUserId, onArchive, onB
   const createdBy  = conv.createdBy  || conv.created_by;
   const isCcThread = convType === 'cc';
   const isSender   = String(createdBy) === String(currentUserId);
+  const canReply   = conv.userCanReply ?? conv.allowReply;
 
   const isGroup = useMemo(() => {
     if (conv.participantCount != null) return conv.participantCount > 2;
@@ -167,12 +168,12 @@ useEffect(() => {
         </div>
 
         <div className="thread-actions" style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
-          {!conv.allowReply && (
+          {!canReply && (
             <span style={{
               fontSize: 10, color: 'var(--gold-dim)', padding: '2px 8px',
               border: '1px solid var(--gold-dim)', borderRadius: 8,
               letterSpacing: '.06em', textTransform: 'uppercase',
-            }}>Broadcast</span>
+            }}>{conv.allowReply ? 'Read only' : 'Broadcast'}</span>
           )}
 
           {/* Participants panel toggle — CC threads only */}
@@ -289,7 +290,7 @@ useEffect(() => {
             isGroup={isGroup}
             currentUserId={currentUserId}
             isLastSentByMe={msg.messageId === lastSentByMeId}
-            onReply={conv.allowReply ? setReplyingTo : null}
+            onReply={canReply ? setReplyingTo : null}
             onDelete={handleDelete}
           />
         ))}
@@ -298,7 +299,7 @@ useEffect(() => {
 
       {/* ── Composer ── */}
       <Composer
-        allowReply={conv.allowReply}
+        allowReply={canReply}
         replyingTo={replyingTo}
         onCancelReply={() => setReplyingTo(null)}
         onSend={handleSend}

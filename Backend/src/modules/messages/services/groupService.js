@@ -1,6 +1,20 @@
 
 const { getPool } = require('../../../config/db');
 
+let archiveColumnReady;
+
+async function ensureParticipantArchiveColumn() {
+  if (!archiveColumnReady) {
+    archiveColumnReady = getPool().query(
+      `ALTER TABLE comm_participants
+       ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+       ALTER TABLE comm_participants
+       ADD COLUMN IF NOT EXISTS left_at TIMESTAMPTZ`
+    );
+  }
+  await archiveColumnReady;
+}
+
 // ── Guards ────────────────────────────────────────────────────────────────────
 
 async function assertGroupAdmin(groupId, userId) {
@@ -25,12 +39,21 @@ async function assertGroupMember(groupId, userId) {
   const { rows } = await pool.query(
     `SELECT g.group_id FROM comm_groups g
      WHERE g.group_id = $1
-       AND g.is_active = TRUE
        AND (
          g.created_by = $2::uuid
          OR EXISTS (
            SELECT 1 FROM comm_group_members gm
            WHERE gm.group_id = g.group_id AND gm.user_id = $2::uuid
+         )
+         OR EXISTS (
+           SELECT 1
+           FROM comm_conversations c
+           INNER JOIN comm_participants p
+             ON p.conversation_id = c.conversation_id
+             AND p.user_id = $2::uuid
+             AND p.is_deleted = FALSE
+           WHERE c.group_id = g.group_id
+             AND c.is_deleted = FALSE
          )
        )`,
     [groupId, userId]
@@ -48,10 +71,24 @@ async function assertGroupMember(groupId, userId) {
 async function listGroupsForUser(userId) {
   const pool = getPool();
   const { rows } = await pool.query(
-    `SELECT DISTINCT
+    `SELECT
        g.group_id    AS "groupId",
        g.group_name  AS "groupName",
        g.created_at  AS "createdAt",
+       g.created_by  AS "createdBy",
+       (g.created_by = $1::uuid AND g.is_active = TRUE) AS "isAdmin",
+       (gm.user_id IS NOT NULL) AS "isMember",
+       g.is_active AS "isActive",
+       EXISTS (
+         SELECT 1
+         FROM comm_conversations c
+         INNER JOIN comm_participants p
+           ON p.conversation_id = c.conversation_id
+           AND p.user_id = $1::uuid
+           AND p.is_deleted = FALSE
+         WHERE c.group_id = g.group_id
+           AND c.is_deleted = FALSE
+       ) AS "hasVisibleChat",
        (
          SELECT COUNT(*)::int
          FROM comm_group_members gm2
@@ -60,8 +97,22 @@ async function listGroupsForUser(userId) {
      FROM comm_groups g
      LEFT JOIN comm_group_members gm
        ON gm.group_id = g.group_id AND gm.user_id = $1::uuid
-     WHERE g.is_active = TRUE
-       AND (g.created_by = $1::uuid OR gm.user_id IS NOT NULL)
+     WHERE (
+       (g.is_active = TRUE AND (g.created_by = $1::uuid OR gm.user_id IS NOT NULL))
+       OR (
+         NOT (g.created_by = $1::uuid AND g.is_active = FALSE)
+         AND EXISTS (
+         SELECT 1
+         FROM comm_conversations c
+         INNER JOIN comm_participants p
+           ON p.conversation_id = c.conversation_id
+           AND p.user_id = $1::uuid
+           AND p.is_deleted = FALSE
+         WHERE c.group_id = g.group_id
+           AND c.is_deleted = FALSE
+         )
+       )
+     )
      ORDER BY g.group_name ASC`,
     [userId]
   );
@@ -91,7 +142,15 @@ async function createGroup(userId, groupName) {
     );
 
     await client.query('COMMIT');
-    return { ...group, memberCount: 1 };
+    return {
+      ...group,
+      createdBy: userId,
+      isAdmin: true,
+      isMember: true,
+      isActive: true,
+      hasVisibleChat: false,
+      memberCount: 1,
+    };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -111,8 +170,10 @@ async function getGroupMembers(groupId, userId) {
        u.user_id    AS "userId",
        u.email,
        u.first_name AS "firstName",
-       u.last_name  AS "lastName"
+       u.last_name  AS "lastName",
+       (g.created_by = u.user_id) AS "isAdmin"
      FROM comm_group_members gm
+     INNER JOIN comm_groups g ON g.group_id = gm.group_id
      INNER JOIN auth_users u ON u.user_id = gm.user_id
      WHERE gm.group_id = $1
        AND u.is_active = TRUE
@@ -139,6 +200,7 @@ async function getMemberUserIdsForGroups(groupIds = []) {
 // ── Add members ───────────────────────────────────────────────────────────────
 
 async function addMembers(groupId, actorUserId, userIds) {
+  await ensureParticipantArchiveColumn();
   await assertGroupAdmin(groupId, actorUserId);
 
   const pool = getPool();
@@ -150,6 +212,23 @@ async function addMembers(groupId, actorUserId, userIds) {
         `INSERT INTO comm_group_members (group_id, user_id)
          VALUES ($1, $2::uuid)
          ON CONFLICT (group_id, user_id) DO NOTHING`,
+        [groupId, memberId]
+      );
+      await client.query(
+        `INSERT INTO comm_participants (conversation_id, user_id, participant_type)
+         SELECT c.conversation_id, $2::uuid, 'to'
+         FROM comm_conversations c
+         WHERE c.group_id = $1 AND c.is_deleted = FALSE
+         ON CONFLICT (conversation_id, user_id)
+         DO UPDATE SET
+           is_deleted = FALSE,
+           is_archived = FALSE,
+           archived_at = CASE
+             WHEN comm_participants.is_deleted THEN NULL
+             ELSE comm_participants.archived_at
+           END,
+           left_at = NULL,
+           participant_type = 'to'`,
         [groupId, memberId]
       );
     }
@@ -166,15 +245,124 @@ async function addMembers(groupId, actorUserId, userIds) {
 // ── Remove member ─────────────────────────────────────────────────────────────
 
 async function removeMember(groupId, actorUserId, memberUserId) {
+  await ensureParticipantArchiveColumn();
   await assertGroupAdmin(groupId, actorUserId);
 
+  if (String(actorUserId) === String(memberUserId)) {
+    const err = new Error('Group admin cannot remove themselves');
+    err.statusCode = 400;
+    throw err;
+  }
+
   const pool = getPool();
-  const { rowCount } = await pool.query(
-    `DELETE FROM comm_group_members
-     WHERE group_id = $1 AND user_id = $2::uuid`,
-    [groupId, memberUserId]
-  );
+  const client = await pool.connect();
+  let rowCount = 0;
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      `DELETE FROM comm_group_members
+       WHERE group_id = $1 AND user_id = $2::uuid`,
+      [groupId, memberUserId]
+    );
+    rowCount = result.rowCount;
+    await client.query(
+      `UPDATE comm_participants p
+       SET left_at = COALESCE(left_at, NOW()), is_archived = FALSE
+       FROM comm_conversations c
+       WHERE p.conversation_id = c.conversation_id
+         AND c.group_id = $1
+         AND p.user_id = $2::uuid
+         AND p.is_deleted = FALSE`,
+      [groupId, memberUserId]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
   return rowCount > 0;
+}
+
+// ── Leave group ──────────────────────────────────────────────────────────────
+
+async function leaveGroup(groupId, userId, { deleteChat = false } = {}) {
+  const pool = getPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows } = await client.query(
+      `SELECT
+         g.created_by,
+         g.is_active,
+         gm.user_id AS member_user_id,
+         EXISTS (
+           SELECT 1
+           FROM comm_conversations c
+           INNER JOIN comm_participants p
+             ON p.conversation_id = c.conversation_id
+             AND p.user_id = $2::uuid
+             AND p.is_deleted = FALSE
+           WHERE c.group_id = g.group_id
+             AND c.is_deleted = FALSE
+         ) AS has_visible_chat
+       FROM comm_groups g
+       LEFT JOIN comm_group_members gm
+         ON gm.group_id = g.group_id AND gm.user_id = $2::uuid
+       WHERE g.group_id = $1`,
+      [groupId, userId]
+    );
+    const group = rows[0];
+    if (!group || (!group.member_user_id && !group.has_visible_chat)) {
+      const err = new Error('Group not found or access denied');
+      err.statusCode = 404;
+      throw err;
+    }
+    if (String(group.created_by) === String(userId) && group.is_active) {
+      const err = new Error('Group admin can delete the group instead of leaving it');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    await client.query(
+      `DELETE FROM comm_group_members
+       WHERE group_id = $1 AND user_id = $2::uuid`,
+      [groupId, userId]
+    );
+
+    if (deleteChat) {
+      await client.query(
+        `UPDATE comm_participants p
+         SET is_deleted = TRUE, is_archived = FALSE
+         FROM comm_conversations c
+         WHERE p.conversation_id = c.conversation_id
+           AND c.group_id = $1
+           AND p.user_id = $2::uuid`,
+        [groupId, userId]
+      );
+    } else {
+      await client.query(
+        `UPDATE comm_participants p
+         SET is_archived = FALSE, left_at = COALESCE(left_at, NOW())
+         FROM comm_conversations c
+         WHERE p.conversation_id = c.conversation_id
+           AND c.group_id = $1
+           AND p.user_id = $2::uuid
+           AND p.is_deleted = FALSE`,
+        [groupId, userId]
+      );
+    }
+
+    await client.query('COMMIT');
+    return true;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // ── Soft delete group ─────────────────────────────────────────────────────────
@@ -249,6 +437,7 @@ module.exports = {
   getMemberUserIdsForGroups,
   addMembers,
   removeMember,
+  leaveGroup,
   softDeleteGroup,
   assertGroupMember,
   getLatestGroupConversation,

@@ -1015,6 +1015,31 @@ html, body, #root {
 .group-name { font-size: 13.5px; font-weight: 600; color: var(--text-primary); }
 .group-count { font-size: 12px; color: var(--text-muted); margin-top: 1px; }
 .group-actions { display: flex; gap: 6px; }
+.group-leave-panel {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 8px 12px;
+  margin: -4px 0 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.group-menu-item {
+  width: auto;
+  display: inline-flex;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 12px;
+  text-align: center;
+  cursor: pointer;
+}
+.group-menu-item:hover { background: var(--bg-row-hover); }
+.group-menu-item.danger { color: var(--danger); }
 
 /* ── Loader ── */
 .loader-wrap {

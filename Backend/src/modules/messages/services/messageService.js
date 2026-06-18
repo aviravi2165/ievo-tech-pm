@@ -1,6 +1,8 @@
 'use strict';
 const { getPool } = require('../../../config/db');
 
+let archiveColumnReady;
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function sanitizeBodyHtml(html = '') {
@@ -15,6 +17,18 @@ function displayName(row) {
   if (!row) return 'Unknown';
   return [row.first_name, row.last_name].filter(Boolean).join(' ').trim()
     || row.email || 'Unknown';
+}
+
+async function ensureParticipantArchiveColumn() {
+  if (!archiveColumnReady) {
+    archiveColumnReady = getPool().query(
+      `ALTER TABLE comm_participants
+       ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+       ALTER TABLE comm_participants
+       ADD COLUMN IF NOT EXISTS left_at TIMESTAMPTZ`
+    );
+  }
+  await archiveColumnReady;
 }
 
 async function assertConversationParticipant(conversationId, userId) {
@@ -107,9 +121,34 @@ async function addParticipants(client, conversationId, userIds, participantType 
       `INSERT INTO comm_participants (conversation_id, user_id, participant_type)
        VALUES ($1, $2::uuid, $3)
        ON CONFLICT (conversation_id, user_id)
-       DO UPDATE SET is_deleted = FALSE, is_archived = FALSE, participant_type = $3`,
+       DO UPDATE SET
+         is_deleted = FALSE,
+         is_archived = FALSE,
+         archived_at = CASE
+           WHEN comm_participants.is_deleted THEN NULL
+           ELSE comm_participants.archived_at
+         END,
+         left_at = NULL,
+         participant_type = $3`,
       [conversationId, uid, participantType]
     );
+  }
+}
+
+async function assertActiveGroupMember(groupId, userId, client = getPool()) {
+  const { rows } = await client.query(
+    `SELECT 1
+     FROM comm_groups g
+     INNER JOIN comm_group_members gm ON gm.group_id = g.group_id
+     WHERE g.group_id = $1
+       AND gm.user_id = $2::uuid
+       AND g.is_active = TRUE`,
+    [groupId, userId]
+  );
+  if (!rows[0]) {
+    const e = new Error('You are no longer a member of this group');
+    e.statusCode = 403;
+    throw e;
   }
 }
 
@@ -126,6 +165,8 @@ async function insertMessage(client, conversationId, senderId, bodyHtml, parentM
 // ── sendMessage ───────────────────────────────────────────────────────────────
 
 async function sendMessage(senderUserId, payload) {
+  await ensureParticipantArchiveColumn();
+
   const {
     recipientIds         = [],
     groupIds             = [],
@@ -203,6 +244,7 @@ async function sendMessage(senderUserId, payload) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
+        await assertActiveGroupMember(groupId, senderUserId, client);
 
         // Find existing group conversation or create one
         const { rows: existing } = await client.query(
@@ -213,17 +255,13 @@ async function sendMessage(senderUserId, payload) {
         );
 
         let conversationId, participantIds;
+        const memberIds = await getMemberUserIdsForGroups([groupId]);
+        const activeMembers = [...new Set([...memberIds, senderUserId].map(String))];
 
         if (existing[0]) {
           conversationId = existing[0].conversation_id;
-          // Ensure sender is still a participant
-          await client.query(
-            `INSERT INTO comm_participants (conversation_id, user_id, participant_type)
-             VALUES ($1, $2::uuid, 'to')
-             ON CONFLICT (conversation_id, user_id) DO UPDATE SET is_deleted = FALSE`,
-            [conversationId, senderUserId]
-          );
-          participantIds = await getParticipantUserIds(conversationId);
+          await addParticipants(client, conversationId, activeMembers, 'to');
+          participantIds = activeMembers;
         } else {
           const { rows: grpInfo } = await client.query(
             `SELECT group_name FROM comm_groups WHERE group_id = $1`, [groupId]
@@ -234,10 +272,8 @@ async function sendMessage(senderUserId, payload) {
           });
           conversationId = conv.conversation_id;
           // All group members become participants
-          const memberIds = await getMemberUserIdsForGroups([groupId]); // sender included in group threads
-          const allMembers = [...new Set([...memberIds, senderUserId])];
-          await addParticipants(client, conversationId, allMembers, 'to');
-          participantIds = allMembers;
+          await addParticipants(client, conversationId, activeMembers, 'to');
+          participantIds = activeMembers;
         }
 
         const messageId = await insertMessage(client, conversationId, senderUserId, sanitizedBody);
@@ -364,10 +400,12 @@ async function removeParticipant(conversationId, targetUserId, actorUserId) {
 async function replyToConversation(conversationId, senderUserId, payload) {
   const { bodyHtml, attachmentIds = [], parentMessageId = null } = payload;
   await assertConversationParticipant(conversationId, senderUserId);
+  await ensureParticipantArchiveColumn();
 
   const pool = getPool();
   const { rows: convRows } = await pool.query(
-    `SELECT allow_reply, is_deleted FROM comm_conversations WHERE conversation_id = $1`,
+    `SELECT allow_reply, is_deleted, conv_type, group_id
+     FROM comm_conversations WHERE conversation_id = $1`,
     [conversationId]
   );
   const conv = convRows[0];
@@ -376,6 +414,9 @@ async function replyToConversation(conversationId, senderUserId, payload) {
   }
   if (!conv.allow_reply) {
     const e = new Error('Replies are not allowed'); e.statusCode = 403; throw e;
+  }
+  if (conv.conv_type === 'group_thread') {
+    await assertActiveGroupMember(conv.group_id, senderUserId);
   }
 
   const sanitizedBody = sanitizeBodyHtml(bodyHtml);
@@ -422,6 +463,7 @@ async function replyToConversation(conversationId, senderUserId, payload) {
 // ── Inbox ─────────────────────────────────────────────────────────────────────
 
 async function getInbox(userId, page = 1, limit = 30) {
+  await ensureParticipantArchiveColumn();
   const pool   = getPool();
   const offset = (Math.max(page, 1) - 1) * limit;
   const { rows } = await pool.query(
@@ -452,6 +494,8 @@ async function getInbox(userId, page = 1, limit = 30) {
         FROM comm_messages um
         WHERE um.conversation_id = c.conversation_id
           AND um.is_deleted = FALSE
+          AND um.sent_at > COALESCE(p.archived_at, '-infinity'::timestamptz)
+          AND um.sent_at <= COALESCE(p.left_at, 'infinity'::timestamptz)
           AND um.sender_id <> $1::uuid
           AND NOT EXISTS (
             SELECT 1 FROM comm_read_receipts rr
@@ -465,6 +509,8 @@ async function getInbox(userId, page = 1, limit = 30) {
      LEFT JOIN LATERAL (
        SELECT body_html, sender_id FROM comm_messages
        WHERE conversation_id = c.conversation_id AND is_deleted = FALSE
+         AND sent_at > COALESCE(p.archived_at, '-infinity'::timestamptz)
+         AND sent_at <= COALESCE(p.left_at, 'infinity'::timestamptz)
        ORDER BY sent_at DESC LIMIT 1
      ) lm ON TRUE
      LEFT JOIN auth_users su ON su.user_id = lm.sender_id
@@ -528,6 +574,7 @@ async function getSent(userId, page = 1, limit = 30) {
 // ── Unread count ──────────────────────────────────────────────────────────────
 
 async function getUnreadCount(userId) {
+  await ensureParticipantArchiveColumn();
   const { rows } = await getPool().query(
     `SELECT COUNT(DISTINCT m.conversation_id)::int AS count
      FROM comm_messages m
@@ -537,6 +584,8 @@ async function getUnreadCount(userId) {
      INNER JOIN comm_conversations c
        ON c.conversation_id = m.conversation_id AND c.is_deleted = FALSE
      WHERE m.is_deleted = FALSE AND m.sender_id <> $1::uuid
+       AND m.sent_at > COALESCE(p.archived_at, '-infinity'::timestamptz)
+       AND m.sent_at <= COALESCE(p.left_at, 'infinity'::timestamptz)
        AND NOT EXISTS (
          SELECT 1 FROM comm_read_receipts rr
          WHERE rr.message_id = m.message_id AND rr.user_id = $1::uuid
@@ -547,6 +596,7 @@ async function getUnreadCount(userId) {
 }
 
 async function getUnreadConversationIds(userId) {
+  await ensureParticipantArchiveColumn();
   const { rows } = await getPool().query(
     `SELECT DISTINCT m.conversation_id AS "conversationId"
      FROM comm_messages m
@@ -556,6 +606,8 @@ async function getUnreadConversationIds(userId) {
      INNER JOIN comm_conversations c
        ON c.conversation_id = m.conversation_id AND c.is_deleted = FALSE
      WHERE m.is_deleted = FALSE AND m.sender_id <> $1::uuid
+       AND m.sent_at > COALESCE(p.archived_at, '-infinity'::timestamptz)
+       AND m.sent_at <= COALESCE(p.left_at, 'infinity'::timestamptz)
        AND NOT EXISTS (
          SELECT 1 FROM comm_read_receipts rr
          WHERE rr.message_id = m.message_id AND rr.user_id = $1::uuid
@@ -568,6 +620,7 @@ async function getUnreadConversationIds(userId) {
 // ── Search ────────────────────────────────────────────────────────────────────
 
 async function searchMessages(userId, query) {
+  await ensureParticipantArchiveColumn();
   const { rows } = await getPool().query(
     `SELECT DISTINCT c.conversation_id AS "conversationId", c.subject,
             c.last_message_at AS "latestAt"
@@ -577,6 +630,8 @@ async function searchMessages(userId, query) {
        AND p.user_id = $1::uuid AND p.is_deleted = FALSE AND p.is_archived = FALSE
      LEFT JOIN comm_messages m
        ON m.conversation_id = c.conversation_id AND m.is_deleted = FALSE
+       AND m.sent_at > COALESCE(p.archived_at, '-infinity'::timestamptz)
+       AND m.sent_at <= COALESCE(p.left_at, 'infinity'::timestamptz)
      WHERE c.is_deleted = FALSE AND (c.subject ILIKE $2 OR m.body_html ILIKE $2)
      ORDER BY c.last_message_at DESC LIMIT 50`,
     [userId, `%${query}%`]
@@ -588,6 +643,7 @@ async function searchMessages(userId, query) {
 
 async function getThread(conversationId, userId) {
   await assertConversationParticipant(conversationId, userId);
+  await ensureParticipantArchiveColumn();
   const pool = getPool();
 
   const convRes = await pool.query(
@@ -612,6 +668,25 @@ async function getThread(conversationId, userId) {
      ORDER BY u.first_name, u.last_name`,
     [conversationId]
   );
+
+  const currentPartRes = await pool.query(
+    `SELECT archived_at AS "archivedAt", left_at AS "leftAt"
+     FROM comm_participants
+     WHERE conversation_id = $1 AND user_id = $2::uuid AND is_deleted = FALSE`,
+    [conversationId, userId]
+  );
+
+  let userCanReply = Boolean(convRes.rows[0].allowReply);
+  if (convRes.rows[0].convType === 'group_thread') {
+    const memberRes = await pool.query(
+      `SELECT 1
+       FROM comm_group_members gm
+       INNER JOIN comm_conversations c ON c.group_id = gm.group_id
+       WHERE c.conversation_id = $1 AND gm.user_id = $2::uuid`,
+      [conversationId, userId]
+    );
+    userCanReply = userCanReply && Boolean(memberRes.rows[0]);
+  }
 
   const msgRes = await pool.query(
     `SELECT m.message_id, m.conversation_id, m.sender_id, m.parent_message_id,
@@ -641,13 +716,26 @@ async function getThread(conversationId, userId) {
      LEFT JOIN auth_users u  ON u.user_id  = m.sender_id
      LEFT JOIN comm_messages pm ON pm.message_id = m.parent_message_id
      LEFT JOIN auth_users pu ON pu.user_id = pm.sender_id
-     WHERE m.conversation_id = $1 AND m.is_deleted = FALSE
+     WHERE m.conversation_id = $1
+       AND m.is_deleted = FALSE
+       AND m.sent_at > COALESCE($2::timestamptz, '-infinity'::timestamptz)
+       AND m.sent_at <= COALESCE($3::timestamptz, 'infinity'::timestamptz)
      ORDER BY m.sent_at ASC`,
-    [conversationId]
+    [
+      conversationId,
+      currentPartRes.rows[0]?.archivedAt || null,
+      currentPartRes.rows[0]?.leftAt || null,
+    ]
   );
 
   return {
-    conversation: { ...convRes.rows[0], participants: partRes.rows },
+    conversation: {
+      ...convRes.rows[0],
+      participants: partRes.rows,
+      userCanReply,
+      archivedAt: currentPartRes.rows[0]?.archivedAt || null,
+      leftAt: currentPartRes.rows[0]?.leftAt || null,
+    },
     messages: msgRes.rows.map(mapThreadMessage),
   };
 }
@@ -690,8 +778,9 @@ async function markMessageRead(messageId, userId) {
 
 async function archiveConversation(conversationId, userId) {
   await assertConversationParticipant(conversationId, userId);
+  await ensureParticipantArchiveColumn();
   await getPool().query(
-    `UPDATE comm_participants SET is_archived = TRUE
+    `UPDATE comm_participants SET is_archived = TRUE, archived_at = NOW()
      WHERE conversation_id = $1 AND user_id = $2::uuid AND is_deleted = FALSE`,
     [conversationId, userId]
   );

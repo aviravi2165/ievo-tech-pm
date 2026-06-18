@@ -145,6 +145,8 @@ CREATE TABLE IF NOT EXISTS comm_participants (
   participant_type VARCHAR(10)   NOT NULL DEFAULT 'to'
                    CHECK (participant_type IN ('to','cc','bcc')),
   is_archived      BOOLEAN       NOT NULL DEFAULT FALSE,
+  archived_at      TIMESTAMPTZ,
+  left_at          TIMESTAMPTZ,
   is_deleted       BOOLEAN       NOT NULL DEFAULT FALSE,
   joined_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
   UNIQUE (conversation_id, user_id)

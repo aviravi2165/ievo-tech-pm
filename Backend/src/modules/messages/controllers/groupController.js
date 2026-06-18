@@ -101,6 +101,21 @@ async function remove(req, res) {
   }
 }
 
+async function leave(req, res) {
+  try {
+    const groupId = parseInt(req.params.groupId, 10);
+    if (Number.isNaN(groupId)) {
+      return res.status(400).json({ error: 'Invalid group id' });
+    }
+    await groupService.leaveGroup(groupId, req.user.userId, {
+      deleteChat: Boolean(req.body?.deleteChat),
+    });
+    return res.json({ success: true });
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
 /**
  * NEW: GET /api/groups/:groupId/conversation
  * Returns the most-recent conversation for this group so the frontend can
@@ -132,6 +147,7 @@ module.exports = {
   getMembers,
   addMembers,
   removeMember,
+  leave,
   remove,
   getGroupConversation,
 };
