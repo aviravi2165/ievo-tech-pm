@@ -1,33 +1,31 @@
-
 const { getPool } = require('../../../config/db');
-
-let archiveColumnReady;
-
-async function ensureParticipantArchiveColumn() {
-  if (!archiveColumnReady) {
-    archiveColumnReady = getPool().query(
-      `ALTER TABLE comm_participants
-       ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
-       ALTER TABLE comm_participants
-       ADD COLUMN IF NOT EXISTS left_at TIMESTAMPTZ`
-    );
-  }
-  await archiveColumnReady;
-}
 
 // ── Guards ────────────────────────────────────────────────────────────────────
 
-async function assertGroupAdmin(groupId, userId) {
+/**
+ * True if userId is either the group's creator-admin OR the org-wide
+ * super admin (auth_users.user_type === 'admin'). Both get identical
+ * power: add/remove participants, disable, disable & delete.
+ */
+async function isGroupAdminOrSuperAdmin(groupId, userId) {
   const pool = getPool();
   const { rows } = await pool.query(
-    `SELECT group_id FROM comm_groups
-     WHERE group_id = $1
-       AND is_active = TRUE
-       AND created_by = $2::uuid`,
+    `SELECT
+       (g.created_by = $2::uuid) AS "isCreator",
+       (u.user_type = 'admin')   AS "isSuperAdmin"
+     FROM comm_groups g
+     INNER JOIN auth_users u ON u.user_id = $2::uuid
+     WHERE g.group_id = $1`,
     [groupId, userId]
   );
-  if (!rows[0]) {
-    const err = new Error('Group not found or access denied');
+  if (!rows[0]) return false;
+  return rows[0].isCreator || rows[0].isSuperAdmin;
+}
+
+async function assertGroupAdmin(groupId, userId) {
+  const allowed = await isGroupAdminOrSuperAdmin(groupId, userId);
+  if (!allowed) {
+    const err = new Error('Only the group admin can do this');
     err.code = 'GROUP_FORBIDDEN';
     err.statusCode = 403;
     throw err;
@@ -46,14 +44,8 @@ async function assertGroupMember(groupId, userId) {
            WHERE gm.group_id = g.group_id AND gm.user_id = $2::uuid
          )
          OR EXISTS (
-           SELECT 1
-           FROM comm_conversations c
-           INNER JOIN comm_participants p
-             ON p.conversation_id = c.conversation_id
-             AND p.user_id = $2::uuid
-             AND p.is_deleted = FALSE
-           WHERE c.group_id = g.group_id
-             AND c.is_deleted = FALSE
+           SELECT 1 FROM auth_users u
+           WHERE u.user_id = $2::uuid AND u.user_type = 'admin'
          )
        )`,
     [groupId, userId]
@@ -68,27 +60,58 @@ async function assertGroupMember(groupId, userId) {
 
 // ── List ──────────────────────────────────────────────────────────────────────
 
+/**
+ * Regular users: groups they created or are a member of, minus any they've
+ * personally hidden (comm_group_hidden) — hiding is per-user and only
+ * possible once a group is disabled.
+ *
+ * Super admin: every group in the system, full stop — this is their
+ * control surface for "just in case the group admin leaves the company."
+ * Hiding does not apply to the super admin view.
+ */
 async function listGroupsForUser(userId) {
   const pool = getPool();
+
+  const { rows: meRows } = await pool.query(
+    `SELECT user_type AS "userType" FROM auth_users WHERE user_id = $1::uuid`,
+    [userId]
+  );
+  const isSuperAdmin = meRows[0]?.userType === 'admin';
+
+  if (isSuperAdmin) {
+    const { rows } = await pool.query(
+      `SELECT
+         g.group_id     AS "groupId",
+         g.group_name   AS "groupName",
+         g.created_at   AS "createdAt",
+         g.created_by   AS "createdBy",
+         g.is_active    AS "isActive",
+         g.is_disabled  AS "isDisabled",
+         FALSE          AS "isAdmin",      -- not the creator-admin
+         TRUE           AS "isSuperAdmin", -- but has full control anyway
+         FALSE          AS "isMember",     -- not a participant of the chat
+         (
+           SELECT COUNT(*)::int FROM comm_group_members gm2
+           WHERE gm2.group_id = g.group_id
+         ) AS "memberCount"
+       FROM comm_groups g
+       WHERE g.is_active = TRUE
+       ORDER BY g.is_disabled ASC, g.created_at ASC`
+    );
+    return rows;
+  }
+
   const { rows } = await pool.query(
     `SELECT
        g.group_id    AS "groupId",
        g.group_name  AS "groupName",
        g.created_at  AS "createdAt",
        g.created_by  AS "createdBy",
-       (g.created_by = $1::uuid AND g.is_active = TRUE) AS "isAdmin",
+       g.is_active   AS "isActive",
+       g.is_disabled AS "isDisabled",
+       (g.created_by = $1::uuid) AS "isAdmin",
+       FALSE AS "isSuperAdmin",
        (gm.user_id IS NOT NULL) AS "isMember",
-       g.is_active AS "isActive",
-       EXISTS (
-         SELECT 1
-         FROM comm_conversations c
-         INNER JOIN comm_participants p
-           ON p.conversation_id = c.conversation_id
-           AND p.user_id = $1::uuid
-           AND p.is_deleted = FALSE
-         WHERE c.group_id = g.group_id
-           AND c.is_deleted = FALSE
-       ) AS "hasVisibleChat",
        (
          SELECT COUNT(*)::int
          FROM comm_group_members gm2
@@ -97,23 +120,12 @@ async function listGroupsForUser(userId) {
      FROM comm_groups g
      LEFT JOIN comm_group_members gm
        ON gm.group_id = g.group_id AND gm.user_id = $1::uuid
-     WHERE (
-       (g.is_active = TRUE AND (g.created_by = $1::uuid OR gm.user_id IS NOT NULL))
-       OR (
-         NOT (g.created_by = $1::uuid AND g.is_active = FALSE)
-         AND EXISTS (
-         SELECT 1
-         FROM comm_conversations c
-         INNER JOIN comm_participants p
-           ON p.conversation_id = c.conversation_id
-           AND p.user_id = $1::uuid
-           AND p.is_deleted = FALSE
-         WHERE c.group_id = g.group_id
-           AND c.is_deleted = FALSE
-         )
-       )
-     )
-     ORDER BY g.group_name ASC`,
+     LEFT JOIN comm_group_hidden gh
+       ON gh.group_id = g.group_id AND gh.user_id = $1::uuid
+     WHERE g.is_active = TRUE
+       AND gh.user_id IS NULL
+       AND (g.created_by = $1::uuid OR gm.user_id IS NOT NULL)
+     ORDER BY g.is_disabled ASC, g.created_at ASC`,
     [userId]
   );
   return rows;
@@ -130,7 +142,8 @@ async function createGroup(userId, groupName) {
     const { rows } = await client.query(
       `INSERT INTO comm_groups (group_name, created_by)
        VALUES ($1, $2::uuid)
-       RETURNING group_id AS "groupId", group_name AS "groupName", created_at AS "createdAt"`,
+       RETURNING group_id AS "groupId", group_name AS "groupName",
+                 created_by AS "createdBy", created_at AS "createdAt"`,
       [groupName, userId]
     );
     const group = rows[0];
@@ -144,11 +157,11 @@ async function createGroup(userId, groupName) {
     await client.query('COMMIT');
     return {
       ...group,
-      createdBy: userId,
       isAdmin: true,
+      isSuperAdmin: false,
       isMember: true,
       isActive: true,
-      hasVisibleChat: false,
+      isDisabled: false,
       memberCount: 1,
     };
   } catch (err) {
@@ -159,7 +172,7 @@ async function createGroup(userId, groupName) {
   }
 }
 
-// ── Members ───────────────────────────────────────────────────────────────────
+// ── Members (view only for non-admins) ─────────────────────────────────────────
 
 async function getGroupMembers(groupId, userId) {
   await assertGroupMember(groupId, userId);
@@ -177,7 +190,7 @@ async function getGroupMembers(groupId, userId) {
      INNER JOIN auth_users u ON u.user_id = gm.user_id
      WHERE gm.group_id = $1
        AND u.is_active = TRUE
-     ORDER BY u.last_name, u.first_name`,
+     ORDER BY (g.created_by = u.user_id) DESC, u.last_name, u.first_name`,
     [groupId]
   );
   return rows;
@@ -197,13 +210,21 @@ async function getMemberUserIdsForGroups(groupIds = []) {
   return rows.map(r => r.user_id);
 }
 
-// ── Add members ───────────────────────────────────────────────────────────────
+// ── Add members — admin (creator) OR super admin only ──────────────────────────
 
 async function addMembers(groupId, actorUserId, userIds) {
-  await ensureParticipantArchiveColumn();
   await assertGroupAdmin(groupId, actorUserId);
 
   const pool = getPool();
+  const { rows: groupRows } = await pool.query(
+    `SELECT is_disabled FROM comm_groups WHERE group_id = $1`, [groupId]
+  );
+  if (groupRows[0]?.is_disabled) {
+    const err = new Error('This group is disabled. Re-enable it before adding members.');
+    err.statusCode = 400;
+    throw err;
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -223,12 +244,15 @@ async function addMembers(groupId, actorUserId, userIds) {
          DO UPDATE SET
            is_deleted = FALSE,
            is_archived = FALSE,
-           archived_at = CASE
-             WHEN comm_participants.is_deleted THEN NULL
-             ELSE comm_participants.archived_at
-           END,
+           archived_at = NULL,
            left_at = NULL,
            participant_type = 'to'`,
+        [groupId, memberId]
+      );
+      // Re-adding someone un-hides the group for them, in case they had
+      // previously removed a disabled version of it from their own tabs.
+      await client.query(
+        `DELETE FROM comm_group_hidden WHERE group_id = $1 AND user_id = $2::uuid`,
         [groupId, memberId]
       );
     }
@@ -242,19 +266,29 @@ async function addMembers(groupId, actorUserId, userIds) {
   }
 }
 
-// ── Remove member ─────────────────────────────────────────────────────────────
+// ── Remove member — admin (creator) OR super admin only ────────────────────────
 
 async function removeMember(groupId, actorUserId, memberUserId) {
-  await ensureParticipantArchiveColumn();
   await assertGroupAdmin(groupId, actorUserId);
 
-  if (String(actorUserId) === String(memberUserId)) {
-    const err = new Error('Group admin cannot remove themselves');
+  const pool = getPool();
+  const { rows: groupRows } = await pool.query(
+    `SELECT created_by, is_disabled FROM comm_groups WHERE group_id = $1`, [groupId]
+  );
+  if (!groupRows[0]) {
+    const err = new Error('Group not found'); err.statusCode = 404; throw err;
+  }
+  if (String(groupRows[0].created_by) === String(memberUserId)) {
+    const err = new Error('The group creator cannot be removed. Disable or delete the group instead.');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (groupRows[0].is_disabled) {
+    const err = new Error('This group is disabled. Re-enable it before removing members.');
     err.statusCode = 400;
     throw err;
   }
 
-  const pool = getPool();
   const client = await pool.connect();
   let rowCount = 0;
   try {
@@ -285,115 +319,108 @@ async function removeMember(groupId, actorUserId, memberUserId) {
   return rowCount > 0;
 }
 
-// ── Leave group ──────────────────────────────────────────────────────────────
+// ── Disable group (chat frozen, history stays visible to all) ─────────────────
 
-async function leaveGroup(groupId, userId, { deleteChat = false } = {}) {
-  const pool = getPool();
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const { rows } = await client.query(
-      `SELECT
-         g.created_by,
-         g.is_active,
-         gm.user_id AS member_user_id,
-         EXISTS (
-           SELECT 1
-           FROM comm_conversations c
-           INNER JOIN comm_participants p
-             ON p.conversation_id = c.conversation_id
-             AND p.user_id = $2::uuid
-             AND p.is_deleted = FALSE
-           WHERE c.group_id = g.group_id
-             AND c.is_deleted = FALSE
-         ) AS has_visible_chat
-       FROM comm_groups g
-       LEFT JOIN comm_group_members gm
-         ON gm.group_id = g.group_id AND gm.user_id = $2::uuid
-       WHERE g.group_id = $1`,
-      [groupId, userId]
-    );
-    const group = rows[0];
-    if (!group || (!group.member_user_id && !group.has_visible_chat)) {
-      const err = new Error('Group not found or access denied');
-      err.statusCode = 404;
-      throw err;
-    }
-    if (String(group.created_by) === String(userId) && group.is_active) {
-      const err = new Error('Group admin can delete the group instead of leaving it');
-      err.statusCode = 400;
-      throw err;
-    }
-
-    await client.query(
-      `DELETE FROM comm_group_members
-       WHERE group_id = $1 AND user_id = $2::uuid`,
-      [groupId, userId]
-    );
-
-    if (deleteChat) {
-      await client.query(
-        `UPDATE comm_participants p
-         SET is_deleted = TRUE, is_archived = FALSE
-         FROM comm_conversations c
-         WHERE p.conversation_id = c.conversation_id
-           AND c.group_id = $1
-           AND p.user_id = $2::uuid`,
-        [groupId, userId]
-      );
-    } else {
-      await client.query(
-        `UPDATE comm_participants p
-         SET is_archived = FALSE, left_at = COALESCE(left_at, NOW())
-         FROM comm_conversations c
-         WHERE p.conversation_id = c.conversation_id
-           AND c.group_id = $1
-           AND p.user_id = $2::uuid
-           AND p.is_deleted = FALSE`,
-        [groupId, userId]
-      );
-    }
-
-    await client.query('COMMIT');
-    return true;
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
-}
-
-// ── Soft delete group ─────────────────────────────────────────────────────────
-
-async function softDeleteGroup(groupId, userId) {
-  await assertGroupAdmin(groupId, userId);
-
+/**
+ * Admin (creator) or super admin only. Freezes the group: no one — not
+ * even the admin — can send further messages, but every participant
+ * keeps full read access to everything said before the freeze. The
+ * group still appears in everyone's tabs exactly as before; only the
+ * "Delete" option becomes available to the admin/super admin once
+ * disabled, and "remove from my tabs" becomes available to participants.
+ */
+async function disableGroup(groupId, actorUserId) {
+  await assertGroupAdmin(groupId, actorUserId);
   const pool = getPool();
   await pool.query(
-    `UPDATE comm_groups SET is_active = FALSE WHERE group_id = $1`,
+    `UPDATE comm_groups
+     SET is_disabled = TRUE, disabled_at = NOW(), disabled_by = $2::uuid
+     WHERE group_id = $1`,
+    [groupId, actorUserId]
+  );
+  return true;
+}
+
+/** Re-enable a disabled group — admin (creator) or super admin only. */
+async function enableGroup(groupId, actorUserId) {
+  await assertGroupAdmin(groupId, actorUserId);
+  const pool = getPool();
+  await pool.query(
+    `UPDATE comm_groups
+     SET is_disabled = FALSE, disabled_at = NULL, disabled_by = NULL
+     WHERE group_id = $1`,
     [groupId]
   );
   return true;
 }
 
-// ── NEW: Get latest conversation for a group ──────────────────────────────────
+/**
+ * Disable & Delete — admin (creator) or super admin only, and only once
+ * the group is already disabled (the UI enforces this by only showing
+ * "Delete" after "Disable"). This removes the group from the admin's own
+ * Inbox/Sent/Groups tabs (comm_group_hidden), exactly like a participant
+ * hiding it — it does NOT delete the group for other participants, who
+ * keep seeing it (read-only) until they each choose to remove it from
+ * their own tabs too.
+ */
+async function deleteGroupForActor(groupId, actorUserId) {
+  await assertGroupAdmin(groupId, actorUserId);
+
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT is_disabled FROM comm_groups WHERE group_id = $1`, [groupId]
+  );
+  if (!rows[0]) {
+    const err = new Error('Group not found'); err.statusCode = 404; throw err;
+  }
+  if (!rows[0].is_disabled) {
+    const err = new Error('Disable the group before deleting it.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  await pool.query(
+    `INSERT INTO comm_group_hidden (group_id, user_id)
+     VALUES ($1, $2::uuid)
+     ON CONFLICT DO NOTHING`,
+    [groupId, actorUserId]
+  );
+  return true;
+}
 
 /**
- * Returns the most recent conversation that is linked to groupId AND in which
- * the requesting userId is a participant.
- *
- * The Groups panel calls this when a user clicks a group card so they are taken
- * directly into the existing inbox thread instead of having to find it manually.
- *
- * Returns:
- *   {
- *     conversationId, subject, allowReply, lastMessageAt, createdAt,
- *     unreadCount, groupName
- *   }
- *   or null if no conversation exists yet.
+ * Participant-only "remove from my tabs" — available ONLY once the group
+ * has been disabled by its admin. This hides the group from the calling
+ * user's own Inbox/Sent/Groups views; it has no effect on any other
+ * participant, and does not touch comm_group_members or the group itself.
+ * (Participants can no longer "exit" an active group — per spec, only
+ * the admin/super admin controls membership now.)
  */
+async function hideDisabledGroupForUser(groupId, userId) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT is_disabled FROM comm_groups WHERE group_id = $1`, [groupId]
+  );
+  if (!rows[0]) {
+    const err = new Error('Group not found'); err.statusCode = 404; throw err;
+  }
+  if (!rows[0].is_disabled) {
+    const err = new Error('You can only remove a group from your tabs after it has been disabled.');
+    err.statusCode = 400;
+    throw err;
+  }
+  await assertGroupMember(groupId, userId);
+  await pool.query(
+    `INSERT INTO comm_group_hidden (group_id, user_id)
+     VALUES ($1, $2::uuid)
+     ON CONFLICT DO NOTHING`,
+    [groupId, userId]
+  );
+  return true;
+}
+
+// ── Get latest conversation for a group ────────────────────────────────────────
+
 async function getLatestGroupConversation(groupId, userId) {
   const pool = getPool();
   const { rows } = await pool.query(
@@ -404,6 +431,7 @@ async function getLatestGroupConversation(groupId, userId) {
        c.last_message_at   AS "lastMessageAt",
        c.created_at        AS "createdAt",
        g.group_name        AS "groupName",
+       g.is_disabled       AS "isGroupDisabled",
        (
          SELECT COUNT(*)::int
          FROM comm_messages um
@@ -437,8 +465,12 @@ module.exports = {
   getMemberUserIdsForGroups,
   addMembers,
   removeMember,
-  leaveGroup,
-  softDeleteGroup,
+  disableGroup,
+  enableGroup,
+  deleteGroupForActor,
+  hideDisabledGroupForUser,
   assertGroupMember,
+  assertGroupAdmin,
+  isGroupAdminOrSuperAdmin,
   getLatestGroupConversation,
 };

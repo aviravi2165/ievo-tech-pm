@@ -94,8 +94,9 @@ function mapThreadMessage(row) {
     readReceipts:    row.read_receipts || [],
     parentMessage:   row.parent_message_id ? {
       messageId:  row.parent_message_id,
-      senderName: row.parent_sender_name,
-      bodyHtml:   row.parent_body_html,
+      senderName: row.parent_is_deleted ? null : row.parent_sender_name,
+      bodyHtml:   row.parent_is_deleted ? null : row.parent_body_html,
+      isDeleted:  Boolean(row.parent_is_deleted),
     } : null,
   };
 }
@@ -137,16 +138,21 @@ async function addParticipants(client, conversationId, userIds, participantType 
 
 async function assertActiveGroupMember(groupId, userId, client = getPool()) {
   const { rows } = await client.query(
-    `SELECT 1
+    `SELECT g.is_disabled AS "isDisabled", gm.user_id AS "memberUserId"
      FROM comm_groups g
-     INNER JOIN comm_group_members gm ON gm.group_id = g.group_id
+     LEFT JOIN comm_group_members gm
+       ON gm.group_id = g.group_id AND gm.user_id = $2::uuid
      WHERE g.group_id = $1
-       AND gm.user_id = $2::uuid
        AND g.is_active = TRUE`,
     [groupId, userId]
   );
-  if (!rows[0]) {
+  if (!rows[0] || !rows[0].memberUserId) {
     const e = new Error('You are no longer a member of this group');
+    e.statusCode = 403;
+    throw e;
+  }
+  if (rows[0].isDisabled) {
+    const e = new Error('This group has been disabled. No new messages can be sent, but past messages remain visible.');
     e.statusCode = 403;
     throw e;
   }
@@ -515,7 +521,10 @@ async function getInbox(userId, page = 1, limit = 30) {
      ) lm ON TRUE
      LEFT JOIN auth_users su ON su.user_id = lm.sender_id
      LEFT JOIN comm_groups cg ON cg.group_id = c.group_id
+     LEFT JOIN comm_group_hidden gh
+       ON gh.group_id = c.group_id AND gh.user_id = $1::uuid
      WHERE c.is_deleted = FALSE
+       AND gh.user_id IS NULL
      ORDER BY c.last_message_at DESC
      LIMIT $2 OFFSET $3`,
     [userId, limit, offset]
@@ -563,7 +572,10 @@ async function getSent(userId, page = 1, limit = 30) {
        ORDER BY sent_at DESC LIMIT 1
      ) lm ON TRUE
      LEFT JOIN comm_groups cg ON cg.group_id = c.group_id
+     LEFT JOIN comm_group_hidden gh
+       ON gh.group_id = c.group_id AND gh.user_id = $1::uuid
      WHERE c.is_deleted = FALSE AND c.created_by = $1::uuid
+       AND gh.user_id IS NULL
      ORDER BY c.last_message_at DESC
      LIMIT $2 OFFSET $3`,
     [userId, limit, offset]
@@ -677,15 +689,18 @@ async function getThread(conversationId, userId) {
   );
 
   let userCanReply = Boolean(convRes.rows[0].allowReply);
+  let isGroupDisabled = false;
   if (convRes.rows[0].convType === 'group_thread') {
     const memberRes = await pool.query(
-      `SELECT 1
+      `SELECT g.is_disabled AS "isDisabled"
        FROM comm_group_members gm
        INNER JOIN comm_conversations c ON c.group_id = gm.group_id
+       INNER JOIN comm_groups g ON g.group_id = gm.group_id
        WHERE c.conversation_id = $1 AND gm.user_id = $2::uuid`,
       [conversationId, userId]
     );
-    userCanReply = userCanReply && Boolean(memberRes.rows[0]);
+    isGroupDisabled = Boolean(memberRes.rows[0]?.isDisabled);
+    userCanReply = userCanReply && Boolean(memberRes.rows[0]) && !isGroupDisabled;
   }
 
   const msgRes = await pool.query(
@@ -693,6 +708,7 @@ async function getThread(conversationId, userId) {
             m.body_html, m.sent_at,
             COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''), u.email, 'Unknown') AS sender_name,
             pm.body_html AS parent_body_html,
+            pm.is_deleted AS parent_is_deleted,
             COALESCE(NULLIF(TRIM(CONCAT(pu.first_name,' ',pu.last_name)),''), pu.email) AS parent_sender_name,
             COALESCE(
               (SELECT JSON_AGG(JSON_BUILD_OBJECT(
@@ -733,6 +749,7 @@ async function getThread(conversationId, userId) {
       ...convRes.rows[0],
       participants: partRes.rows,
       userCanReply,
+      isGroupDisabled,
       archivedAt: currentPartRes.rows[0]?.archivedAt || null,
       leftAt: currentPartRes.rows[0]?.leftAt || null,
     },

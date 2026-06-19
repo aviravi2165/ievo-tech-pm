@@ -57,6 +57,9 @@ export default function MessageBubble({
   isLastSentByMe = false,
   onReply,
   onDelete,
+  onJumpToParent,
+  isHighlighted = false,
+  registerRef,
 }) {
   const [downloadingId, setDownloadingId] = useState(null);
   const [downloadError, setDownloadError] = useState('');
@@ -143,7 +146,10 @@ export default function MessageBubble({
   };
 
   return (
-  <div className="thread-message">
+  <div
+    className={`thread-message${isHighlighted ? ' thread-message--highlighted' : ''}`}
+    ref={node => registerRef?.(message.messageId, node)}
+  >
 
     {/* Header */}
     <div className="thread-message-header">
@@ -184,17 +190,31 @@ export default function MessageBubble({
 
     {/* Reply Reference */}
     {message.parentMessage && (
-      <div className="thread-reply-context">
-        <strong>
-          Replying to {message.parentMessage.senderName}
-        </strong>
+      <div
+        className="thread-reply-context"
+        role="button"
+        tabIndex={0}
+        onClick={() => onJumpToParent?.(message.parentMessage)}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onJumpToParent?.(message.parentMessage); } }}
+      >
+        {message.parentMessage.isDeleted ? (
+          <span style={{ color: '#9ca3af', fontStyle: 'italic' }}>
+            Original message is unavailable
+          </span>
+        ) : (
+          <>
+            <strong>
+              Replying to {message.parentMessage.senderName}
+            </strong>
 
-        <div className="thread-reply-preview">
-          {(message.parentMessage.bodyHtml || '')
-            .replace(/<[^>]+>/g, '')
-            .slice(0, 120)}
-          ...
-        </div>
+            <div className="thread-reply-preview">
+              {(message.parentMessage.bodyHtml || '')
+                .replace(/<[^>]+>/g, '')
+                .slice(0, 120)}
+              ...
+            </div>
+          </>
+        )}
       </div>
     )}
 

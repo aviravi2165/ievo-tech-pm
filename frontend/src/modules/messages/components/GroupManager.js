@@ -2,14 +2,40 @@ import { useState } from 'react';
 import { groupApi } from '../api/groupApi';
 import RecipientPicker from './RecipientPicker';
 
+/**
+ * GroupManager — group control model:
+ *
+ * - Only the group's creator-admin OR the org super admin can add/remove
+ *   participants, disable, re-enable, or delete a group. Regular
+ *   participants can only VIEW the member list and the chat — no exit,
+ *   no leave, no self-removal.
+ *
+ * - "Disable" freezes the chat for everyone (including the admin): no
+ *   new messages can be sent, but every participant keeps full read
+ *   access to history. The group still shows in everyone's tabs.
+ *
+ * - "Delete" only becomes available AFTER a group is disabled. It hides
+ *   the group from the acting admin/super-admin's own tabs only — other
+ *   participants are unaffected.
+ *
+ * - Once a group is disabled, every participant (not just the admin)
+ *   gets a "Remove from my tabs" option, which hides it from their own
+ *   view only, without touching the group for anyone else.
+ *
+ * - The super admin sees every group's controls but never opens the
+ *   chat itself (isMember is always false for them) — pure governance,
+ *   no message visibility.
+ */
 export default function GroupManager({
   groups = [],
   loading,
   onCreate,
+  onDisable,
+  onEnable,
   onDelete,
-  onLeave,
-  onOpenConversation,  // called when an existing thread is found
-  onComposeToGroup,    // NEW — called when no thread exists yet (404)
+  onHide,
+  onOpenConversation,
+  onComposeToGroup,
 }) {
   const [creating,       setCreating]       = useState(false);
   const [newName,        setNewName]        = useState('');
@@ -22,9 +48,8 @@ export default function GroupManager({
   const [addError,       setAddError]       = useState('');
   const [addSaving,      setAddSaving]      = useState(false);
   const [openingGroupId, setOpeningGroupId] = useState(null);
-  const [openError,      setOpenError]      = useState({});
-  const [leavingGroupId, setLeavingGroupId] = useState(null);
-  const [leaveMenuGroupId, setLeaveMenuGroupId] = useState(null);
+  const [actionError,    setActionError]    = useState({});
+  const [actingGroupId,  setActingGroupId]  = useState(null);
 
   const handleCreate = async () => {
     if (!newName.trim()) { setCreateError('Group name is required.'); return; }
@@ -51,8 +76,8 @@ export default function GroupManager({
     try {
       await groupApi.removeMember(managingGroup.groupId, userId);
       setMembers(prev => prev.filter(m => m.userId !== userId));
-    } catch {
-      setAddError('Failed to remove member.');
+    } catch (err) {
+      setAddError(err?.response?.data?.error || 'Failed to remove member.');
     }
   };
 
@@ -70,49 +95,55 @@ export default function GroupManager({
     } finally { setAddSaving(false); }
   };
 
-  const handleLeaveGroup = async (group, deleteChat) => {
-    const message = deleteChat
-      ? `Exit "${group.groupName}" and delete its chat from your inbox?`
-      : group.hasVisibleChat
-        ? `Exit "${group.groupName}"? Past group chats will stay read-only.`
-        : `Exit "${group.groupName}"? There is no past group chat to keep.`;
-    if (!window.confirm(message)) return;
-    setLeavingGroupId(group.groupId);
-    setOpenError(prev => ({ ...prev, [group.groupId]: '' }));
+  const runAction = async (group, action, confirmMsg) => {
+    if (confirmMsg && !window.confirm(confirmMsg)) return;
+    setActingGroupId(group.groupId);
+    setActionError(prev => ({ ...prev, [group.groupId]: '' }));
     try {
-      await onLeave?.(group.groupId, deleteChat);
-      setLeaveMenuGroupId(null);
-      if (managingGroup?.groupId === group.groupId) {
-        setManagingGroup(prev => prev ? { ...prev, isMember: false } : prev);
-      }
+      await action(group.groupId);
+      if (managingGroup?.groupId === group.groupId) setManagingGroup(null);
     } catch (err) {
-      setOpenError(prev => ({
+      setActionError(prev => ({
         ...prev,
-        [group.groupId]: err?.response?.data?.error || 'Could not exit group. Try again.',
+        [group.groupId]: err?.response?.data?.error || 'Action failed. Try again.',
       }));
     } finally {
-      setLeavingGroupId(null);
+      setActingGroupId(null);
     }
   };
 
-  /**
-   * Open the existing conversation thread for a group.
-   * On 404: open ComposeModal pre-filled with this group as recipient.
-   * On other errors: show a brief inline error.
-   */
+  const handleDisable = (group) => runAction(
+    group, onDisable,
+    `Disable "${group.groupName}"? No one will be able to send new messages, but everyone keeps read access to past chats.`
+  );
+
+  const handleEnable = (group) => runAction(
+    group, onEnable,
+    `Re-enable "${group.groupName}"? Members will be able to send messages again.`
+  );
+
+  const handleDelete = (group) => runAction(
+    group, onDelete,
+    `Delete "${group.groupName}" from your tabs? Other participants keep seeing it (read-only) until they each remove it too.`
+  );
+
+  const handleHide = (group) => runAction(
+    group, onHide,
+    `Remove "${group.groupName}" from your tabs? This only affects your own view.`
+  );
+
   const handleOpenThread = async (group) => {
     setOpeningGroupId(group.groupId);
-    setOpenError(prev => ({ ...prev, [group.groupId]: '' }));
+    setActionError(prev => ({ ...prev, [group.groupId]: '' }));
     try {
       const conv = await groupApi.getGroupConversation(group.groupId);
       onOpenConversation?.(conv);
     } catch (err) {
       const is404 = err?.response?.status === 404;
       if (is404) {
-        // No thread yet — open compose with this group pre-filled
         onComposeToGroup?.(group);
       } else {
-        setOpenError(prev => ({
+        setActionError(prev => ({
           ...prev,
           [group.groupId]: 'Could not open thread. Try again.',
         }));
@@ -122,11 +153,10 @@ export default function GroupManager({
     }
   };
 
-  // ── Manage panel ──────────────────────────────────────────────────────────
+  // ── Manage panel ─────────────────────────────────────────────────────────
   if (managingGroup) {
-    const canManageMembers = Boolean(managingGroup.isAdmin && managingGroup.isActive);
-    const canLeave = Boolean(!managingGroup.isAdmin && managingGroup.isMember && managingGroup.isActive);
-    const canRemoveOwnGroup = Boolean(!managingGroup.isAdmin && (!managingGroup.isMember || !managingGroup.isActive));
+    const canManage = Boolean(managingGroup.isAdmin || managingGroup.isSuperAdmin);
+    const isDisabled = Boolean(managingGroup.isDisabled);
 
     return (
       <div className="groups-panel">
@@ -144,83 +174,115 @@ export default function GroupManager({
             <span>Back</span>
           </button>
           <h3 style={{ margin: 0 }}>{managingGroup.groupName}</h3>
+          {isDisabled && (
+            <span style={{
+              fontSize: 10, color: 'var(--muted)', border: '1px solid var(--divider)',
+              borderRadius: 8, padding: '2px 8px', textTransform: 'uppercase', letterSpacing: '.05em',
+            }}>Disabled</span>
+          )}
         </div>
 
-        {/* Add members */}
-        {canManageMembers ? (
-          <div style={{
-            background: 'var(--charcoal)', border: '1px solid var(--divider)',
-            borderRadius: 'var(--radius-lg)', padding: 14, marginBottom: 20,
-          }}>
-            <label className="field-label" style={{ marginBottom: 8 }}>Add Members</label>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-              <div style={{ flex: 1 }}>
-                <RecipientPicker
-                  value={selectedUsers}
-                  onChange={setSelectedUsers}
-                  groups={[]}
-                />
-              </div>
-              <button
-                className="btn btn-primary"
-                style={{ padding: '9px 16px', fontSize: 12, whiteSpace: 'nowrap', marginTop: 1 }}
-                onClick={handleAddMembers}
-                disabled={addSaving || !selectedUsers.length}
-              >
-                {addSaving ? 'Adding…' : '+ Add'}
-              </button>
+        {canManage ? (
+          <>
+            {/* Disable / Enable / Delete controls */}
+            <div style={{
+              background: 'var(--charcoal)', border: '1px solid var(--divider)',
+              borderRadius: 'var(--radius-lg)', padding: 14, marginBottom: 20,
+              display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center',
+            }}>
+              {!isDisabled ? (
+                <button
+                  className="btn btn-ghost danger"
+                  onClick={() => handleDisable(managingGroup)}
+                  disabled={actingGroupId === managingGroup.groupId}
+                >
+                  Disable Group
+                </button>
+              ) : (
+                <>
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => handleEnable(managingGroup)}
+                    disabled={actingGroupId === managingGroup.groupId}
+                  >
+                    Re-enable Group
+                  </button>
+                  <button
+                    className="btn btn-ghost danger"
+                    onClick={() => handleDelete(managingGroup)}
+                    disabled={actingGroupId === managingGroup.groupId}
+                  >
+                    Delete Group
+                  </button>
+                </>
+              )}
+              <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                {isDisabled
+                  ? 'Chat is frozen — no one can send messages. History stays visible.'
+                  : 'Disabling freezes the chat for everyone; delete only unlocks after that.'}
+              </span>
             </div>
-            {addError && (
-              <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 6 }}>
-                {addError}
+
+            {/* Add members */}
+            {!isDisabled && (
+              <div style={{
+                background: 'var(--charcoal)', border: '1px solid var(--divider)',
+                borderRadius: 'var(--radius-lg)', padding: 14, marginBottom: 20,
+              }}>
+                <label className="field-label" style={{ marginBottom: 8 }}>Add Members</label>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <div style={{ flex: 1 }}>
+                    <RecipientPicker
+                      value={selectedUsers}
+                      onChange={setSelectedUsers}
+                      groups={[]}
+                    />
+                  </div>
+                  <button
+                    className="btn btn-primary"
+                    style={{ padding: '9px 16px', fontSize: 12, whiteSpace: 'nowrap', marginTop: 1 }}
+                    onClick={handleAddMembers}
+                    disabled={addSaving || !selectedUsers.length}
+                  >
+                    {addSaving ? 'Adding…' : '+ Add'}
+                  </button>
+                </div>
+                {addError && (
+                  <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 6 }}>
+                    {addError}
+                  </div>
+                )}
               </div>
             )}
-          </div>
+          </>
         ) : (
           <div style={{
             background: 'var(--charcoal)', border: '1px solid var(--divider)',
             borderRadius: 'var(--radius-lg)', padding: 14, marginBottom: 20,
             color: 'var(--muted)', fontSize: 13,
           }}>
-            Only the group admin can add or remove members.
-            <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-              {canLeave && (
-                <>
-                  <button
-                    className="btn btn-ghost"
-                    onClick={() => handleLeaveGroup(managingGroup, false)}
-                    disabled={leavingGroupId === managingGroup.groupId}
-                  >
-                    Exit only
-                  </button>
-                  <button
-                    className="btn btn-ghost danger"
-                    onClick={() => handleLeaveGroup(managingGroup, true)}
-                    disabled={leavingGroupId === managingGroup.groupId}
-                  >
-                    Exit and delete
-                  </button>
-                </>
-              )}
-              {canRemoveOwnGroup && (
+            Only the group admin can add, remove, disable, or delete this group.
+            {isDisabled && (
+              <div style={{ marginTop: 12 }}>
                 <button
                   className="btn btn-ghost danger"
-                  onClick={() => handleLeaveGroup(managingGroup, true)}
-                  disabled={leavingGroupId === managingGroup.groupId}
+                  onClick={() => handleHide(managingGroup)}
+                  disabled={actingGroupId === managingGroup.groupId}
                 >
-                  Delete from my groups
+                  Remove from my tabs
                 </button>
-              )}
-            </div>
-            {openError[managingGroup.groupId] && (
-              <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 8 }}>
-                {openError[managingGroup.groupId]}
               </div>
             )}
           </div>
         )}
 
-        {/* Members list */}
+        {actionError[managingGroup.groupId] && (
+          <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 16 }}>
+            {actionError[managingGroup.groupId]}
+          </div>
+        )}
+
+        {/* Members list — view only for non-admins */}
         <div style={{
           marginBottom: 12, fontSize: 12, color: 'var(--muted)',
           textTransform: 'uppercase', letterSpacing: '0.08em',
@@ -259,7 +321,8 @@ export default function GroupManager({
               </div>
               <div style={{ fontSize: 11, color: 'var(--muted)' }}>{m.email || ''}</div>
             </div>
-            {canManageMembers && !m.isAdmin && (
+            {/* Remove button — admin/super-admin only, never on the creator, never while disabled */}
+            {canManage && !isDisabled && !m.isAdmin && (
               <button
                 className="icon-btn danger"
                 title="Remove from group"
@@ -347,140 +410,133 @@ export default function GroupManager({
       )}
 
       {groups.map(g => {
-        const canManage = Boolean(g.isAdmin && g.isActive);
-        const canLeave = Boolean(!g.isAdmin && g.isMember && g.isActive);
-        const canRemoveOwnGroup = Boolean(!g.isAdmin && (!g.isMember || !g.isActive));
-        const leaveMenuOpen = leaveMenuGroupId === g.groupId;
+        const canManage = Boolean(g.isAdmin || g.isSuperAdmin);
+        const isDisabled = Boolean(g.isDisabled);
+        const isActing = actingGroupId === g.groupId;
 
         return (
-        <div key={g.groupId}>
-        <div className="group-card">
-          <div className="group-icon">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="2">
-              <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
-              <circle cx="9" cy="7" r="4"/>
-              <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
-            </svg>
-          </div>
-
-          <div className="group-info">
-            <div className="group-name">{g.groupName}</div>
-            <div className="group-count">
-              {g.memberCount ?? 0} member{g.memberCount !== 1 ? 's' : ''}
-              {!g.isActive && ' · Deleted by admin'}
-              {g.isActive && !g.isMember && !g.isAdmin && ' · Exited'}
-            </div>
-            {/* Only show genuine network errors, not 404s */}
-            {openError[g.groupId] && (
-              <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 3 }}>
-                {openError[g.groupId]}
-              </div>
-            )}
-          </div>
-
-          <div className="group-actions">
-            {/* Open thread — or compose if no thread yet */}
-            <button
-              className="icon-btn"
-              title="Open group chat"
-              disabled={openingGroupId === g.groupId}
-              onClick={() => handleOpenThread(g)}
-            >
-              {openingGroupId === g.groupId ? (
-                <div className="spinner" style={{ width: 12, height: 12, borderWidth: 2 }} />
-              ) : (
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
-                </svg>
-              )}
-            </button>
-
-            {/* Manage members */}
-            <button
-              className="icon-btn"
-              title={canManage ? 'Manage members' : 'View members'}
-              onClick={() => openManage(g)}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+          <div key={g.groupId} className="group-card">
+            <div className="group-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" strokeWidth="2">
                 <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
                 <circle cx="9" cy="7" r="4"/>
-                <line x1="19" y1="8" x2="19" y2="14"/>
-                <line x1="22" y1="11" x2="16" y2="11"/>
+                <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
               </svg>
-            </button>
+            </div>
 
-            {g.isAdmin ? (
-              <button
-                className="icon-btn danger"
-                title="Delete group"
-                onClick={() => {
-                  if (window.confirm(
-                    `Delete group "${g.groupName}"? Past messages are preserved.`
-                  )) onDelete(g.groupId);
-                }}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="2">
-                  <polyline points="3 6 5 6 21 6"/>
-                  <path d="M19 6l-1 14H6L5 6"/>
-                  <path d="M10 11v6M14 11v6"/>
-                  <path d="M9 6V4h6v2"/>
-                </svg>
-              </button>
-            ) : canLeave ? (
+            <div className="group-info">
+              <div className="group-name" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {g.groupName}
+                {g.isSuperAdmin && (
+                  <span style={{
+                    fontSize: 10, color: 'var(--gold)', border: '1px solid var(--gold)',
+                    borderRadius: 8, padding: '1px 6px', textTransform: 'uppercase', letterSpacing: '.04em',
+                  }}>Super Admin View</span>
+                )}
+                {isDisabled && (
+                  <span style={{
+                    fontSize: 10, color: 'var(--muted)', border: '1px solid var(--divider)',
+                    borderRadius: 8, padding: '1px 6px', textTransform: 'uppercase', letterSpacing: '.04em',
+                  }}>Disabled</span>
+                )}
+              </div>
+              <div className="group-count">
+                {g.memberCount ?? 0} member{g.memberCount !== 1 ? 's' : ''}
+              </div>
+              {actionError[g.groupId] && (
+                <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 3 }}>
+                  {actionError[g.groupId]}
+                </div>
+              )}
+            </div>
+
+            <div className="group-actions">
+              {/* Open thread — hidden entirely for the super admin's governance-only view */}
+              {!g.isSuperAdmin && (
                 <button
                   className="icon-btn"
-                  title="Exit group"
-                  disabled={leavingGroupId === g.groupId}
-                  onClick={() => setLeaveMenuGroupId(prev => prev === g.groupId ? null : g.groupId)}
+                  title="Open group chat"
+                  disabled={openingGroupId === g.groupId}
+                  onClick={() => handleOpenThread(g)}
                 >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" strokeWidth="2">
-                    <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
-                    <polyline points="16 17 21 12 16 7"/>
-                    <line x1="21" y1="12" x2="9" y2="12"/>
-                  </svg>
+                  {openingGroupId === g.groupId ? (
+                    <div className="spinner" style={{ width: 12, height: 12, borderWidth: 2 }} />
+                  ) : (
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2">
+                      <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+                    </svg>
+                  )}
                 </button>
-            ) : canRemoveOwnGroup ? (
-                <button
-                  className="icon-btn danger"
-                  title="Delete from my groups"
-                  disabled={leavingGroupId === g.groupId}
-                  onClick={() => handleLeaveGroup(g, true)}
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" strokeWidth="2">
-                    <polyline points="3 6 5 6 21 6"/>
-                    <path d="M19 6l-1 14H6L5 6"/>
-                    <path d="M10 11v6M14 11v6"/>
-                    <path d="M9 6V4h6v2"/>
-                  </svg>
-                </button>
-            ) : null}
+              )}
+
+              {/* Manage / view members */}
+              <button
+                className="icon-btn"
+                title={canManage ? 'Manage members' : 'View members'}
+                onClick={() => openManage(g)}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2">
+                  <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+                  <circle cx="9" cy="7" r="4"/>
+                  <line x1="19" y1="8" x2="19" y2="14"/>
+                  <line x1="22" y1="11" x2="16" y2="11"/>
+                </svg>
+              </button>
+
+              {/* Quick action button in the list row: */}
+              {canManage ? (
+                !isDisabled ? (
+                  <button
+                    className="icon-btn danger"
+                    title="Disable group"
+                    disabled={isActing}
+                    onClick={() => handleDisable(g)}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2">
+                      <circle cx="12" cy="12" r="10"/>
+                      <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+                    </svg>
+                  </button>
+                ) : (
+                  <button
+                    className="icon-btn danger"
+                    title="Delete group"
+                    disabled={isActing}
+                    onClick={() => handleDelete(g)}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2">
+                      <polyline points="3 6 5 6 21 6"/>
+                      <path d="M19 6l-1 14H6L5 6"/>
+                      <path d="M10 11v6M14 11v6"/>
+                      <path d="M9 6V4h6v2"/>
+                    </svg>
+                  </button>
+                )
+              ) : (
+                isDisabled && (
+                  <button
+                    className="icon-btn danger"
+                    title="Remove from my tabs"
+                    disabled={isActing}
+                    onClick={() => handleHide(g)}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2">
+                      <polyline points="3 6 5 6 21 6"/>
+                      <path d="M19 6l-1 14H6L5 6"/>
+                      <path d="M10 11v6M14 11v6"/>
+                      <path d="M9 6V4h6v2"/>
+                    </svg>
+                  </button>
+                )
+              )}
+            </div>
           </div>
-        </div>
-        {leaveMenuOpen && (
-          <div className="group-leave-panel">
-            <button
-              type="button"
-              className="group-menu-item"
-              onClick={() => handleLeaveGroup(g, false)}
-            >
-              Exit only
-            </button>
-            <button
-              type="button"
-              className="group-menu-item danger"
-              onClick={() => handleLeaveGroup(g, true)}
-            >
-              Exit and delete
-            </button>
-          </div>
-        )}
-        </div>
         );
       })}
     </div>

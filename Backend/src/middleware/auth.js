@@ -19,6 +19,10 @@ function verifyToken(token) {
     userId,
     email: decoded.email,
     displayName: decoded.displayName ?? decoded.name,
+    // FIX: was missing — needed so backend routes can recognise the
+    // messaging super-admin (auth_users.user_type === 'admin') without
+    // an extra DB round trip on every request.
+    userType: decoded.userType,
   };
 }
 
@@ -56,4 +60,8 @@ function authenticate(req, res, next) {
 module.exports = {
   authenticate,
   verifyToken,
+  // FIX: 'admin' user_type is repurposed as the messaging super admin —
+  // full group control (add/remove participants, disable, delete) across
+  // every group in the system, without read access to message content.
+  isSuperAdmin: (user) => user?.userType === 'admin',
 };

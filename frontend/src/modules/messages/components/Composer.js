@@ -18,12 +18,18 @@ const MAX_SIZE = 25 * 1024 * 1024; // 25 MB
  *   onSend({ bodyHtml, attachmentIds, parentMessageId })
  *   disabled     — bool
  */
-export default function Composer({ allowReply = true, replyingTo, onCancelReply, onSend, disabled }) {
+export default function Composer({ allowReply = true, replyingTo, onCancelReply, onSend, disabled, participants = [] }) {
   const editorRef = useRef(null);
+  const composerRef = useRef(null);
   const fileInputRef = useRef(null);
   const [attachments, setAttachments] = useState([]); // { id, name, size, uploading, progress }
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+
+  // ── @mention state ──────────────────────────────────────────────────────
+  const [mentionQuery, setMentionQuery]   = useState(null); // null = closed
+  const [mentionActive, setMentionActive] = useState(0);
+  const [mentionPos, setMentionPos]       = useState({ anchor: 'top', value: 0, left: 0 });
 
   if (!allowReply) {
     return (
@@ -35,6 +41,76 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
       </div>
     );
   }
+
+  const mentionName = (p) => `${p.firstName || ''} ${p.lastName || ''}`.trim() || p.email || 'Unknown';
+
+  const mentionMatches = mentionQuery === null
+    ? []
+    : participants.filter(p =>
+        mentionName(p).toLowerCase().includes(mentionQuery.toLowerCase())
+      ).slice(0, 8);
+
+  // Detect "@query" immediately before the caret and open/update/close the dropdown
+  const DROPDOWN_HEIGHT = 200;
+  const DROPDOWN_WIDTH  = 220;
+
+  const detectMention = () => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) { setMentionQuery(null); return; }
+    const range = sel.getRangeAt(0);
+    const node = range.startContainer;
+    if (node.nodeType !== Node.TEXT_NODE) { setMentionQuery(null); return; }
+
+    const textBefore = node.textContent.slice(0, range.startOffset);
+    const match = textBefore.match(/(?:^|\s)@([^\s@]*)$/);
+    if (!match) { setMentionQuery(null); return; }
+
+    setMentionQuery(match[1]);
+    setMentionActive(0);
+
+    const rect = range.getClientRects()[0] || editorRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const left = Math.min(rect.left, window.innerWidth - DROPDOWN_WIDTH - 8);
+
+    // Prefer opening right below the caret line (where the person is
+    // actually looking). Only flip above if there truly isn't room below,
+    // so it never has to fight with the toolbar or footer for space.
+    if (spaceBelow >= DROPDOWN_HEIGHT + 8) {
+      setMentionPos({ anchor: 'top', value: rect.bottom + 6, left });
+    } else {
+      setMentionPos({ anchor: 'bottom', value: window.innerHeight - rect.top + 6, left });
+    }
+  };
+
+  // Replace the "@query" text immediately before the caret with the chosen mention
+  const insertMention = (person) => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    const node = range.startContainer;
+    if (node.nodeType !== Node.TEXT_NODE) { setMentionQuery(null); return; }
+
+    const text = node.textContent;
+    const caret = range.startOffset;
+    const atIndex = text.lastIndexOf('@', caret - 1);
+    if (atIndex === -1) { setMentionQuery(null); return; }
+
+    const name = mentionName(person);
+    const newText = `${text.slice(0, atIndex)}@${name} ${text.slice(caret)}`;
+    node.textContent = newText;
+
+    const newCaretPos = atIndex + name.length + 2; // "@" + name + " "
+    const newRange = document.createRange();
+    newRange.setStart(node, newCaretPos);
+    newRange.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(newRange);
+
+    setMentionQuery(null);
+    editorRef.current?.focus();
+  };
 
   const execCmd = (cmd, value = null) => {
     editorRef.current?.focus();
@@ -107,7 +183,7 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
   };
 
   return (
-    <div className="composer">
+    <div className="composer" ref={composerRef}>
       {/* Reply context */}
       {replyingTo && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
@@ -169,7 +245,31 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
         contentEditable={!disabled && !sending}
         suppressContentEditableWarning
         data-placeholder="Write your message…"
+        onInput={detectMention}
+        onBlur={() => setTimeout(() => setMentionQuery(null), 120)}
         onKeyDown={e => {
+          if (mentionQuery !== null && mentionMatches.length > 0) {
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              setMentionActive(i => (i + 1) % mentionMatches.length);
+              return;
+            }
+            if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              setMentionActive(i => (i - 1 + mentionMatches.length) % mentionMatches.length);
+              return;
+            }
+            if (e.key === 'Enter' || e.key === 'Tab') {
+              e.preventDefault();
+              insertMention(mentionMatches[mentionActive]);
+              return;
+            }
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              setMentionQuery(null);
+              return;
+            }
+          }
           if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
             handleSend();
@@ -187,6 +287,43 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
           }
         }}
       />
+
+      {/* @mention dropdown */}
+      {mentionQuery !== null && mentionMatches.length > 0 && (
+        <div
+          style={{
+            position: 'fixed',
+            [mentionPos.anchor]: mentionPos.value,
+            left: mentionPos.left,
+            zIndex: 1000,
+            background: '#ffffff',
+            border: '1px solid #d1d5db',
+            borderRadius: 8,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+            width: DROPDOWN_WIDTH,
+            maxHeight: DROPDOWN_HEIGHT,
+            overflowY: 'auto',
+          }}
+        >
+          {mentionMatches.map((p, i) => (
+            <div
+              key={p.userId}
+              onMouseDown={e => { e.preventDefault(); insertMention(p); }}
+              onMouseEnter={() => setMentionActive(i)}
+              style={{
+                padding: '8px 14px',
+                fontSize: 13.5,
+                color: '#1f2430',
+                cursor: 'pointer',
+                background: i === mentionActive ? '#fdecea' : '#ffffff',
+                borderBottom: '1px solid #f1f2f4',
+              }}
+            >
+              {mentionName(p)}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Pending attachments */}
       {attachments.length > 0 && (

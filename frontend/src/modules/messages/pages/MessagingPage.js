@@ -24,7 +24,7 @@ function useToast() {
 export default function MessagingPage({ currentUser }) {
   const { conversations, loading, error: inboxError, refetch, archiveConversation, clearUnreadDot } = useInbox();
   const { count: unreadCount, decrement } = useUnreadCount();
-  const { groups, loading: groupsLoading, createGroup, deleteGroup, leaveGroup } = useGroups();
+  const { groups, loading: groupsLoading, createGroup, disableGroup, enableGroup, deleteGroup, hideGroup } = useGroups();
   const { socket } = useSocket();
   const { user }   = useAuth();
 
@@ -124,11 +124,32 @@ export default function MessagingPage({ currentUser }) {
     setComposeInitialRecipients([]);
   }, []);
 
-  const handleLeaveGroup = useCallback(async (groupId, deleteChat = false) => {
-    await leaveGroup(groupId, deleteChat);
+  // Disabling/enabling/hiding a group changes which conversations show up
+  // in Inbox/Sent (frozen chats still show but read-only; hidden groups
+  // disappear from the caller's own tabs), so refresh both after each.
+  const handleDisableGroup = useCallback(async (groupId) => {
+    await disableGroup(groupId);
     refetch();
     fetchSent();
-  }, [leaveGroup, refetch, fetchSent]);
+  }, [disableGroup, refetch, fetchSent]);
+
+  const handleEnableGroup = useCallback(async (groupId) => {
+    await enableGroup(groupId);
+    refetch();
+    fetchSent();
+  }, [enableGroup, refetch, fetchSent]);
+
+  const handleDeleteGroup = useCallback(async (groupId) => {
+    await deleteGroup(groupId);
+    refetch();
+    fetchSent();
+  }, [deleteGroup, refetch, fetchSent]);
+
+  const handleHideGroup = useCallback(async (groupId) => {
+    await hideGroup(groupId);
+    refetch();
+    fetchSent();
+  }, [hideGroup, refetch, fetchSent]);
 
   // ── Archive ───────────────────────────────────────────────────────────────
   const handleArchive = async () => {
@@ -193,6 +214,7 @@ export default function MessagingPage({ currentUser }) {
               currentUserId={currentUser?.userId}
               onArchive={handleArchive}
               onBack={() => setActiveConv(null)}
+              toast={toast}
             />
           </main>
         )}
@@ -203,8 +225,10 @@ export default function MessagingPage({ currentUser }) {
               groups={groups}
               loading={groupsLoading}
               onCreate={createGroup}
-              onDelete={deleteGroup}
-              onLeave={handleLeaveGroup}
+              onDisable={handleDisableGroup}
+              onEnable={handleEnableGroup}
+              onDelete={handleDeleteGroup}
+              onHide={handleHideGroup}
               onOpenConversation={handleOpenGroupConversation}
               onComposeToGroup={handleComposeToGroup}
             />
