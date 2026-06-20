@@ -27,6 +27,7 @@ export default function ChatWindow({ conversation, currentUserId, onArchive, onB
   const [searchLoading,    setSearchLoading]     = useState(false);
   const [groupActionError, setGroupActionError]  = useState('');
   const [groupRemoving,    setGroupRemoving]     = useState(null);
+  const [adminToggling,    setAdminToggling]     = useState(null); // userId being promoted/demoted
   const markedAllRef = useRef(null);
   const bottomRef    = useRef(null);
   const messageNodesRef = useRef({}); // messageId -> DOM node
@@ -87,6 +88,10 @@ export default function ChatWindow({ conversation, currentUserId, onArchive, onB
     ? groups.find(g => String(g.groupId) === String(conv.groupId || conv.group_id))
     : null;
   const isGroupAdmin = Boolean(matchedGroup?.isAdmin || matchedGroup?.isSuperAdmin);
+  // Only the original creator or the org super admin can promote/demote
+  // co-admins — a promoted co-admin can manage members but cannot mint
+  // other co-admins. Mirrors assertCanManageAdmins on the backend.
+  const canManageAdmins = Boolean(matchedGroup?.isCreator || matchedGroup?.isSuperAdmin);
 
   const isGroup = useMemo(() => {
     if (conv.participantCount != null) return conv.participantCount > 2;
@@ -165,6 +170,23 @@ useEffect(() => {
     } catch (err) {
       setGroupActionError(err?.response?.data?.error || 'Failed to remove member.');
     } finally { setGroupRemoving(null); }
+  };
+
+  // NEW: promote/demote a participant to group co-admin. Only the
+  // original creator or the org super admin may call this — gated by
+  // canManageAdmins above, mirroring the backend's assertCanManageAdmins.
+  const handleToggleAdmin = async (userId, name, makeAdmin) => {
+    if (!matchedGroup) return;
+    const verb = makeAdmin ? 'Make' : 'Remove';
+    if (!window.confirm(`${verb} ${name} ${makeAdmin ? 'a group admin' : 'as group admin'}?`)) return;
+    setAdminToggling(userId); setGroupActionError('');
+    try {
+      await groupApi.setMemberAdmin(matchedGroup.groupId, userId, makeAdmin);
+      await refetch();
+      toast?.(`${name} ${makeAdmin ? 'is now a group admin' : 'is no longer a group admin'}`, 'success');
+    } catch (err) {
+      setGroupActionError(err?.response?.data?.error || 'Failed to update admin status.');
+    } finally { setAdminToggling(null); }
   };
 
   const handleMemberSearch = async (q) => {
@@ -392,6 +414,7 @@ useEffect(() => {
               const isMe    = String(p.userId) === String(currentUserId);
               const pName   = `${p.firstName || ''} ${p.lastName || ''}`.trim() || p.email || 'Unknown';
               const isRemoving = removing === p.userId || groupRemoving === p.userId;
+              const isToggling = adminToggling === p.userId;
               return (
                 <span key={p.userId} style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5,
@@ -404,8 +427,35 @@ useEffect(() => {
                   {isMe && (
                     <span style={{ fontSize: 10, color: 'var(--muted)', fontStyle: 'italic' }}>you</span>
                   )}
+                  {/* Admin badge — creator (gold) or co-admin (muted), group threads only */}
+                  {isGroupThread && p.isCreator && (
+                    <span style={{ fontSize: 10, color: 'var(--gold)', fontWeight: 600 }}>Admin</span>
+                  )}
+                  {isGroupThread && !p.isCreator && p.isCoAdmin && (
+                    <span style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 600 }}>Co-admin</span>
+                  )}
+                  {/* Make/Remove admin — creator or super admin only; never on the creator themself */}
+                  {isGroupThread && canManageAdmins && !isGroupDisabled && !isMe && !p.isCreator && (
+                    <button
+                      title={p.isCoAdmin ? `Remove ${pName} as group admin` : `Make ${pName} a group admin`}
+                      onClick={() => handleToggleAdmin(p.userId, pName, !p.isCoAdmin)}
+                      disabled={!!isToggling}
+                      style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        color: p.isCoAdmin ? 'var(--gold)' : 'var(--muted)', fontSize: 11, lineHeight: 1,
+                        padding: '0 0 0 2px', transition: 'color 0.12s', fontWeight: 600,
+                        display: 'flex', alignItems: 'center',
+                      }}
+                      onMouseOver={e => e.currentTarget.style.color = 'var(--gold)'}
+                      onMouseOut={e  => e.currentTarget.style.color = p.isCoAdmin ? 'var(--gold)' : 'var(--muted)'}
+                    >
+                      {isToggling
+                        ? <div className="spinner" style={{ width: 9, height: 9, borderWidth: 1.5 }}/>
+                        : (p.isCoAdmin ? '★' : '☆')}
+                    </button>
+                  )}
                   {/* Remove button — CC: sender only; group_thread: group admin only */}
-                  {((isCcThread && isSender) || (isGroupThread && isGroupAdmin && !isGroupDisabled)) && !isMe && (
+                  {((isCcThread && isSender) || (isGroupThread && isGroupAdmin && !isGroupDisabled)) && !isMe && !(isGroupThread && p.isCreator) && (
                     <button
                       title={`Remove ${pName}`}
                       onClick={() => isGroupThread ? handleGroupRemoveMember(p.userId, pName) : handleRemoveParticipant(p.userId, pName)}

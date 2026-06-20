@@ -215,6 +215,7 @@ export default function MessagingPage({ currentUser }) {
               onArchive={handleArchive}
               onBack={() => setActiveConv(null)}
               toast={toast}
+              groups={groups}
             />
           </main>
         )}

@@ -13,6 +13,9 @@ router.get('/:groupId/members',         groupController.getMembers);
 router.post('/:groupId/members',        groupController.addMembers);
 router.delete('/:groupId/members/:userId', groupController.removeMember);
 
+// Creator or super admin only — promote/demote a participant to co-admin
+router.patch('/:groupId/members/:userId/admin', groupController.setAdmin);
+
 // Admin (creator) or super admin only — freeze / unfreeze the chat
 router.patch('/:groupId/disable',       groupController.disable);
 router.patch('/:groupId/enable',        groupController.enable);

@@ -1,7 +1,14 @@
+
+-- I.EVO ERP — Complete PostgreSQL Schema  v2.0
+-- Fresh install: psql -d ievo_erp -f schema.postgres.sql
+-- Database must exist first: CREATE DATABASE ievo_erp;
+-- ============================================================
+
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ════════════════════════════════════════════════════════════
 -- 1. DEPARTMENT MASTER
+--    Must be created before auth_users (FK dependency)
 -- ════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS dept_master (
@@ -12,7 +19,7 @@ CREATE TABLE IF NOT EXISTS dept_master (
   created_at TIMESTAMPTZ   NOT NULL DEFAULT NOW()
 );
 
--- Seed departments 
+-- Seed departments — extend to match your CSV dept values exactly
 INSERT INTO dept_master (dept_name, dept_code) VALUES
   ('ADMINISTRATION', 'ADMN'),
   ('BDC', 'BDC'),
@@ -66,10 +73,17 @@ INSERT INTO dept_master (dept_name, dept_code) VALUES
   ('SUNDAY WAREHOUSE', 'SWH'),
   ('UPHOLSTERY', 'UPH')
 ON CONFLICT (dept_name) DO NOTHING;
-
+-- select * from dept_master;
+-- TRUNCATE TABLE dept_master CASCADE;
+-- ALTER SEQUENCE dept_master_dept_id_seq RESTART WITH 1;
 
 -- ════════════════════════════════════════════════════════════
 -- 2. USERS
+--    username  = login key (from CSV: username column)
+--    mgr_user_id = self-reference — resolved via mgrEmail after
+--                  all users are inserted (see migration guide)
+--    must_change_password = TRUE for all migrated users so they
+--                  are forced to set a new password on first login
 -- ════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS auth_users (
@@ -95,6 +109,7 @@ CREATE TABLE IF NOT EXISTS auth_users (
   modified_at                 TIMESTAMPTZ   NOT NULL DEFAULT NOW()
 );
 
+select * from auth_users;
 -- ── Test / seed users (password = "password") ────────────────
 -- Hash: $2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi
 INSERT INTO auth_users (username, password_hash, first_name, last_name, email, user_type, is_active, allow_login, must_change_password)
@@ -103,7 +118,7 @@ VALUES
   ('testuser', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Test',   'User', 'test@ievo.in',    'employee', TRUE, TRUE, FALSE),
   ('md',       '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Senior', 'MD',   'md@ievo.in',      'viewer',   TRUE, TRUE, FALSE)
 ON CONFLICT (username) DO NOTHING;
-
+select* from auth_users;
 -- ════════════════════════════════════════════════════════════
 -- 3. COMMUNICATION MODULE  (prefix: comm_)
 -- ════════════════════════════════════════════════════════════
@@ -114,14 +129,27 @@ CREATE TABLE IF NOT EXISTS comm_groups (
   description TEXT,
   created_by  UUID          NOT NULL REFERENCES auth_users(user_id),
   is_active   BOOLEAN       NOT NULL DEFAULT TRUE,
-  created_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+  created_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  is_disabled BOOLEAN NOT NULL DEFAULT FALSE,
+  disabled_at TIMESTAMPTZ,
+  disabled_by UUID REFERENCES auth_users(user_id)
+  
 );
+
+CREATE TABLE IF NOT EXISTS comm_group_hidden (
+  group_id  INT         NOT NULL REFERENCES comm_groups(group_id) ON DELETE CASCADE,
+  user_id   UUID        NOT NULL REFERENCES auth_users(user_id)   ON DELETE CASCADE,
+  hidden_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (group_id, user_id)
+);
+
+
 
 CREATE TABLE IF NOT EXISTS comm_group_members (
   group_id    INT           NOT NULL REFERENCES comm_groups(group_id)  ON DELETE CASCADE,
   user_id     UUID          NOT NULL REFERENCES auth_users(user_id)    ON DELETE CASCADE,
   added_at    TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (group_id, user_id)
+  PRIMARY KEY (group_id, user_id),
 );
 
 CREATE TABLE IF NOT EXISTS comm_conversations (
@@ -136,7 +164,7 @@ CREATE TABLE IF NOT EXISTS comm_conversations (
   conv_type VARCHAR(20) NOT NULL DEFAULT 'bcc'
 );
 
-
+select * from auth_users;
 
 CREATE TABLE IF NOT EXISTS comm_participants (
   participant_id   SERIAL        PRIMARY KEY,
@@ -145,13 +173,17 @@ CREATE TABLE IF NOT EXISTS comm_participants (
   participant_type VARCHAR(10)   NOT NULL DEFAULT 'to'
                    CHECK (participant_type IN ('to','cc','bcc')),
   is_archived      BOOLEAN       NOT NULL DEFAULT FALSE,
-  archived_at      TIMESTAMPTZ,
-  left_at          TIMESTAMPTZ,
   is_deleted       BOOLEAN       NOT NULL DEFAULT FALSE,
   joined_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-  UNIQUE (conversation_id, user_id)
+  UNIQUE (conversation_id, user_id),
+  archived_at TIMESTAMPTZ,
+  left_at TIMESTAMPTZ
 );
 
+-- comm_conversations.conv_type (may already exist from previous migration)
+ALTER TABLE comm_conversations
+  ADD COLUMN IF NOT EXISTS conv_type VARCHAR(20) NOT NULL DEFAULT 'bcc'
+    CHECK (conv_type IN ('bcc','cc','group_thread'));
 
 
 CREATE TABLE IF NOT EXISTS comm_messages (
@@ -166,7 +198,7 @@ CREATE TABLE IF NOT EXISTS comm_messages (
 
 CREATE TABLE IF NOT EXISTS comm_attachments (
   attachment_id SERIAL        PRIMARY KEY,
-  message_id INT REFERENCES comm_messages(message_id) ON DELETE CASCADE,
+  message_id    INT           REFERENCES comm_messages(message_id),
   uploaded_by   UUID          NOT NULL REFERENCES auth_users(user_id),
   original_name VARCHAR(500)  NOT NULL,
   stored_name   VARCHAR(500)  NOT NULL,
@@ -183,3 +215,5 @@ CREATE TABLE IF NOT EXISTS comm_read_receipts (
   read_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   PRIMARY KEY (message_id, user_id)
 );
+
+

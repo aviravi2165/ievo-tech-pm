@@ -3,11 +3,47 @@ const { getPool } = require('../../../config/db');
 // ── Guards ────────────────────────────────────────────────────────────────────
 
 /**
- * True if userId is either the group's creator-admin OR the org-wide
- * super admin (auth_users.user_type === 'admin'). Both get identical
- * power: add/remove participants, disable, disable & delete.
+ * True if userId is the group's original creator, a promoted co-admin
+ * (comm_group_members.is_co_admin), OR the org-wide super admin
+ * (auth_users.user_type === 'admin'). All three get identical power to
+ * add/remove participants, disable, disable & delete, and (creator/super
+ * admin only — see assertCanManageAdmins) promote/demote co-admins.
  */
 async function isGroupAdminOrSuperAdmin(groupId, userId) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT
+       (g.created_by = $2::uuid)         AS "isCreator",
+       COALESCE(gm.is_co_admin, FALSE)   AS "isCoAdmin",
+       (u.user_type = 'admin')           AS "isSuperAdmin"
+     FROM comm_groups g
+     INNER JOIN auth_users u ON u.user_id = $2::uuid
+     LEFT JOIN comm_group_members gm
+       ON gm.group_id = g.group_id AND gm.user_id = $2::uuid
+     WHERE g.group_id = $1`,
+    [groupId, userId]
+  );
+  if (!rows[0]) return false;
+  return rows[0].isCreator || rows[0].isCoAdmin || rows[0].isSuperAdmin;
+}
+
+async function assertGroupAdmin(groupId, userId) {
+  const allowed = await isGroupAdminOrSuperAdmin(groupId, userId);
+  if (!allowed) {
+    const err = new Error('Only the group admin can do this');
+    err.code = 'GROUP_FORBIDDEN';
+    err.statusCode = 403;
+    throw err;
+  }
+}
+
+/**
+ * Only the original creator OR the org super admin can promote/demote
+ * co-admins — a co-admin cannot mint other co-admins (and definitely
+ * cannot demote the creator). This keeps the admin hierarchy from being
+ * trivially escalated by someone who was only just promoted themselves.
+ */
+async function assertCanManageAdmins(groupId, userId) {
   const pool = getPool();
   const { rows } = await pool.query(
     `SELECT
@@ -18,14 +54,8 @@ async function isGroupAdminOrSuperAdmin(groupId, userId) {
      WHERE g.group_id = $1`,
     [groupId, userId]
   );
-  if (!rows[0]) return false;
-  return rows[0].isCreator || rows[0].isSuperAdmin;
-}
-
-async function assertGroupAdmin(groupId, userId) {
-  const allowed = await isGroupAdminOrSuperAdmin(groupId, userId);
-  if (!allowed) {
-    const err = new Error('Only the group admin can do this');
+  if (!rows[0] || !(rows[0].isCreator || rows[0].isSuperAdmin)) {
+    const err = new Error('Only the group creator or a super admin can change admin roles');
     err.code = 'GROUP_FORBIDDEN';
     err.statusCode = 403;
     throw err;
@@ -63,7 +93,8 @@ async function assertGroupMember(groupId, userId) {
 /**
  * Regular users: groups they created or are a member of, minus any they've
  * personally hidden (comm_group_hidden) — hiding is per-user and only
- * possible once a group is disabled.
+ * possible once a group is disabled. isAdmin now reflects creator OR
+ * promoted co-admin status.
  *
  * Super admin: every group in the system, full stop — this is their
  * control surface for "just in case the group admin leaves the company."
@@ -87,7 +118,7 @@ async function listGroupsForUser(userId) {
          g.created_by   AS "createdBy",
          g.is_active    AS "isActive",
          g.is_disabled  AS "isDisabled",
-         FALSE          AS "isAdmin",      -- not the creator-admin
+         FALSE          AS "isAdmin",      -- not the creator/co-admin
          TRUE           AS "isSuperAdmin", -- but has full control anyway
          FALSE          AS "isMember",     -- not a participant of the chat
          (
@@ -109,7 +140,8 @@ async function listGroupsForUser(userId) {
        g.created_by  AS "createdBy",
        g.is_active   AS "isActive",
        g.is_disabled AS "isDisabled",
-       (g.created_by = $1::uuid) AS "isAdmin",
+       (g.created_by = $1::uuid OR COALESCE(gm.is_co_admin, FALSE)) AS "isAdmin",
+       (g.created_by = $1::uuid) AS "isCreator",
        FALSE AS "isSuperAdmin",
        (gm.user_id IS NOT NULL) AS "isMember",
        (
@@ -158,6 +190,7 @@ async function createGroup(userId, groupName) {
     return {
       ...group,
       isAdmin: true,
+      isCreator: true,
       isSuperAdmin: false,
       isMember: true,
       isActive: true,
@@ -184,13 +217,15 @@ async function getGroupMembers(groupId, userId) {
        u.email,
        u.first_name AS "firstName",
        u.last_name  AS "lastName",
-       (g.created_by = u.user_id) AS "isAdmin"
+       (g.created_by = u.user_id)        AS "isCreator",
+       COALESCE(gm.is_co_admin, FALSE)   AS "isCoAdmin",
+       (g.created_by = u.user_id OR COALESCE(gm.is_co_admin, FALSE)) AS "isAdmin"
      FROM comm_group_members gm
      INNER JOIN comm_groups g ON g.group_id = gm.group_id
      INNER JOIN auth_users u ON u.user_id = gm.user_id
      WHERE gm.group_id = $1
        AND u.is_active = TRUE
-     ORDER BY (g.created_by = u.user_id) DESC, u.last_name, u.first_name`,
+     ORDER BY (g.created_by = u.user_id) DESC, COALESCE(gm.is_co_admin, FALSE) DESC, u.last_name, u.first_name`,
     [groupId]
   );
   return rows;
@@ -210,7 +245,7 @@ async function getMemberUserIdsForGroups(groupIds = []) {
   return rows.map(r => r.user_id);
 }
 
-// ── Add members — admin (creator) OR super admin only ──────────────────────────
+// ── Add members — admin (creator/co-admin) OR super admin only ─────────────────
 
 async function addMembers(groupId, actorUserId, userIds) {
   await assertGroupAdmin(groupId, actorUserId);
@@ -266,7 +301,7 @@ async function addMembers(groupId, actorUserId, userIds) {
   }
 }
 
-// ── Remove member — admin (creator) OR super admin only ────────────────────────
+// ── Remove member — admin (creator/co-admin) OR super admin only ───────────────
 
 async function removeMember(groupId, actorUserId, memberUserId) {
   await assertGroupAdmin(groupId, actorUserId);
@@ -319,15 +354,62 @@ async function removeMember(groupId, actorUserId, memberUserId) {
   return rowCount > 0;
 }
 
+// ── NEW: Promote / demote co-admin ──────────────────────────────────────────────
+
+/**
+ * setMemberAdminStatus — promotes or demotes a group participant's
+ * co-admin status. Only the original creator or the org super admin may
+ * call this (assertCanManageAdmins) — a co-admin cannot promote others or
+ * demote anyone, preventing trivial privilege escalation. The creator
+ * itself can never be demoted via this path (they aren't stored in
+ * comm_group_members.is_co_admin at all — they're always admin by virtue
+ * of comm_groups.created_by).
+ */
+async function setMemberAdminStatus(groupId, actorUserId, targetUserId, makeAdmin) {
+  await assertCanManageAdmins(groupId, actorUserId);
+
+  const pool = getPool();
+  const { rows: groupRows } = await pool.query(
+    `SELECT created_by, is_disabled FROM comm_groups WHERE group_id = $1`, [groupId]
+  );
+  if (!groupRows[0]) {
+    const err = new Error('Group not found'); err.statusCode = 404; throw err;
+  }
+  if (String(groupRows[0].created_by) === String(targetUserId)) {
+    const err = new Error('The group creator is always an admin and cannot be changed.');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (groupRows[0].is_disabled) {
+    const err = new Error('This group is disabled. Re-enable it before changing admin roles.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const { rowCount } = await pool.query(
+    `UPDATE comm_group_members
+     SET is_co_admin = $3
+     WHERE group_id = $1 AND user_id = $2::uuid`,
+    [groupId, targetUserId, Boolean(makeAdmin)]
+  );
+  if (!rowCount) {
+    const err = new Error('That user is not a member of this group.');
+    err.statusCode = 404;
+    throw err;
+  }
+  return getGroupMembers(groupId, actorUserId);
+}
+
 // ── Disable group (chat frozen, history stays visible to all) ─────────────────
 
 /**
- * Admin (creator) or super admin only. Freezes the group: no one — not
- * even the admin — can send further messages, but every participant
- * keeps full read access to everything said before the freeze. The
- * group still appears in everyone's tabs exactly as before; only the
- * "Delete" option becomes available to the admin/super admin once
- * disabled, and "remove from my tabs" becomes available to participants.
+ * Admin (creator/co-admin) or super admin only. Freezes the group: no
+ * one — not even an admin — can send further messages, but every
+ * participant keeps full read access to everything said before the
+ * freeze. The group still appears in everyone's tabs exactly as before;
+ * only the "Delete" option becomes available to the admin/super admin
+ * once disabled, and "remove from my tabs" becomes available to
+ * participants.
  */
 async function disableGroup(groupId, actorUserId) {
   await assertGroupAdmin(groupId, actorUserId);
@@ -341,7 +423,7 @@ async function disableGroup(groupId, actorUserId) {
   return true;
 }
 
-/** Re-enable a disabled group — admin (creator) or super admin only. */
+/** Re-enable a disabled group — admin (creator/co-admin) or super admin only. */
 async function enableGroup(groupId, actorUserId) {
   await assertGroupAdmin(groupId, actorUserId);
   const pool = getPool();
@@ -355,13 +437,13 @@ async function enableGroup(groupId, actorUserId) {
 }
 
 /**
- * Disable & Delete — admin (creator) or super admin only, and only once
- * the group is already disabled (the UI enforces this by only showing
- * "Delete" after "Disable"). This removes the group from the admin's own
- * Inbox/Sent/Groups tabs (comm_group_hidden), exactly like a participant
- * hiding it — it does NOT delete the group for other participants, who
- * keep seeing it (read-only) until they each choose to remove it from
- * their own tabs too.
+ * Disable & Delete — admin (creator/co-admin) or super admin only, and
+ * only once the group is already disabled (the UI enforces this by only
+ * showing "Delete" after "Disable"). This removes the group from the
+ * admin's own Inbox/Sent/Groups tabs (comm_group_hidden), exactly like a
+ * participant hiding it — it does NOT delete the group for other
+ * participants, who keep seeing it (read-only) until they each choose to
+ * remove it from their own tabs too.
  */
 async function deleteGroupForActor(groupId, actorUserId) {
   await assertGroupAdmin(groupId, actorUserId);
@@ -393,8 +475,6 @@ async function deleteGroupForActor(groupId, actorUserId) {
  * has been disabled by its admin. This hides the group from the calling
  * user's own Inbox/Sent/Groups views; it has no effect on any other
  * participant, and does not touch comm_group_members or the group itself.
- * (Participants can no longer "exit" an active group — per spec, only
- * the admin/super admin controls membership now.)
  */
 async function hideDisabledGroupForUser(groupId, userId) {
   const pool = getPool();
@@ -465,12 +545,14 @@ module.exports = {
   getMemberUserIdsForGroups,
   addMembers,
   removeMember,
+  setMemberAdminStatus,
   disableGroup,
   enableGroup,
   deleteGroupForActor,
   hideDisabledGroupForUser,
   assertGroupMember,
   assertGroupAdmin,
+  assertCanManageAdmins,
   isGroupAdminOrSuperAdmin,
   getLatestGroupConversation,
 };

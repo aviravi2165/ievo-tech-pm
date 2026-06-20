@@ -8,6 +8,10 @@ export const groupApi = {
   addMembers:   (groupId, userIds) => api.post(`/api/groups/${groupId}/members`, { userIds }).then(r => r.data),
   removeMember: (groupId, userId)  => api.delete(`/api/groups/${groupId}/members/${userId}`).then(r => r.data),
 
+  // NEW: promote/demote a participant to co-admin — creator or super admin only
+  setMemberAdmin: (groupId, userId, makeAdmin) =>
+    api.patch(`/api/groups/${groupId}/members/${userId}/admin`, { makeAdmin }).then(r => r.data),
+
   // CHANGED: leave/exit options removed for participants. Admin (creator)
   // or super admin can disable (freeze chat) and re-enable.
   disableGroup: (groupId)          => api.patch(`/api/groups/${groupId}/disable`).then(r => r.data),

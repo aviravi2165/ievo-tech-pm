@@ -93,6 +93,33 @@ async function removeMember(req, res) {
  * Admin (creator) or super admin only. Freezes the chat — no further
  * messages from anyone — while keeping history visible to all.
  */
+/**
+ * NEW: PATCH /api/groups/:groupId/members/:userId/admin
+ * Body: { makeAdmin: boolean }
+ * Only the group's original creator or the org super admin may call
+ * this — promotes or demotes a participant's co-admin status. The
+ * creator itself can never be the target (they're always admin).
+ */
+async function setAdmin(req, res) {
+  try {
+    const groupId = parseInt(req.params.groupId, 10);
+    if (Number.isNaN(groupId)) {
+      return res.status(400).json({ error: 'Invalid group id' });
+    }
+    const targetUserId = req.params.userId;
+    if (!targetUserId || typeof targetUserId !== 'string' || !targetUserId.trim()) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    const makeAdmin = Boolean(req.body.makeAdmin);
+    const members = await groupService.setMemberAdminStatus(
+      groupId, req.user.userId, targetUserId, makeAdmin
+    );
+    return res.json(members);
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
 async function disable(req, res) {
   try {
     const groupId = parseInt(req.params.groupId, 10);
@@ -184,6 +211,7 @@ module.exports = {
   getMembers,
   addMembers,
   removeMember,
+  setAdmin,
   disable,
   enable,
   remove,
