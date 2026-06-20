@@ -1,4 +1,3 @@
-
 -- I.EVO ERP — Complete PostgreSQL Schema  v2.0
 -- Fresh install: psql -d ievo_erp -f schema.postgres.sql
 -- Database must exist first: CREATE DATABASE ievo_erp;
@@ -150,6 +149,7 @@ CREATE TABLE IF NOT EXISTS comm_group_members (
   user_id     UUID          NOT NULL REFERENCES auth_users(user_id)    ON DELETE CASCADE,
   added_at    TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
   PRIMARY KEY (group_id, user_id),
+  is_co_admin BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS comm_conversations (
@@ -180,6 +180,7 @@ CREATE TABLE IF NOT EXISTS comm_participants (
   left_at TIMESTAMPTZ
 );
 
+ 
 -- comm_conversations.conv_type (may already exist from previous migration)
 ALTER TABLE comm_conversations
   ADD COLUMN IF NOT EXISTS conv_type VARCHAR(20) NOT NULL DEFAULT 'bcc'
@@ -215,5 +216,4 @@ CREATE TABLE IF NOT EXISTS comm_read_receipts (
   read_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   PRIMARY KEY (message_id, user_id)
 );
-
 
