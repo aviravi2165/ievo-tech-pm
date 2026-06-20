@@ -39,4 +39,24 @@ export const messageApi = {
   // Add participants to a CC conversation (creator or super-admin only)
   addParticipants: (conversationId, userIds) =>
     api.post(`/api/messages/${conversationId}/participants`, { userIds }).then(r => r.data),
+
+  // ── Admin thread management (Threads tab — mirrors groupApi) ──────────────
+  // Super admin only: every non-group (bcc/cc) thread in the system.
+  getAdminThreads: () =>
+    api.get('/api/messages/threads').then(r => r.data),
+
+  // Creator or super admin only — freeze / unfreeze a non-group thread
+  disableThread: (conversationId) =>
+    api.patch(`/api/messages/threads/${conversationId}/disable`).then(r => r.data),
+  enableThread: (conversationId) =>
+    api.patch(`/api/messages/threads/${conversationId}/enable`).then(r => r.data),
+
+  // Creator/super admin only, only once disabled — hides from their own tabs
+  deleteThread: (conversationId) =>
+    api.delete(`/api/messages/threads/${conversationId}`).then(r => r.data),
+
+  // Any participant, only once the thread is disabled — hides from their
+  // own Inbox/Sent/Threads tabs without affecting anyone else
+  hideThread: (conversationId) =>
+    api.post(`/api/messages/threads/${conversationId}/hide`).then(r => r.data),
 };

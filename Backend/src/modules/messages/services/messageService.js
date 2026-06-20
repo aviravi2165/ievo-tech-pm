@@ -33,13 +33,51 @@ async function ensureParticipantArchiveColumn() {
 
 async function assertConversationParticipant(conversationId, userId) {
   const { rows } = await getPool().query(
-    `SELECT participant_id FROM comm_participants
-     WHERE conversation_id = $1 AND user_id = $2::uuid AND is_deleted = FALSE`,
+    `SELECT 1
+     FROM comm_participants p
+     WHERE p.conversation_id = $1 AND p.user_id = $2::uuid AND p.is_deleted = FALSE
+     UNION ALL
+     SELECT 1
+     FROM auth_users u
+     WHERE u.user_id = $2::uuid AND u.user_type = 'admin'`,
     [conversationId, userId]
   );
   if (!rows[0]) {
     const e = new Error('Conversation not found or access denied');
     e.statusCode = 403; throw e;
+  }
+}
+
+// ── Thread admin guards (mirrors groupService's group-admin guards) ───────────
+
+/**
+ * True if userId is the conversation's original creator OR the org-wide
+ * super admin (auth_users.user_type === 'admin'). Used to gate disable /
+ * enable / delete for non-group threads (bcc, cc) the same way group
+ * admin status gates those actions for groups.
+ */
+async function isThreadAdminOrSuperAdmin(conversationId, userId) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT
+       (c.created_by = $2::uuid) AS "isCreator",
+       (u.user_type = 'admin')   AS "isSuperAdmin"
+     FROM comm_conversations c
+     INNER JOIN auth_users u ON u.user_id = $2::uuid
+     WHERE c.conversation_id = $1`,
+    [conversationId, userId]
+  );
+  if (!rows[0]) return false;
+  return rows[0].isCreator || rows[0].isSuperAdmin;
+}
+
+async function assertThreadAdmin(conversationId, userId) {
+  const allowed = await isThreadAdminOrSuperAdmin(conversationId, userId);
+  if (!allowed) {
+    const err = new Error('Only the thread creator or a super admin can do this');
+    err.code = 'THREAD_FORBIDDEN';
+    err.statusCode = 403;
+    throw err;
   }
 }
 
@@ -170,6 +208,26 @@ async function insertMessage(client, conversationId, senderId, bodyHtml, parentM
 
 // ── sendMessage ───────────────────────────────────────────────────────────────
 
+/**
+ * Throws if any of the given user ids belong to a super-admin account.
+ * Super admins manage all communication from the admin governance view
+ * and are never selectable as a message recipient or thread participant.
+ */
+async function assertNoAdminRecipients(userIds = []) {
+  const ids = [...new Set((userIds || []).map(String))].filter(Boolean);
+  if (!ids.length) return;
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT user_id FROM auth_users WHERE user_id = ANY($1::uuid[]) AND user_type = 'admin'`,
+    [ids]
+  );
+  if (rows.length) {
+    const e = new Error('Super-admin accounts cannot be added as recipients or participants');
+    e.statusCode = 400;
+    throw e;
+  }
+}
+
 async function sendMessage(senderUserId, payload) {
   await ensureParticipantArchiveColumn();
 
@@ -207,6 +265,7 @@ async function sendMessage(senderUserId, payload) {
     if (!allRecipients.length) {
       const e = new Error('At least one recipient is required'); e.statusCode = 400; throw e;
     }
+    await assertNoAdminRecipients(allRecipients);
 
     const client = await pool.connect();
     try {
@@ -332,6 +391,7 @@ async function sendMessage(senderUserId, payload) {
   if (!uniqueRecipients.length) {
     const e = new Error('At least one recipient is required'); e.statusCode = 400; throw e;
   }
+  await assertNoAdminRecipients(uniqueRecipients);
 
   const results = [];
   for (const recipientId of uniqueRecipients) {
@@ -405,7 +465,7 @@ async function removeParticipant(conversationId, targetUserId, actorUserId) {
 async function addParticipant(conversationId, userIds, actorUserId, actorUserType) {
   const pool = getPool();
   const { rows } = await pool.query(
-    `SELECT created_by, conv_type FROM comm_conversations
+    `SELECT created_by, conv_type, is_disabled FROM comm_conversations
      WHERE conversation_id = $1 AND is_deleted = FALSE`,
     [conversationId]
   );
@@ -416,6 +476,10 @@ async function addParticipant(conversationId, userIds, actorUserId, actorUserTyp
   // Only CC (shared) conversations support ad-hoc participant addition
   if (conv.conv_type !== 'cc') {
     const e = new Error('Participants can only be added to CC (Shared) conversations');
+    e.statusCode = 400; throw e;
+  }
+  if (conv.is_disabled) {
+    const e = new Error('This thread is disabled. Re-enable it before adding participants.');
     e.statusCode = 400; throw e;
   }
 
@@ -476,7 +540,7 @@ async function replyToConversation(conversationId, senderUserId, payload) {
 
   const pool = getPool();
   const { rows: convRows } = await pool.query(
-    `SELECT allow_reply, is_deleted, conv_type, group_id
+    `SELECT allow_reply, is_deleted, conv_type, group_id, is_disabled
      FROM comm_conversations WHERE conversation_id = $1`,
     [conversationId]
   );
@@ -489,6 +553,10 @@ async function replyToConversation(conversationId, senderUserId, payload) {
   }
   if (conv.conv_type === 'group_thread') {
     await assertActiveGroupMember(conv.group_id, senderUserId);
+  } else if (conv.is_disabled) {
+    const e = new Error('This thread has been disabled. No new messages can be sent, but past messages remain visible.');
+    e.statusCode = 403;
+    throw e;
   }
 
   const sanitizedBody = sanitizeBodyHtml(bodyHtml);
@@ -927,6 +995,136 @@ async function getUsersForUnreadDigest() {
   return rows;
 }
 
+// ── Admin thread management (mirrors groupService for non-group threads) ──────
+
+/**
+ * Super admin only: every non-group conversation (bcc / cc) in the system,
+ * full stop — this is the Threads tab's control surface, exactly like the
+ * Groups tab is for comm_groups. Regular users never call this; their own
+ * Inbox/Sent already show the threads they participate in.
+ */
+async function listAllThreadsForAdmin(userId) {
+  const pool = getPool();
+  const { rows: meRows } = await pool.query(
+    `SELECT user_type AS "userType" FROM auth_users WHERE user_id = $1::uuid`,
+    [userId]
+  );
+  if (meRows[0]?.userType !== 'admin') {
+    const e = new Error('Only a super admin can view all threads');
+    e.statusCode = 403;
+    throw e;
+  }
+
+  const { rows } = await pool.query(
+    `SELECT
+       c.conversation_id AS "conversationId",
+       c.subject,
+       c.created_at       AS "createdAt",
+       c.created_by       AS "createdBy",
+       c.conv_type        AS "convType",
+       c.is_disabled      AS "isDisabled",
+       FALSE              AS "isAdmin",
+       TRUE               AS "isSuperAdmin",
+       FALSE              AS "isMember",
+       (
+         SELECT COUNT(*)::int FROM comm_participants p2
+         WHERE p2.conversation_id = c.conversation_id AND p2.is_deleted = FALSE
+       ) AS "participantCount"
+     FROM comm_conversations c
+     LEFT JOIN comm_conversation_hidden ch
+       ON ch.conversation_id = c.conversation_id AND ch.user_id = $1::uuid
+     WHERE c.is_deleted = FALSE
+       AND c.conv_type IN ('bcc','cc')
+       AND ch.user_id IS NULL
+     ORDER BY c.is_disabled ASC, c.created_at DESC`,
+    [userId]
+  );
+  return rows;
+}
+
+/**
+ * Disable a non-group thread — creator or super admin only. Freezes the
+ * thread: no further messages, but history stays visible to participants.
+ */
+async function disableThread(conversationId, actorUserId) {
+  await assertThreadAdmin(conversationId, actorUserId);
+  await getPool().query(
+    `UPDATE comm_conversations
+     SET is_disabled = TRUE, disabled_at = NOW(), disabled_by = $2::uuid
+     WHERE conversation_id = $1`,
+    [conversationId, actorUserId]
+  );
+  return true;
+}
+
+/** Re-enable a disabled thread — creator or super admin only. */
+async function enableThread(conversationId, actorUserId) {
+  await assertThreadAdmin(conversationId, actorUserId);
+  await getPool().query(
+    `UPDATE comm_conversations
+     SET is_disabled = FALSE, disabled_at = NULL, disabled_by = NULL
+     WHERE conversation_id = $1`,
+    [conversationId]
+  );
+  return true;
+}
+
+/**
+ * Disable & Delete — creator or super admin only, and only once the
+ * thread is already disabled. Removes the thread from the actor's own
+ * tabs only (comm_conversation_hidden) — other participants keep seeing
+ * it (read-only) until they each hide it too.
+ */
+async function deleteThreadForActor(conversationId, actorUserId) {
+  await assertThreadAdmin(conversationId, actorUserId);
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT is_disabled FROM comm_conversations WHERE conversation_id = $1`,
+    [conversationId]
+  );
+  if (!rows[0]) {
+    const e = new Error('Thread not found'); e.statusCode = 404; throw e;
+  }
+  if (!rows[0].is_disabled) {
+    const e = new Error('Disable the thread before deleting it.');
+    e.statusCode = 400; throw e;
+  }
+  await pool.query(
+    `INSERT INTO comm_conversation_hidden (conversation_id, user_id)
+     VALUES ($1, $2::uuid)
+     ON CONFLICT DO NOTHING`,
+    [conversationId, actorUserId]
+  );
+  return true;
+}
+
+/**
+ * Participant-only "remove from my tabs" — available only once the
+ * thread has been disabled. Hides it from the caller's own view only.
+ */
+async function hideDisabledThreadForUser(conversationId, userId) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT is_disabled FROM comm_conversations WHERE conversation_id = $1`,
+    [conversationId]
+  );
+  if (!rows[0]) {
+    const e = new Error('Thread not found'); e.statusCode = 404; throw e;
+  }
+  if (!rows[0].is_disabled) {
+    const e = new Error('You can only remove a thread from your tabs after it has been disabled.');
+    e.statusCode = 400; throw e;
+  }
+  await assertConversationParticipant(conversationId, userId);
+  await pool.query(
+    `INSERT INTO comm_conversation_hidden (conversation_id, user_id)
+     VALUES ($1, $2::uuid)
+     ON CONFLICT DO NOTHING`,
+    [conversationId, userId]
+  );
+  return true;
+}
+
 module.exports = {
   sanitizeBodyHtml, sendMessage, replyToConversation, removeParticipant,
   getInbox, getSent, getUnreadCount, getUnreadConversationIds,
@@ -934,4 +1132,8 @@ module.exports = {
   softDeleteMessage, getUsersForUnreadDigest,
   assertConversationParticipant, getParticipantUserIds,
   addParticipant,
+  // Admin thread management (Threads tab, mirrors Groups tab)
+  isThreadAdminOrSuperAdmin, assertThreadAdmin,
+  listAllThreadsForAdmin, disableThread, enableThread,
+  deleteThreadForActor, hideDisabledThreadForUser,
 };

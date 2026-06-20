@@ -260,6 +260,18 @@ async function addMembers(groupId, actorUserId, userIds) {
     throw err;
   }
 
+  // Prevent adding super-admin accounts as group members/participants
+  const targetIds = [...new Set((userIds || []).map(String))].filter(Boolean);
+  const { rows: targetRows } = await pool.query(
+    `SELECT user_id FROM auth_users WHERE user_id = ANY($1::uuid[]) AND user_type = 'admin'`,
+    [targetIds]
+  );
+  if (targetRows.length) {
+    const err = new Error('Cannot add super-admin accounts as group members');
+    err.statusCode = 400;
+    throw err;
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');

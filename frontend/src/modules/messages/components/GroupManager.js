@@ -30,13 +30,18 @@ import RecipientPicker from './RecipientPicker';
 export default function GroupManager({
   groups = [],
   loading,
-  threads, // optional: conversations when super admin wants to manage threads
+  threads, // optional: ALL system threads (super admin Threads tab)
+  threadsLoading,
   currentTab,
   onCreate,
   onDisable,
   onEnable,
   onDelete,
   onHide,
+  onDisableThread,
+  onEnableThread,
+  onDeleteThread,
+  onHideThread,
   onOpenConversation,
   onComposeToGroup,
 }) {
@@ -58,6 +63,8 @@ export default function GroupManager({
   const [openingGroupId, setOpeningGroupId] = useState(null);
   const [actionError,    setActionError]    = useState({});
   const [actingGroupId,  setActingGroupId]  = useState(null);
+  const [threadActionError, setThreadActionError] = useState({});
+  const [actingThreadId,    setActingThreadId]    = useState(null);
 
   const handleCreate = async () => {
     if (!newName.trim()) { setCreateError('Group name is required.'); return; }
@@ -197,6 +204,44 @@ export default function GroupManager({
     `Remove "${group.groupName}" from your tabs? This only affects your own view.`
   );
 
+  // ── Threads (super admin governance — mirrors group actions above) ────────
+  const runThreadAction = async (thread, action, confirmMsg) => {
+    if (confirmMsg && !window.confirm(confirmMsg)) return;
+    setActingThreadId(thread.conversationId);
+    setThreadActionError(prev => ({ ...prev, [thread.conversationId]: '' }));
+    try {
+      await action(thread.conversationId);
+      if (managingThread?.conversationId === thread.conversationId) setManagingThread(null);
+    } catch (err) {
+      setThreadActionError(prev => ({
+        ...prev,
+        [thread.conversationId]: err?.response?.data?.error || 'Action failed. Try again.',
+      }));
+    } finally {
+      setActingThreadId(null);
+    }
+  };
+
+  const handleDisableThread = (thread) => runThreadAction(
+    thread, onDisableThread,
+    `Disable "${thread.subject || 'this thread'}"? No one will be able to send new messages, but everyone keeps read access to past messages.`
+  );
+
+  const handleEnableThread = (thread) => runThreadAction(
+    thread, onEnableThread,
+    `Re-enable "${thread.subject || 'this thread'}"? Participants will be able to send messages again.`
+  );
+
+  const handleDeleteThread = (thread) => runThreadAction(
+    thread, onDeleteThread,
+    `Delete "${thread.subject || 'this thread'}" from your tabs? Other participants keep seeing it (read-only) until they each remove it too.`
+  );
+
+  const handleHideThreadRow = (thread) => runThreadAction(
+    thread, onHideThread,
+    `Remove "${thread.subject || 'this thread'}" from your tabs? This only affects your own view.`
+  );
+
   const handleOpenThread = async (group) => {
     setOpeningGroupId(group.groupId);
     setActionError(prev => ({ ...prev, [group.groupId]: '' }));
@@ -224,10 +269,13 @@ export default function GroupManager({
   useEffect(() => {
     setManagingGroup(null);
     setManagingThread(null);
+    setThreadActionError({});
   }, [currentTab]);
 
   // ── Manage panel ─────────────────────────────────────────────────────────
   if (managingThread) {
+    const isThreadDisabled = Boolean(managingThread.isDisabled);
+    const threadActing = actingThreadId === managingThread.conversationId;
     return (
       <div className="groups-panel">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
@@ -244,21 +292,74 @@ export default function GroupManager({
             <span>Back</span>
           </button>
           <h3 style={{ margin: 0 }}>{managingThread.subject || 'Thread'}</h3>
+          {isThreadDisabled && (
+            <span style={{
+              fontSize: 10, color: 'var(--muted)', border: '1px solid var(--divider)',
+              borderRadius: 8, padding: '2px 8px', textTransform: 'uppercase', letterSpacing: '.05em',
+            }}>Disabled</span>
+          )}
         </div>
 
-        {/* Add members to thread (creator or super-admin only) */}
-        <div style={{ marginBottom: 12, background: 'var(--charcoal)', border: '1px solid var(--divider)', borderRadius: 'var(--radius-lg)', padding: 12 }}>
-          <label className="field-label" style={{ marginBottom: 8 }}>Add Participants</label>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-            <div style={{ flex: 1 }}>
-              <RecipientPicker value={threadSelectedUsers} onChange={setThreadSelectedUsers} groups={[]} />
-            </div>
-            <button className="btn btn-primary" style={{ padding: '9px 16px', fontSize: 12 }} onClick={handleAddThreadMembers} disabled={threadAddSaving || !threadSelectedUsers.length}>
-              {threadAddSaving ? 'Adding…' : '+ Add'}
+        {/* Disable / Enable / Delete controls — creator or super admin only */}
+        <div style={{
+          background: 'var(--charcoal)', border: '1px solid var(--divider)',
+          borderRadius: 'var(--radius-lg)', padding: 14, marginBottom: 20,
+          display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center',
+        }}>
+          {!isThreadDisabled ? (
+            <button
+              className="btn btn-ghost danger"
+              onClick={() => handleDisableThread(managingThread)}
+              disabled={threadActing}
+            >
+              Disable Thread
             </button>
-          </div>
-          {threadAddError && <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 6 }}>{threadAddError}</div>}
+          ) : (
+            <>
+              <button
+                className="btn btn-ghost"
+                onClick={() => handleEnableThread(managingThread)}
+                disabled={threadActing}
+              >
+                Re-enable Thread
+              </button>
+              <button
+                className="btn btn-ghost danger"
+                onClick={() => handleDeleteThread(managingThread)}
+                disabled={threadActing}
+              >
+                Delete Thread
+              </button>
+            </>
+          )}
+          <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+            {isThreadDisabled
+              ? 'Thread is frozen — no one can send messages. History stays visible.'
+              : 'Disabling freezes the thread for everyone; delete only unlocks after that.'}
+          </span>
         </div>
+
+        {threadActionError[managingThread.conversationId] && (
+          <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 16 }}>
+            {threadActionError[managingThread.conversationId]}
+          </div>
+        )}
+
+        {/* Add members to thread (creator or super-admin only) */}
+        {!isThreadDisabled && (
+          <div style={{ marginBottom: 12, background: 'var(--charcoal)', border: '1px solid var(--divider)', borderRadius: 'var(--radius-lg)', padding: 12 }}>
+            <label className="field-label" style={{ marginBottom: 8 }}>Add Participants</label>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <div style={{ flex: 1 }}>
+                <RecipientPicker value={threadSelectedUsers} onChange={setThreadSelectedUsers} groups={[]} />
+              </div>
+              <button className="btn btn-primary" style={{ padding: '9px 16px', fontSize: 12 }} onClick={handleAddThreadMembers} disabled={threadAddSaving || !threadSelectedUsers.length}>
+                {threadAddSaving ? 'Adding…' : '+ Add'}
+              </button>
+            </div>
+            {threadAddError && <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 6 }}>{threadAddError}</div>}
+          </div>
+        )}
 
         <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
           Participants ({threadMembers.length})
@@ -275,11 +376,13 @@ export default function GroupManager({
               <div style={{ fontSize: 13, color: 'var(--light)' }}>{p.firstName} {p.lastName}</div>
               <div style={{ fontSize: 11, color: 'var(--muted)' }}>{p.email || ''}</div>
             </div>
-            <div>
-              <button className="icon-btn danger" title="Remove participant" onClick={() => handleRemoveThreadParticipant(managingThread.conversationId, p.userId)}>
-                ×
-              </button>
-            </div>
+            {!isThreadDisabled && (
+              <div>
+                <button className="icon-btn danger" title="Remove participant" onClick={() => handleRemoveThreadParticipant(managingThread.conversationId, p.userId)}>
+                  ×
+                </button>
+              </div>
+            )}
           </div>
         ))}
 
@@ -513,32 +616,116 @@ export default function GroupManager({
               style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--divider)', background: 'var(--mid)', color: 'var(--light)' }}
             />
           </div>
-          <div style={{ display: 'grid', gap: 8, marginBottom: 18 }}>
-            {(threads || []).filter(t => {
+
+          {threadsLoading && <div className="loader-wrap"><div className="spinner" /></div>}
+
+          {!threadsLoading && threads.length === 0 && (
+            <div className="msg-empty" style={{ padding: '40px 0' }}>
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="1.5">
+                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+              </svg>
+              <p>No threads yet.</p>
+            </div>
+          )}
+
+          {(threads || [])
+            .filter(t => {
               // exclude group threads from the plain Threads list
               if (t.convType === 'group_thread' || t.groupId) return false;
               if (!threadSearch.trim()) return true;
               return (t.subject || '').toLowerCase().includes(threadSearch.toLowerCase());
-            }).map(t => (
-              <div key={t.conversationId} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', background: 'var(--charcoal)', border: '1px solid var(--divider)', borderRadius: 'var(--radius)' }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, color: 'var(--light)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {t.subject || '(no subject)'}
+            })
+            .map(t => {
+              const isThreadDisabled = Boolean(t.isDisabled);
+              const isThreadActing = actingThreadId === t.conversationId;
+              return (
+                <div key={t.conversationId} className="group-card">
+                  <div className="group-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2">
+                      <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+                    </svg>
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                    {t.participantCount ?? (t.participants?.length ?? 0)} participant{(t.participantCount ?? (t.participants?.length ?? 0)) !== 1 ? 's' : ''}
+
+                  <div className="group-info">
+                    <div className="group-name" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {t.subject || '(no subject)'}
+                      <span style={{
+                        fontSize: 10, color: 'var(--gold)', border: '1px solid var(--gold)',
+                        borderRadius: 8, padding: '1px 6px', textTransform: 'uppercase', letterSpacing: '.04em',
+                      }}>Super Admin View</span>
+                      {isThreadDisabled && (
+                        <span style={{
+                          fontSize: 10, color: 'var(--muted)', border: '1px solid var(--divider)',
+                          borderRadius: 8, padding: '1px 6px', textTransform: 'uppercase', letterSpacing: '.04em',
+                        }}>Disabled</span>
+                      )}
+                    </div>
+                    <div className="group-count">
+                      {t.participantCount ?? 0} participant{(t.participantCount ?? 0) !== 1 ? 's' : ''}
+                    </div>
+                    {threadActionError[t.conversationId] && (
+                      <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 3 }}>
+                        {threadActionError[t.conversationId]}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="group-actions">
+                    {/* Manage / view participants */}
+                    <button
+                      className="icon-btn"
+                      title="Manage thread"
+                      onClick={() => openManageThread(t)}
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" strokeWidth="2">
+                        <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+                        <circle cx="9" cy="7" r="4"/>
+                        <line x1="19" y1="8" x2="19" y2="14"/>
+                        <line x1="22" y1="11" x2="16" y2="11"/>
+                      </svg>
+                    </button>
+
+                    {/* Quick action button in the list row, same as groups */}
+                    {!isThreadDisabled ? (
+                      <button
+                        className="icon-btn danger"
+                        title="Disable thread"
+                        disabled={isThreadActing}
+                        onClick={() => handleDisableThread(t)}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" strokeWidth="2">
+                          <circle cx="12" cy="12" r="10"/>
+                          <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+                        </svg>
+                      </button>
+                    ) : (
+                      <button
+                        className="icon-btn danger"
+                        title="Delete thread"
+                        disabled={isThreadActing}
+                        onClick={() => handleDeleteThread(t)}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" strokeWidth="2">
+                          <polyline points="3 6 5 6 21 6"/>
+                          <path d="M19 6l-1 14H6L5 6"/>
+                          <path d="M10 11v6M14 11v6"/>
+                          <path d="M9 6V4h6v2"/>
+                        </svg>
+                      </button>
+                    )}
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="icon-btn" title="Manage thread" onClick={() => openManageThread(t)}>
-                    Manage
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+              );
+            })}
         </div>
       )}
+      {currentTab !== 'threads' && (
+      <>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 20 }}>
         <h3 style={{ margin: 0 }}>Recipient Groups</h3>
         <button
@@ -728,6 +915,8 @@ export default function GroupManager({
           </div>
         );
       })}
+      </>
+      )}
     </div>
   );
 }

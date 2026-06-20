@@ -128,10 +128,56 @@ async function remove(req, res) {
   } catch (err) { return handleError(res, err); }
 }
 
+// ── Admin thread management (Threads tab, mirrors groupController) ───────────
+
+async function listThreadsForAdmin(req, res) {
+  try {
+    const threads = await messageService.listAllThreadsForAdmin(req.user.userId);
+    return res.json(threads);
+  } catch (err) { return handleError(res, err); }
+}
+
+async function disableThread(req, res) {
+  try {
+    const conversationId = parseInt(req.params.conversationId, 10);
+    if (isNaN(conversationId)) return res.status(400).json({ error: 'Invalid conversation id' });
+    await messageService.disableThread(conversationId, req.user.userId);
+    return res.json({ success: true });
+  } catch (err) { return handleError(res, err); }
+}
+
+async function enableThread(req, res) {
+  try {
+    const conversationId = parseInt(req.params.conversationId, 10);
+    if (isNaN(conversationId)) return res.status(400).json({ error: 'Invalid conversation id' });
+    await messageService.enableThread(conversationId, req.user.userId);
+    return res.json({ success: true });
+  } catch (err) { return handleError(res, err); }
+}
+
+async function deleteThread(req, res) {
+  try {
+    const conversationId = parseInt(req.params.conversationId, 10);
+    if (isNaN(conversationId)) return res.status(400).json({ error: 'Invalid conversation id' });
+    await messageService.deleteThreadForActor(conversationId, req.user.userId);
+    return res.json({ success: true });
+  } catch (err) { return handleError(res, err); }
+}
+
+async function hideThread(req, res) {
+  try {
+    const conversationId = parseInt(req.params.conversationId, 10);
+    if (isNaN(conversationId)) return res.status(400).json({ error: 'Invalid conversation id' });
+    await messageService.hideDisabledThreadForUser(conversationId, req.user.userId);
+    return res.json({ success: true });
+  } catch (err) { return handleError(res, err); }
+}
+
 module.exports = {
   getInbox, getSent, getUnreadCount, getUnreadConversationIds,
   search, send, getThread, reply, archive,
   removeParticipant,  // FIX: exported
   addParticipant,
   markRead, remove,
+  listThreadsForAdmin, disableThread, enableThread, deleteThread, hideThread,
 };

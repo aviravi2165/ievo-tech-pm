@@ -1,3 +1,4 @@
+
 -- I.EVO ERP — Complete PostgreSQL Schema  v2.0
 -- Fresh install: psql -d ievo_erp -f schema.postgres.sql
 -- Database must exist first: CREATE DATABASE ievo_erp;
@@ -161,10 +162,13 @@ CREATE TABLE IF NOT EXISTS comm_conversations (
   is_deleted      BOOLEAN       NOT NULL DEFAULT FALSE,
   last_message_at TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
   created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-  conv_type VARCHAR(20) NOT NULL DEFAULT 'bcc'
+  conv_type VARCHAR(20) NOT NULL DEFAULT 'bcc' CHECK (conv_type IN ('bcc','cc','group_thread')),
+  is_disabled BOOLEAN NOT NULL DEFAULT FALSE,
+  disabled_at TIMESTAMPTZ,
+  disabled_by UUID REFERENCES auth_users(user_id);
 );
 
-select * from auth_users;
+
 
 CREATE TABLE IF NOT EXISTS comm_participants (
   participant_id   SERIAL        PRIMARY KEY,
@@ -180,11 +184,10 @@ CREATE TABLE IF NOT EXISTS comm_participants (
   left_at TIMESTAMPTZ
 );
 
- 
--- comm_conversations.conv_type (may already exist from previous migration)
-ALTER TABLE comm_conversations
-  ADD COLUMN IF NOT EXISTS conv_type VARCHAR(20) NOT NULL DEFAULT 'bcc'
-    CHECK (conv_type IN ('bcc','cc','group_thread'));
+ -- ════════════════════════════════════════════════════════════
+-- INDEXES
+-- ════════════════════════════════════════════════════════════
+
 
 
 CREATE TABLE IF NOT EXISTS comm_messages (
@@ -216,9 +219,15 @@ CREATE TABLE IF NOT EXISTS comm_read_receipts (
   read_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   PRIMARY KEY (message_id, user_id)
 );
--- ════════════════════════════════════════════════════════════
--- 5. INDEXES
--- ════════════════════════════════════════════════════════════
+
+
+CREATE TABLE IF NOT EXISTS comm_conversation_hidden (
+  conversation_id INT         NOT NULL REFERENCES comm_conversations(conversation_id) ON DELETE CASCADE,
+  user_id         UUID        NOT NULL REFERENCES auth_users(user_id)   ON DELETE CASCADE,
+  hidden_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (conversation_id, user_id)
+);
+
 
 -- Auth
 CREATE INDEX IF NOT EXISTS idx_auth_users_username   ON auth_users(username);
@@ -230,9 +239,8 @@ CREATE INDEX IF NOT EXISTS idx_auth_users_mgr        ON auth_users(mgr_user_id);
 CREATE INDEX IF NOT EXISTS idx_dept_master_name      ON dept_master(dept_name);
 
 -- Communication
-CREATE INDEX IF NOT EXISTS idx_comm_participants_user
-  ON comm_participants(user_id, is_archived, is_deleted);
-CREATE INDEX IF NOT EXISTS idx_comm_messages_conv
-  ON comm_messages(conversation_id, sent_at);
-CREATE INDEX IF NOT EXISTS idx_comm_read_user
-  ON comm_read_receipts(user_id);
+CREATE INDEX IF NOT EXISTS idx_comm_participants_user ON comm_participants(user_id, is_archived, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_comm_messages_conv ON comm_messages(conversation_id, sent_at);
+CREATE INDEX IF NOT EXISTS idx_comm_read_user ON comm_read_receipts(user_id);
+CREATE INDEX IF NOT EXISTS idx_comm_conv_hidden_user ON comm_conversation_hidden(user_id);
+CREATE INDEX IF NOT EXISTS idx_comm_conv_hidden_conv ON comm_conversation_hidden(conversation_id);

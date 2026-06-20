@@ -92,6 +92,7 @@ async function searchUsers(q, limit = 10, excludeUserId = null) {
               email, username, user_type AS "userType"
        FROM auth_users
        WHERE is_active = TRUE
+         AND user_type <> 'admin'
          AND ($1::uuid IS NULL OR user_id != $1::uuid)
        ORDER BY first_name, last_name
        LIMIT $2`,
@@ -105,6 +106,7 @@ async function searchUsers(q, limit = 10, excludeUserId = null) {
             email, username, user_type AS "userType"
      FROM auth_users
      WHERE is_active = TRUE
+       AND user_type <> 'admin'
        AND ($1::uuid IS NULL OR user_id != $1::uuid)
        AND (
          LOWER(first_name) LIKE $2

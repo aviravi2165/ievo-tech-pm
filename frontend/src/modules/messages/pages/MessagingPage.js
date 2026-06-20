@@ -7,6 +7,7 @@ import GroupManager    from '../components/GroupManager';
 import { useInbox }       from '../hooks/useInbox';
 import { useUnreadCount } from '../hooks/useUnreadCount';
 import { useGroups }      from '../hooks/useGroups';
+import { useThreads }     from '../hooks/useThreads';
 import { useSocket }      from '../context/SocketContext';
 import { useAuth }        from '../../auth/AuthContext';
 import { messageApi }     from '../api/messageApi';
@@ -50,6 +51,15 @@ export default function MessagingPage({ currentUser }) {
     user?.isSuperAdmin || user?.is_super_admin || user?.isAdmin || user?.is_admin ||
     user?.user_type === 'admin' || user?.userType === 'admin' || user?.role === 'super_admin'
   );
+
+  // Super-admin-only: every non-group thread in the system, with the same
+  // disable/enable/delete/hide governance the Groups tab already has.
+  const {
+    threads: adminThreads, loading: adminThreadsLoading,
+    disableThread, enableThread, deleteThread, hideThread,
+    refetch: refetchAdminThreads,
+  } = useThreads(isSuperAdmin);
+
   // DEBUG: expose resolved flag for troubleshooting
   try { console.log('MessagingPage: user=', user, 'isSuperAdmin=', isSuperAdmin); } catch (e) {}
 
@@ -163,6 +173,31 @@ export default function MessagingPage({ currentUser }) {
     fetchSent();
   }, [hideGroup, refetch, fetchSent]);
 
+  // ── Threads tab (super admin governance) ───────────────────────────────────
+  const handleDisableThread = useCallback(async (conversationId) => {
+    await disableThread(conversationId);
+    refetch();
+    fetchSent();
+  }, [disableThread, refetch, fetchSent]);
+
+  const handleEnableThread = useCallback(async (conversationId) => {
+    await enableThread(conversationId);
+    refetch();
+    fetchSent();
+  }, [enableThread, refetch, fetchSent]);
+
+  const handleDeleteThread = useCallback(async (conversationId) => {
+    await deleteThread(conversationId);
+    refetch();
+    fetchSent();
+  }, [deleteThread, refetch, fetchSent]);
+
+  const handleHideThread = useCallback(async (conversationId) => {
+    await hideThread(conversationId);
+    refetch();
+    fetchSent();
+  }, [hideThread, refetch, fetchSent]);
+
   // ── Archive ───────────────────────────────────────────────────────────────
   const handleArchive = async () => {
     if (!activeConv) return;
@@ -240,14 +275,21 @@ export default function MessagingPage({ currentUser }) {
             <GroupManager
               groups={groups}
               loading={groupsLoading}
-              // when super admin is viewing, surface threads in the manager
-              threads={isSuperAdmin ? (conversations || []) : undefined}
+              // when super admin is viewing, surface ALL system threads
+              // (not just their own inbox) in the manager, with the same
+              // disable/enable/delete/hide controls groups already have
+              threads={isSuperAdmin ? adminThreads : undefined}
+              threadsLoading={adminThreadsLoading}
               currentTab={tab}
               onCreate={createGroup}
               onDisable={handleDisableGroup}
               onEnable={handleEnableGroup}
               onDelete={handleDeleteGroup}
               onHide={handleHideGroup}
+              onDisableThread={handleDisableThread}
+              onEnableThread={handleEnableThread}
+              onDeleteThread={handleDeleteThread}
+              onHideThread={handleHideThread}
               onOpenConversation={handleOpenGroupConversation}
               onComposeToGroup={handleComposeToGroup}
             />
