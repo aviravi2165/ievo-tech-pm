@@ -282,9 +282,23 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
           // manually typed line breaks are preserved the same way pasted
           // content is.
           if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            document.execCommand('insertLineBreak');
-          }
+  const sel = window.getSelection();
+
+  let node = sel?.anchorNode;
+
+  while (node) {
+    if (
+      node.nodeType === 1 &&
+      ['LI', 'UL', 'OL'].includes(node.nodeName)
+    ) {
+      return; // allow native list behavior
+    }
+    node = node.parentNode;
+  }
+
+  e.preventDefault();
+  document.execCommand('insertLineBreak');
+}
         }}
       />
 
