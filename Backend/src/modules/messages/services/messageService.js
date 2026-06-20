@@ -798,6 +798,7 @@ async function getThread(conversationId, userId) {
     `SELECT conversation_id AS "conversationId", subject,
             allow_reply AS "allowReply", conv_type AS "convType",
             created_by AS "createdBy", group_id AS "groupId",
+            is_disabled AS "isThreadDisabled",
             created_at AS "createdAt", last_message_at AS "lastMessageAt"
      FROM comm_conversations WHERE conversation_id = $1 AND is_deleted = FALSE`,
     [conversationId]
@@ -848,6 +849,18 @@ if (convRes.rows[0].convType === 'group_thread') {
 
   let userCanReply = Boolean(convRes.rows[0].allowReply);
   let isGroupDisabled = false;
+
+  // FIX: a thread can be disabled two ways — (a) its parent GROUP is
+  // disabled via comm_groups.is_disabled (checked below for group_thread
+  // conversations), or (b) the THREAD ITSELF was disabled directly via
+  // disableThread()/comm_conversations.is_disabled, which previously was
+  // never read here, so getThread kept reporting userCanReply = true
+  // even though replyToConversation correctly rejected the send. Both
+  // are folded into isThreadDisabled and surfaced to the frontend so the
+  // composer is replaced with the read-only banner instead of allowing
+  // a doomed send attempt.
+  const isThreadDisabled = Boolean(convRes.rows[0].isThreadDisabled);
+
   if (convRes.rows[0].convType === 'group_thread') {
     const memberRes = await pool.query(
       `SELECT g.is_disabled AS "isDisabled"
@@ -857,8 +870,11 @@ if (convRes.rows[0].convType === 'group_thread') {
        WHERE c.conversation_id = $1 AND gm.user_id = $2::uuid`,
       [conversationId, userId]
     );
-    isGroupDisabled = Boolean(memberRes.rows[0]?.isDisabled);
+    isGroupDisabled = Boolean(memberRes.rows[0]?.isDisabled) || isThreadDisabled;
     userCanReply = userCanReply && Boolean(memberRes.rows[0]) && !isGroupDisabled;
+  } else {
+    isGroupDisabled = isThreadDisabled;
+    userCanReply = userCanReply && !isThreadDisabled;
   }
 
   const msgRes = await pool.query(

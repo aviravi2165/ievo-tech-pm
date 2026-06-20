@@ -295,7 +295,7 @@ useEffect(() => {
               border: '1px solid var(--gold-dim)', borderRadius: 8,
               letterSpacing: '.06em', textTransform: 'uppercase',
             }}>
-              {isGroupDisabled ? 'Group Disabled' : conv.allowReply ? 'Read only' : 'Broadcast'}
+              {isGroupDisabled ? (isGroupThread ? 'Group Disabled' : 'Thread Disabled') : conv.allowReply ? 'Read only' : 'Broadcast'}
             </span>
           )}
 
@@ -523,7 +523,9 @@ useEffect(() => {
             <rect x="3" y="11" width="18" height="11" rx="2"/>
             <path d="M7 11V7a5 5 0 0110 0v4"/>
           </svg>
-          This group has been disabled by its admin — you can still read past messages, but no one can send new ones.
+          {isGroupThread
+            ? 'This group has been disabled by its admin — you can still read past messages, but no one can send new ones.'
+            : 'This thread has been disabled by an admin — you can still read past messages, but no one can send new ones.'}
         </div>
       ) : (
         <Composer
