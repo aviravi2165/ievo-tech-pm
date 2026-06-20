@@ -672,16 +672,38 @@ async function getThread(conversationId, userId) {
     const e = new Error('Conversation not found'); e.statusCode = 404; throw e;
   }
 
-  const partRes = await pool.query(
+ let partRes;
+
+if (convRes.rows[0].convType === 'group_thread') {
+  partRes = await pool.query(
+    `SELECT gm.user_id AS "userId",
+            'to' AS "participantType",
+            u.first_name AS "firstName",
+            u.last_name AS "lastName",
+            u.email
+     FROM comm_group_members gm
+     JOIN auth_users u
+       ON u.user_id = gm.user_id
+     WHERE gm.group_id = $1
+     ORDER BY u.first_name, u.last_name`,
+    [convRes.rows[0].groupId]
+  );
+} else {
+  partRes = await pool.query(
     `SELECT p.user_id AS "userId",
             p.participant_type AS "participantType",
-            u.first_name AS "firstName", u.last_name AS "lastName", u.email
+            u.first_name AS "firstName",
+            u.last_name AS "lastName",
+            u.email
      FROM comm_participants p
-     LEFT JOIN auth_users u ON u.user_id = p.user_id
-     WHERE p.conversation_id = $1 AND p.is_deleted = FALSE
+     LEFT JOIN auth_users u
+       ON u.user_id = p.user_id
+     WHERE p.conversation_id = $1
+       AND p.is_deleted = FALSE
      ORDER BY u.first_name, u.last_name`,
     [conversationId]
   );
+}
 
   const currentPartRes = await pool.query(
     `SELECT archived_at AS "archivedAt", left_at AS "leftAt"

@@ -216,4 +216,23 @@ CREATE TABLE IF NOT EXISTS comm_read_receipts (
   read_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   PRIMARY KEY (message_id, user_id)
 );
+-- ════════════════════════════════════════════════════════════
+-- 5. INDEXES
+-- ════════════════════════════════════════════════════════════
 
+-- Auth
+CREATE INDEX IF NOT EXISTS idx_auth_users_username   ON auth_users(username);
+CREATE INDEX IF NOT EXISTS idx_auth_users_email      ON auth_users(email);
+CREATE INDEX IF NOT EXISTS idx_auth_users_dept       ON auth_users(dept_id);
+CREATE INDEX IF NOT EXISTS idx_auth_users_mgr        ON auth_users(mgr_user_id);
+
+-- Dept
+CREATE INDEX IF NOT EXISTS idx_dept_master_name      ON dept_master(dept_name);
+
+-- Communication
+CREATE INDEX IF NOT EXISTS idx_comm_participants_user
+  ON comm_participants(user_id, is_archived, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_comm_messages_conv
+  ON comm_messages(conversation_id, sent_at);
+CREATE INDEX IF NOT EXISTS idx_comm_read_user
+  ON comm_read_receipts(user_id);
