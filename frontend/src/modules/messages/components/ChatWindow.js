@@ -88,10 +88,9 @@ export default function ChatWindow({ conversation, currentUserId, onArchive, onB
     ? groups.find(g => String(g.groupId) === String(conv.groupId || conv.group_id))
     : null;
   const isGroupAdmin = Boolean(matchedGroup?.isAdmin || matchedGroup?.isSuperAdmin);
-  // Only the original creator or the org super admin can promote/demote
-  // co-admins — a promoted co-admin can manage members but cannot mint
-  // other co-admins. Mirrors assertCanManageAdmins on the backend.
-  const canManageAdmins = Boolean(matchedGroup?.isCreator || matchedGroup?.isSuperAdmin);
+  // Only the original creator may promote/demote co-admins. Super-admin
+  // governance should not be able to mint co-admins from this UI.
+  const canManageAdmins = Boolean(matchedGroup?.isCreator);
 
   const isGroup = useMemo(() => {
     if (conv.participantCount != null) return conv.participantCount > 2;

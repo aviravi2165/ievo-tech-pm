@@ -35,4 +35,8 @@ export const messageApi = {
   // Remove a participant from a CC thread (sender only)
   removeParticipant: (conversationId, userId) =>
     api.delete(`/api/messages/${conversationId}/participants/${userId}`).then(r => r.data),
+
+  // Add participants to a CC conversation (creator or super-admin only)
+  addParticipants: (conversationId, userIds) =>
+    api.post(`/api/messages/${conversationId}/participants`, { userIds }).then(r => r.data),
 };

@@ -17,7 +17,10 @@ export function AuthProvider({ children }) {
     axios.get(`${BASE_URL}/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
     })
-      .then((r) => setUser(r.data))
+      .then((r) => {
+        try { console.log('AUTH ME:', r.data); } catch (e) {}
+        setUser(r.data);
+      })
       .catch(() => {
         // token invalid or expired — clear it
         localStorage.removeItem('erp_token');

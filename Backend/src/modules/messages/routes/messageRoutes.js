@@ -17,6 +17,7 @@ router.post('/send',                                        messageController.se
 
 router.get('/:conversationId/thread',                       messageController.getThread);
 router.post('/:conversationId/reply',                       messageController.reply);
+router.post('/:conversationId/participants',                 messageController.addParticipant);
 router.patch('/:conversationId/archive',                    messageController.archive);
 
 // FIX: Remove participant from CC thread (sender only)

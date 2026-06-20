@@ -401,6 +401,72 @@ async function removeParticipant(conversationId, targetUserId, actorUserId) {
   return true;
 }
 
+// ── Add participant to CC conversation ───────────────────────────────────────
+async function addParticipant(conversationId, userIds, actorUserId, actorUserType) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT created_by, conv_type FROM comm_conversations
+     WHERE conversation_id = $1 AND is_deleted = FALSE`,
+    [conversationId]
+  );
+  if (!rows[0]) {
+    const e = new Error('Conversation not found'); e.statusCode = 404; throw e;
+  }
+  const conv = rows[0];
+  // Only CC (shared) conversations support ad-hoc participant addition
+  if (conv.conv_type !== 'cc') {
+    const e = new Error('Participants can only be added to CC (Shared) conversations');
+    e.statusCode = 400; throw e;
+  }
+
+  // Only the original creator or an org super-admin may add participants
+  const isCreator = String(conv.created_by) === String(actorUserId);
+  let isSuperAdmin = actorUserType === 'admin';
+  if (!isCreator && !isSuperAdmin) {
+    // double-check via DB if actorUserType was not provided
+    const { rows: urows } = await pool.query(
+      `SELECT user_type FROM auth_users WHERE user_id = $1::uuid`, [actorUserId]
+    );
+    isSuperAdmin = urows[0]?.user_type === 'admin';
+  }
+  if (!isCreator && !isSuperAdmin) {
+    const e = new Error('Only the conversation creator or a super admin can add participants'); e.statusCode = 403; throw e;
+  }
+
+  // Prevent adding org super-admin accounts as participants
+  const targetIds = [...new Set(userIds.map(String))];
+  const { rows: targetRows } = await pool.query(
+    `SELECT user_id, user_type FROM auth_users WHERE user_id = ANY($1::uuid[])`,
+    [targetIds]
+  );
+  const disallowed = targetRows.filter(r => r.user_type === 'admin').map(r => r.user_id);
+  if (disallowed.length) {
+    const e = new Error('Cannot add super-admin accounts as participants');
+    e.statusCode = 400; throw e;
+  }
+
+  // Perform insertion (idempotent)
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const uid of targetIds) {
+      await client.query(
+        `INSERT INTO comm_participants (conversation_id, user_id, participant_type)
+         VALUES ($1, $2::uuid, 'cc')
+         ON CONFLICT (conversation_id, user_id)
+         DO UPDATE SET is_deleted = FALSE, is_archived = FALSE, archived_at = NULL, left_at = NULL, participant_type = 'cc'`,
+        [conversationId, uid]
+      );
+    }
+    await client.query('COMMIT');
+    return true;
+  } catch (err) {
+    await client.query('ROLLBACK'); throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // ── Reply ─────────────────────────────────────────────────────────────────────
 
 async function replyToConversation(conversationId, senderUserId, payload) {
@@ -867,4 +933,5 @@ module.exports = {
   searchMessages, getThread, markMessageRead, archiveConversation,
   softDeleteMessage, getUsersForUnreadDigest,
   assertConversationParticipant, getParticipantUserIds,
+  addParticipant,
 };

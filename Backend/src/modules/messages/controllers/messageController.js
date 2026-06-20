@@ -96,6 +96,20 @@ async function removeParticipant(req, res) {
   } catch (err) { return handleError(res, err); }
 }
 
+// Add participants to a CC conversation (creator or super-admin only)
+async function addParticipant(req, res) {
+  try {
+    const conversationId = parseInt(req.params.conversationId, 10);
+    if (isNaN(conversationId)) return res.status(400).json({ error: 'Invalid conversation id' });
+    const { userIds } = req.body;
+    if (!Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({ error: 'userIds must be a non-empty array' });
+    }
+    await messageService.addParticipant(conversationId, userIds, req.user.userId, req.user.userType);
+    return res.json({ success: true });
+  } catch (err) { return handleError(res, err); }
+}
+
 async function markRead(req, res) {
   try {
     const messageId = parseInt(req.params.messageId, 10);
@@ -118,5 +132,6 @@ module.exports = {
   getInbox, getSent, getUnreadCount, getUnreadConversationIds,
   search, send, getThread, reply, archive,
   removeParticipant,  // FIX: exported
+  addParticipant,
   markRead, remove,
 };

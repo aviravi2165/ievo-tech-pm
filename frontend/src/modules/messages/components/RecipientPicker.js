@@ -23,11 +23,15 @@ export default function RecipientPicker({ value = [], onChange, groups = [] }) {
         label: `${u.firstName} ${u.lastName}`.trim(),
         sub: u.email || u.department || '',
         type: 'user',
+        // detect explicit super-admin flag or admin user_type — exclude both
+        isSuper: Boolean(u.isSuperAdmin || u.is_super_admin || u.role === 'super_admin' || u.user_type === 'admin'),
       }));
+      // Filter out super-admin accounts from selectable user results
+      const filteredUsers = users.filter(u => !u.isSuper);
       const groupMatches = groups
         .filter(g => g.groupName.toLowerCase().includes(q.toLowerCase()))
         .map(g => ({ id: g.groupId, label: g.groupName, sub: 'Group', type: 'group' }));
-      setSuggestions([...groupMatches, ...users]);
+      setSuggestions([...groupMatches, ...filteredUsers]);
     } catch {
       setSuggestions([]);
     } finally {

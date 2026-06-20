@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { groupApi } from '../api/groupApi';
+import { messageApi } from '../api/messageApi';
 import RecipientPicker from './RecipientPicker';
 
 /**
@@ -29,6 +30,8 @@ import RecipientPicker from './RecipientPicker';
 export default function GroupManager({
   groups = [],
   loading,
+  threads, // optional: conversations when super admin wants to manage threads
+  currentTab,
   onCreate,
   onDisable,
   onEnable,
@@ -38,6 +41,7 @@ export default function GroupManager({
   onComposeToGroup,
 }) {
   const [creating,       setCreating]       = useState(false);
+  const [threadSearch,   setThreadSearch]   = useState('');
   const [newName,        setNewName]        = useState('');
   const [createError,    setCreateError]    = useState('');
   const [saving,         setSaving]         = useState(false);
@@ -47,6 +51,10 @@ export default function GroupManager({
   const [selectedUsers,  setSelectedUsers]  = useState([]);
   const [addError,       setAddError]       = useState('');
   const [addSaving,      setAddSaving]      = useState(false);
+  const [adminToggling,  setAdminToggling]  = useState(null);
+  const [managingThread, setManagingThread] = useState(null);
+  const [threadMembers, setThreadMembers]   = useState([]);
+  const [threadLoading, setThreadLoading]   = useState(false);
   const [openingGroupId, setOpeningGroupId] = useState(null);
   const [actionError,    setActionError]    = useState({});
   const [actingGroupId,  setActingGroupId]  = useState(null);
@@ -79,6 +87,63 @@ export default function GroupManager({
     } catch (err) {
       setAddError(err?.response?.data?.error || 'Failed to remove member.');
     }
+  };
+
+  const handleToggleMemberAdmin = async (userId, makeAdmin) => {
+    if (!managingGroup) return;
+    setAdminToggling(userId);
+    setAddError('');
+    try {
+      await groupApi.setMemberAdmin(managingGroup.groupId, userId, makeAdmin);
+      // refresh member list
+      const data = await groupApi.getMembers(managingGroup.groupId);
+      setMembers(data || []);
+    } catch (err) {
+      setAddError(err?.response?.data?.error || 'Failed to update admin status.');
+    } finally {
+      setAdminToggling(null);
+    }
+  };
+
+  const openManageThread = async (thread) => {
+    setManagingThread(thread);
+    setThreadLoading(true);
+    try {
+      const data = await messageApi.getThread(thread.conversationId);
+      setThreadMembers(data.conversation?.participants || []);
+    } catch (err) {
+      setActionError(prev => ({ ...prev, thread: 'Failed to load thread participants.' }));
+      setThreadMembers([]);
+    } finally { setThreadLoading(false); }
+  };
+
+  const handleRemoveThreadParticipant = async (conversationId, userId) => {
+    try {
+      await messageApi.removeParticipant(conversationId, userId);
+      const data = await messageApi.getThread(conversationId);
+      setThreadMembers(data.conversation?.participants || []);
+    } catch (err) {
+      setActionError(prev => ({ ...prev, thread: err?.response?.data?.error || 'Failed to remove participant.' }));
+    }
+  };
+
+  const [threadSelectedUsers, setThreadSelectedUsers] = useState([]);
+  const [threadAddSaving, setThreadAddSaving] = useState(false);
+  const [threadAddError, setThreadAddError] = useState('');
+
+  const handleAddThreadMembers = async () => {
+    if (!threadSelectedUsers.length) { setThreadAddError('Select at least one user.'); return; }
+    const userIds = threadSelectedUsers.filter(u => u.type === 'user').map(u => u.id);
+    if (!userIds.length) { setThreadAddError('Only users can be added (not groups).'); return; }
+    setThreadAddSaving(true); setThreadAddError('');
+    try {
+      await messageApi.addParticipants(managingThread.conversationId, userIds);
+      const data = await messageApi.getThread(managingThread.conversationId);
+      setThreadMembers(data.conversation?.participants || []);
+      setThreadSelectedUsers([]);
+    } catch (err) {
+      setThreadAddError(err?.response?.data?.error || 'Failed to add participants.');
+    } finally { setThreadAddSaving(false); }
   };
 
   const handleAddMembers = async () => {
@@ -153,9 +218,80 @@ export default function GroupManager({
     }
   };
 
+  // Reset manage panels when the parent tab changes (so switching
+  // from Groups -> Threads always shows the Threads list instead of
+  // leaving a previously-open manage panel visible).
+  useEffect(() => {
+    setManagingGroup(null);
+    setManagingThread(null);
+  }, [currentTab]);
+
   // ── Manage panel ─────────────────────────────────────────────────────────
+  if (managingThread) {
+    return (
+      <div className="groups-panel">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+          <button
+            type="button"
+            className="icon-btn msg-back-btn"
+            onClick={() => setManagingThread(null)}
+            aria-label="Back to threads"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2">
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+            <span>Back</span>
+          </button>
+          <h3 style={{ margin: 0 }}>{managingThread.subject || 'Thread'}</h3>
+        </div>
+
+        {/* Add members to thread (creator or super-admin only) */}
+        <div style={{ marginBottom: 12, background: 'var(--charcoal)', border: '1px solid var(--divider)', borderRadius: 'var(--radius-lg)', padding: 12 }}>
+          <label className="field-label" style={{ marginBottom: 8 }}>Add Participants</label>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+            <div style={{ flex: 1 }}>
+              <RecipientPicker value={threadSelectedUsers} onChange={setThreadSelectedUsers} groups={[]} />
+            </div>
+            <button className="btn btn-primary" style={{ padding: '9px 16px', fontSize: 12 }} onClick={handleAddThreadMembers} disabled={threadAddSaving || !threadSelectedUsers.length}>
+              {threadAddSaving ? 'Adding…' : '+ Add'}
+            </button>
+          </div>
+          {threadAddError && <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 6 }}>{threadAddError}</div>}
+        </div>
+
+        <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          Participants ({threadMembers.length})
+        </div>
+
+        {threadLoading && <div className="loader-wrap"><div className="spinner" /></div>}
+
+        {!threadLoading && threadMembers.map(p => (
+          <div key={p.userId} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', background: 'var(--charcoal)', border: '1px solid var(--divider)', borderRadius: 'var(--radius)', marginBottom: 8 }}>
+            <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--mid)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 600, color: 'var(--gold)' }}>
+              {`${p.firstName?.[0] || ''}${p.lastName?.[0] || ''}`.toUpperCase() || '?'}
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, color: 'var(--light)' }}>{p.firstName} {p.lastName}</div>
+              <div style={{ fontSize: 11, color: 'var(--muted)' }}>{p.email || ''}</div>
+            </div>
+            <div>
+              <button className="icon-btn danger" title="Remove participant" onClick={() => handleRemoveThreadParticipant(managingThread.conversationId, p.userId)}>
+                ×
+              </button>
+            </div>
+          </div>
+        ))}
+
+        {!threadLoading && threadMembers.length === 0 && (
+          <p style={{ color: 'var(--muted)', fontSize: 13 }}>No participants found.</p>
+        )}
+      </div>
+    );
+  }
+
   if (managingGroup) {
-    const canManage = Boolean(managingGroup.isAdmin || managingGroup.isSuperAdmin);
+    const canManage = Boolean(managingGroup.isCreator || managingGroup.isSuperAdmin);
     const isDisabled = Boolean(managingGroup.isDisabled);
 
     return (
@@ -182,7 +318,7 @@ export default function GroupManager({
           )}
         </div>
 
-        {canManage ? (
+            {canManage ? (
           <>
             {/* Disable / Enable / Delete controls */}
             <div style={{
@@ -290,9 +426,9 @@ export default function GroupManager({
           Members ({members.length})
         </div>
 
-        {membersLoading && <div className="loader-wrap"><div className="spinner" /></div>}
+      {membersLoading && <div className="loader-wrap"><div className="spinner" /></div>}
 
-        {!membersLoading && members.map(m => (
+            {!membersLoading && members.map(m => (
           <div key={m.userId} style={{
             display: 'flex', alignItems: 'center', gap: 12,
             padding: '10px 16px',
@@ -321,19 +457,32 @@ export default function GroupManager({
               </div>
               <div style={{ fontSize: 11, color: 'var(--muted)' }}>{m.email || ''}</div>
             </div>
-            {/* Remove button — admin/super-admin only, never on the creator, never while disabled */}
-            {canManage && !isDisabled && !m.isAdmin && (
-              <button
-                className="icon-btn danger"
-                title="Remove from group"
-                onClick={() => handleRemoveMember(m.userId)}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="2.5">
-                  <line x1="18" y1="6" x2="6" y2="18"/>
-                  <line x1="6" y1="6" x2="18" y2="18"/>
-                </svg>
-              </button>
+            {/* Admin toggle + Remove button — admin/super-admin only, never on the creator, never while disabled */}
+            {canManage && !isDisabled && !m.isCreator && (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button
+                  className="btn btn-ghost"
+                  title={m.isAdmin ? `Remove ${m.firstName || ''} as admin` : `Make ${m.firstName || ''} an admin`}
+                  onClick={() => handleToggleMemberAdmin(m.userId, !m.isAdmin)}
+                  disabled={adminToggling === m.userId}
+                  style={{ fontSize: 12, padding: '6px 8px' }}
+                >
+                  {adminToggling === m.userId ? '…' : (m.isAdmin ? 'Remove Admin' : 'Make Admin')}
+                </button>
+
+                <button
+                  className="icon-btn danger"
+                  title="Remove from group"
+                  onClick={() => handleRemoveMember(m.userId)}
+                  disabled={addSaving}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="2.5">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </button>
+              </div>
             )}
           </div>
         ))}
@@ -350,6 +499,46 @@ export default function GroupManager({
   // ── Groups list ────────────────────────────────────────────────────────────
   return (
     <div className="groups-panel">
+      {/* Threads (admin view) */}
+      {threads && currentTab === 'threads' && (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+            <h3 style={{ margin: 0 }}>Threads</h3>
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <input
+              placeholder="Search threads by subject…"
+              value={threadSearch}
+              onChange={e => setThreadSearch(e.target.value)}
+              style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--divider)', background: 'var(--mid)', color: 'var(--light)' }}
+            />
+          </div>
+          <div style={{ display: 'grid', gap: 8, marginBottom: 18 }}>
+            {(threads || []).filter(t => {
+              // exclude group threads from the plain Threads list
+              if (t.convType === 'group_thread' || t.groupId) return false;
+              if (!threadSearch.trim()) return true;
+              return (t.subject || '').toLowerCase().includes(threadSearch.toLowerCase());
+            }).map(t => (
+              <div key={t.conversationId} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', background: 'var(--charcoal)', border: '1px solid var(--divider)', borderRadius: 'var(--radius)' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: 'var(--light)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {t.subject || '(no subject)'}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                    {t.participantCount ?? (t.participants?.length ?? 0)} participant{(t.participantCount ?? (t.participants?.length ?? 0)) !== 1 ? 's' : ''}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="icon-btn" title="Manage thread" onClick={() => openManageThread(t)}>
+                    Manage
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 20 }}>
         <h3 style={{ margin: 0 }}>Recipient Groups</h3>
         <button
@@ -410,7 +599,7 @@ export default function GroupManager({
       )}
 
       {groups.map(g => {
-        const canManage = Boolean(g.isAdmin || g.isSuperAdmin);
+        const canManage = Boolean(g.isCreator || g.isSuperAdmin);
         const isDisabled = Boolean(g.isDisabled);
         const isActing = actingGroupId === g.groupId;
 

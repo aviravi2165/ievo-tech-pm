@@ -45,6 +45,13 @@ export default function MessagingPage({ currentUser }) {
   const isNarrow = true;
   const layoutRef = useRef(null);
   const { toasts, toast } = useToast();
+  // Support multiple possible user shape variants from the API
+  const isSuperAdmin = Boolean(
+    user?.isSuperAdmin || user?.is_super_admin || user?.isAdmin || user?.is_admin ||
+    user?.user_type === 'admin' || user?.userType === 'admin' || user?.role === 'super_admin'
+  );
+  // DEBUG: expose resolved flag for troubleshooting
+  try { console.log('MessagingPage: user=', user, 'isSuperAdmin=', isSuperAdmin); } catch (e) {}
 
   // ── Load sent tab ─────────────────────────────────────────────────────────
   const fetchSent = useCallback(() => {
@@ -59,6 +66,11 @@ export default function MessagingPage({ currentUser }) {
   useEffect(() => {
     if (tab === 'sent') fetchSent();
   }, [tab, fetchSent]);
+
+  // If the current user is a super admin, prefer the compact admin tab set.
+  useEffect(() => {
+    if (isSuperAdmin && tab === 'inbox') setTab('threads');
+  }, [isSuperAdmin]);
 
   // ── Socket: refresh sent when current user sends ──────────────────────────
   useEffect(() => {
@@ -79,7 +91,7 @@ export default function MessagingPage({ currentUser }) {
   };
 
   // ── Derived display state ─────────────────────────────────────────────────
-  const isMailTab        = tab === 'inbox' || tab === 'sent';
+  const isMailTab        = tab === 'inbox' || tab === 'sent' || tab === 'threads';
   const displayedConvs   = tab === 'sent' ? sentConvs   : conversations;
   const displayedLoading = tab === 'sent' ? sentLoading  : loading;
   const listError        = tab === 'sent' ? sentError    : inboxError;
@@ -173,9 +185,11 @@ export default function MessagingPage({ currentUser }) {
   // ── Layout flags ──────────────────────────────────────────────────────────
   // Stacked layout only: show the list OR the open thread, never both —
   // an open thread always takes the full panel width.
-  const showList      = isMailTab && !activeConv;
-  const showThread     = isMailTab && !!activeConv;
-  const showGroups     = tab === 'groups';
+  // For super-admins we hide the left inbox/sent list and never open
+  // the chat window — they manage threads/groups from the manager panel.
+  const showList      = isMailTab && !activeConv && !isSuperAdmin;
+  const showThread     = isMailTab && !!activeConv && !isSuperAdmin;
+  const showGroups     = tab === 'groups' || (isSuperAdmin && tab === 'threads');
   // In stacked layout, the list already fills the panel when no conv is open,
   // so we never show the empty hint alongside it.
   const showEmptyHint  = false;
@@ -186,6 +200,7 @@ export default function MessagingPage({ currentUser }) {
         tab={tab}
         onTabChange={handleTabChange}
         unreadCount={unreadCount}
+        isSuperAdmin={isSuperAdmin}
       />
 
       <div
@@ -225,6 +240,9 @@ export default function MessagingPage({ currentUser }) {
             <GroupManager
               groups={groups}
               loading={groupsLoading}
+              // when super admin is viewing, surface threads in the manager
+              threads={isSuperAdmin ? (conversations || []) : undefined}
+              currentTab={tab}
               onCreate={createGroup}
               onDisable={handleDisableGroup}
               onEnable={handleEnableGroup}
