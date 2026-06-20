@@ -35,7 +35,4 @@ export const messageApi = {
   // Remove a participant from a CC thread (sender only)
   removeParticipant: (conversationId, userId) =>
     api.delete(`/api/messages/${conversationId}/participants/${userId}`).then(r => r.data),
-
-  deleteMessage: (messageId) =>
-    api.delete(`/api/messages/${messageId}`).then(r => r.data),
 };

@@ -3,6 +3,8 @@ import MessageBubble from './MessageBubble';
 import Composer      from './Composer';
 import { useThread } from '../hooks/useThread';
 import { messageApi } from '../api/messageApi';
+import { groupApi }   from '../api/groupApi';
+import api            from '../api/axiosInstance';
 
 const CONV_TYPE_LABEL = {
   bcc:          { label: 'Private',    color: 'var(--muted)' },
@@ -10,7 +12,7 @@ const CONV_TYPE_LABEL = {
   group_thread: { label: 'Group Chat', color: 'var(--gold)' },
 };
 
-export default function ChatWindow({ conversation, currentUserId, onArchive, onBack, toast }) {
+export default function ChatWindow({ conversation, currentUserId, onArchive, onBack, toast, groups = [] }) {
   const { messages, conversation: threadConv, loading, error, markAllRead, sendReply, refetch } =
     useThread(conversation?.conversationId);
 
@@ -19,6 +21,12 @@ export default function ChatWindow({ conversation, currentUserId, onArchive, onB
   const [removing,         setRemoving]          = useState(null); // userId being removed
   const [removeError,      setRemoveError]       = useState('');
   const [highlightedId,    setHighlightedId]     = useState(null);
+  const [addingMember,     setAddingMember]      = useState(false);
+  const [memberSearch,     setMemberSearch]      = useState('');
+  const [searchResults,    setSearchResults]     = useState([]);
+  const [searchLoading,    setSearchLoading]     = useState(false);
+  const [groupActionError, setGroupActionError]  = useState('');
+  const [groupRemoving,    setGroupRemoving]     = useState(null);
   const markedAllRef = useRef(null);
   const bottomRef    = useRef(null);
   const messageNodesRef = useRef({}); // messageId -> DOM node
@@ -74,6 +82,12 @@ export default function ChatWindow({ conversation, currentUserId, onArchive, onB
   const canReply   = conv.userCanReply ?? conv.allowReply;
   const isGroupDisabled = isGroupThread && Boolean(conv.isGroupDisabled);
 
+  // Find the matching group from the groups list to determine admin rights
+  const matchedGroup = isGroupThread
+    ? groups.find(g => String(g.groupId) === String(conv.groupId || conv.group_id))
+    : null;
+  const isGroupAdmin = Boolean(matchedGroup?.isAdmin || matchedGroup?.isSuperAdmin);
+
   const isGroup = useMemo(() => {
     if (conv.participantCount != null) return conv.participantCount > 2;
     return (conv.participants?.length ?? 0) > 2;
@@ -103,8 +117,17 @@ useEffect(() => {
 }, [messages.length]);
 
 useEffect(() => {
-  const container = document.querySelector('.gmail-thread-view');
+  if (!messages.length) return;
 
+  const lastMessage = messages[messages.length - 1];
+  const iSentIt = String(lastMessage?.senderId) === String(currentUserId);
+
+  if (iSentIt) {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    return;
+  }
+
+  const container = document.querySelector('.gmail-thread-view');
   if (!container) return;
 
   const distanceFromBottom =
@@ -113,11 +136,9 @@ useEffect(() => {
     container.clientHeight;
 
   if (distanceFromBottom < 120) {
-    bottomRef.current?.scrollIntoView({
-      behavior: 'smooth',
-    });
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }
-}, [messages.length]);
+}, [messages.length, currentUserId]);
   // Mark all unread once on open
   useEffect(() => {
     if (!messages.length || !currentUserId) return;
@@ -132,9 +153,45 @@ useEffect(() => {
     return mine.length ? mine[mine.length - 1].messageId : null;
   }, [messages, currentUserId]);
 
-  const handleDelete = async (messageId) => {
-    if (!window.confirm('Delete this message?')) return;
-    try { await messageApi.deleteMessage(messageId); refetch(); } catch { /* silent */ }
+  // ── Group member management (inline, group_thread only) ──────────────────
+  const handleGroupRemoveMember = async (userId, name) => {
+    if (!matchedGroup) return;
+    if (!window.confirm(`Remove ${name} from this group?`)) return;
+    setGroupRemoving(userId); setGroupActionError('');
+    try {
+      await groupApi.removeMember(matchedGroup.groupId, userId);
+      await refetch();
+      toast?.(`${name} removed from group`, 'success');
+    } catch (err) {
+      setGroupActionError(err?.response?.data?.error || 'Failed to remove member.');
+    } finally { setGroupRemoving(null); }
+  };
+
+  const handleMemberSearch = async (q) => {
+    setMemberSearch(q);
+    if (!q.trim()) { setSearchResults([]); return; }
+    setSearchLoading(true);
+    try {
+      const res = await api.get('/api/users/search', { params: { q, limit: 12 } });
+      const users = res.data.users || res.data || [];
+      // Filter out existing participants
+      const existingIds = new Set(conv.participants.map(p => String(p.userId)));
+      setSearchResults(users.filter(u => !existingIds.has(String(u.userId))));
+    } catch { setSearchResults([]); }
+    finally { setSearchLoading(false); }
+  };
+
+  const handleAddMember = async (user) => {
+    if (!matchedGroup) return;
+    setGroupActionError('');
+    try {
+      await groupApi.addMembers(matchedGroup.groupId, [user.userId]);
+      await refetch();
+      toast?.(`${user.firstName || ''} ${user.lastName || ''} added`.trim(), 'success');
+      setMemberSearch(''); setSearchResults([]);
+    } catch (err) {
+      setGroupActionError(err?.response?.data?.error || 'Failed to add member.');
+    }
   };
 
   const handleSend = async (payload) => {
@@ -267,20 +324,74 @@ useEffect(() => {
                 · You can remove others
               </span>
             )}
-            {isGroupThread && (
+            {isGroupThread && isGroupAdmin && !isGroupDisabled && (
+              <button
+                onClick={() => { setAddingMember(v => !v); setMemberSearch(''); setSearchResults([]); }}
+                style={{
+                  marginLeft: 10, background: 'var(--mid)', border: '1px solid var(--divider)',
+                  borderRadius: 12, padding: '2px 10px', fontSize: 11, color: 'var(--gold)',
+                  cursor: 'pointer', fontWeight: 600,
+                }}
+              >
+                + Add member
+              </button>
+            )}
+            {isGroupThread && !isGroupAdmin && (
               <span style={{ marginLeft: 6, color: 'var(--muted)', fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 11 }}>
-                · Managed by the group admin from the Groups tab
+                · Managed in the Groups tab
               </span>
             )}
           </div>
-          {removeError && (
-            <div style={{ color: 'var(--danger)', fontSize: 11, marginBottom: 6 }}>{removeError}</div>
+          {(removeError || groupActionError) && (
+            <div style={{ color: 'var(--danger)', fontSize: 11, marginBottom: 6 }}>{removeError || groupActionError}</div>
+          )}
+          {/* Inline add member — group admin only */}
+          {isGroupThread && isGroupAdmin && addingMember && (
+            <div style={{ marginBottom: 10 }}>
+              <input
+                autoFocus
+                value={memberSearch}
+                onChange={e => handleMemberSearch(e.target.value)}
+                placeholder="Search users to add…"
+                style={{
+                  width: '100%', padding: '6px 10px', borderRadius: 8,
+                  border: '1px solid var(--divider)', background: 'var(--mid)',
+                  color: 'var(--light)', fontSize: 12, outline: 'none', boxSizing: 'border-box',
+                }}
+              />
+              {searchLoading && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>Searching…</div>}
+              {searchResults.length > 0 && (
+                <div style={{
+                  marginTop: 4, background: 'var(--dark)', border: '1px solid var(--divider)',
+                  borderRadius: 8, overflow: 'hidden', maxHeight: 140, overflowY: 'auto',
+                }}>
+                  {searchResults.map(u => (
+                    <div
+                      key={u.userId}
+                      onClick={() => handleAddMember(u)}
+                      style={{
+                        padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: 'var(--light)',
+                        borderBottom: '1px solid var(--divider)',
+                      }}
+                      onMouseOver={e => e.currentTarget.style.background = 'var(--mid)'}
+                      onMouseOut={e  => e.currentTarget.style.background = 'transparent'}
+                    >
+                      {`${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email}
+                      {u.email && <span style={{ color: 'var(--muted)', marginLeft: 6 }}>{u.email}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!searchLoading && memberSearch.trim() && searchResults.length === 0 && (
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>No users found</div>
+              )}
+            </div>
           )}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {conv.participants.map(p => {
               const isMe    = String(p.userId) === String(currentUserId);
               const pName   = `${p.firstName || ''} ${p.lastName || ''}`.trim() || p.email || 'Unknown';
-              const isRemoving = removing === p.userId;
+              const isRemoving = removing === p.userId || groupRemoving === p.userId;
               return (
                 <span key={p.userId} style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5,
@@ -293,11 +404,11 @@ useEffect(() => {
                   {isMe && (
                     <span style={{ fontSize: 10, color: 'var(--muted)', fontStyle: 'italic' }}>you</span>
                   )}
-                  {/* Remove button — CC threads only, sender only, never on others in a group thread */}
-                  {isCcThread && isSender && !isMe && (
+                  {/* Remove button — CC: sender only; group_thread: group admin only */}
+                  {((isCcThread && isSender) || (isGroupThread && isGroupAdmin && !isGroupDisabled)) && !isMe && (
                     <button
                       title={`Remove ${pName}`}
-                      onClick={() => handleRemoveParticipant(p.userId, pName)}
+                      onClick={() => isGroupThread ? handleGroupRemoveMember(p.userId, pName) : handleRemoveParticipant(p.userId, pName)}
                       disabled={!!isRemoving}
                       style={{
                         background: 'none', border: 'none', cursor: 'pointer',
@@ -341,7 +452,6 @@ useEffect(() => {
             currentUserId={currentUserId}
             isLastSentByMe={msg.messageId === lastSentByMeId}
             onReply={canReply ? setReplyingTo : null}
-            onDelete={handleDelete}
             onJumpToParent={handleJumpToParent}
             isHighlighted={msg.messageId === highlightedId}
             registerRef={registerMessageRef}

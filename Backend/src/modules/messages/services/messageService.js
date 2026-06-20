@@ -481,6 +481,7 @@ async function getInbox(userId, page = 1, limit = 30) {
        c.allow_reply      AS "allowReply",
        c.conv_type        AS "convType",
        c.created_by       AS "createdBy",
+       c.group_id         AS "groupId",
        (SELECT COUNT(*)::int FROM comm_participants cp
         WHERE cp.conversation_id = c.conversation_id AND cp.is_deleted = FALSE
        ) AS "participantCount",
@@ -546,6 +547,7 @@ async function getSent(userId, page = 1, limit = 30) {
        c.allow_reply      AS "allowReply",
        c.conv_type        AS "convType",
        c.created_by       AS "createdBy",
+       c.group_id         AS "groupId",
        (SELECT COUNT(*)::int FROM comm_participants cp
         WHERE cp.conversation_id = c.conversation_id AND cp.is_deleted = FALSE
        ) AS "participantCount",
@@ -661,7 +663,7 @@ async function getThread(conversationId, userId) {
   const convRes = await pool.query(
     `SELECT conversation_id AS "conversationId", subject,
             allow_reply AS "allowReply", conv_type AS "convType",
-            created_by AS "createdBy",
+            created_by AS "createdBy", group_id AS "groupId",
             created_at AS "createdAt", last_message_at AS "lastMessageAt"
      FROM comm_conversations WHERE conversation_id = $1 AND is_deleted = FALSE`,
     [conversationId]
