@@ -69,13 +69,15 @@ function initSocket(httpServer) {
         // but if missing we look it up as a fallback
         let userName = data.userName;
         if (!userName) {
-          const pool = require('../../../config/db').getPool();
-          const { rows } = await pool.query(
-            `SELECT COALESCE(NULLIF(TRIM(CONCAT(first_name,' ',last_name)),''), email) AS name
-             FROM auth_users WHERE user_id = $1`,
-            [userId]
-          );
-          userName = rows[0]?.name || 'Someone';
+          const { getPool, sql } = require('../../../config/db');
+          const pool = await getPool();
+          const { recordset } = await pool.request()
+            .input('userId', sql.UniqueIdentifier, userId)
+            .query(`
+              SELECT COALESCE(NULLIF(TRIM(CONCAT(first_name,' ',last_name)),''), email) AS name
+              FROM auth_users WHERE user_id = @userId
+            `);
+          userName = recordset[0]?.name || 'Someone';
         }
 
         // Broadcast to others in the conversation room (not back to sender)

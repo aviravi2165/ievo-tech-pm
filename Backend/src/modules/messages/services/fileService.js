@@ -1,10 +1,6 @@
-<<<<<<< HEAD
-const { getMssqlPool: _getPool } = require('../../../config/dbHelper');
-let _pool;
-async function getPool() { if (!_pool) _pool = await _getPool(); return _pool; }
-=======
-const { getPool } = require('../../../config/db');
->>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
+'use strict';
+
+const { getPool, sql } = require('../../../config/db');
 
 /**
  * Inserts attachment metadata.
@@ -17,60 +13,38 @@ async function createAttachment({
   fileSize,
   storagePath,
 }) {
-<<<<<<< HEAD
   const pool = await getPool();
-=======
-  const pool = getPool();
->>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
 
-  const { rows } = await pool.query(
-    `
-    INSERT INTO comm_attachments
-    (
-      uploaded_by,
-      stored_name,
-      original_name,
-      mime_type,
-      file_size,
-      storage_path
-    )
-    VALUES
-    (
-      $1::uuid,
-      $2,
-      $3,
-      $4,
-      $5,
-      $6
-    )
-    RETURNING
-      attachment_id AS "attachmentId",
-      original_name AS "originalName",
-      mime_type     AS "mimeType",
-      file_size     AS "fileSize"
-    `,
-    [
-      uploadedByUserId,
-      storedFileName,
-      originalName,
-      mimeType,
-      fileSize,
-      storagePath || storedFileName,
-    ]
-  );
+  const { recordset } = await pool.request()
+    .input('uploadedBy',   sql.UniqueIdentifier, uploadedByUserId)
+    .input('storedName',   sql.VarChar,          storedFileName)
+    .input('originalName', sql.VarChar,          originalName)
+    .input('mimeType',     sql.VarChar,          mimeType)
+    .input('fileSize',     sql.BigInt,           fileSize)
+    .input('storagePath',  sql.VarChar,          storagePath || storedFileName)
+    .query(`
+      INSERT INTO comm_attachments
+        (uploaded_by, stored_name, original_name, mime_type, file_size, storage_path)
+      OUTPUT
+        INSERTED.attachment_id AS attachmentId,
+        INSERTED.original_name AS originalName,
+        INSERTED.mime_type     AS mimeType,
+        INSERTED.file_size     AS fileSize
+      VALUES
+        (@uploadedBy, @storedName, @originalName, @mimeType, @fileSize, @storagePath)
+    `);
 
-  return rows[0];
+  return recordset[0];
 }
 
 /**
  * Links uploaded attachments to a message.
+ *
+ * `reqFn` is the request-factory passed down from `withTransaction()` in
+ * db.js (see messageService.js for the calling convention) — call it once
+ * per query to get a fresh `sql.Request` bound to the active transaction.
  */
-async function linkAttachmentsToMessage(
-  client,
-  messageId,
-  attachmentIds,
-  userId
-) {
+async function linkAttachmentsToMessage(reqFn, messageId, attachmentIds, userId) {
   if (!attachmentIds || attachmentIds.length === 0) {
     return { linkedCount: 0 };
   }
@@ -78,26 +52,24 @@ async function linkAttachmentsToMessage(
   let linkedCount = 0;
 
   for (const attachmentId of attachmentIds) {
-    const { rowCount } = await client.query(
-      `
-      UPDATE comm_attachments
-      SET message_id = $1
-      WHERE attachment_id = $2
-        AND uploaded_by = $3::uuid
-        AND message_id IS NULL
-        AND is_deleted = FALSE
-      `,
-      [messageId, attachmentId, userId]
-    );
+    const result = await reqFn()
+      .input('messageId',    sql.Int,              messageId)
+      .input('attachmentId', sql.Int,              attachmentId)
+      .input('userId',       sql.UniqueIdentifier,  userId)
+      .query(`
+        UPDATE comm_attachments
+        SET message_id = @messageId
+        WHERE attachment_id = @attachmentId
+          AND uploaded_by = @userId
+          AND message_id IS NULL
+          AND is_deleted = 0
+      `);
 
-    linkedCount += rowCount;
+    linkedCount += result.rowsAffected.reduce((a, b) => a + b, 0);
   }
 
   if (linkedCount !== attachmentIds.length) {
-    const err = new Error(
-      'One or more attachments could not be linked'
-    );
-
+    const err = new Error('One or more attachments could not be linked');
     err.code = 'ATTACHMENT_LINK_FAILED';
     throw err;
   }
@@ -108,75 +80,61 @@ async function linkAttachmentsToMessage(
 /**
  * Checks whether a user has access to an attachment.
  */
-async function getAttachmentForUser(
-  attachmentId,
-  userId
-) {
-<<<<<<< HEAD
+async function getAttachmentForUser(attachmentId, userId) {
   const pool = await getPool();
-=======
-  const pool = getPool();
->>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
 
-  const { rows } = await pool.query(
-    `
-    SELECT
-      a.attachment_id AS "attachmentId",
-      a.message_id AS "messageId",
-      a.stored_name AS "storedFileName",
-      a.storage_path AS "storagePath",
-      a.original_name AS "originalName",
-      a.mime_type AS "mimeType",
-      a.file_size AS "fileSize"
-    FROM comm_attachments a
-    WHERE a.attachment_id = $1
-      AND a.is_deleted = FALSE
-      AND (
-        a.uploaded_by = $2::uuid
-        OR EXISTS (
-          SELECT 1
-          FROM comm_messages m
-          INNER JOIN comm_participants p
-            ON p.conversation_id = m.conversation_id
-           AND p.user_id = $2::uuid
-           AND p.is_deleted = FALSE
-          WHERE m.message_id = a.message_id
-            AND m.is_deleted = FALSE
+  const { recordset } = await pool.request()
+    .input('attachmentId', sql.Int,              attachmentId)
+    .input('userId',       sql.UniqueIdentifier, userId)
+    .query(`
+      SELECT
+        a.attachment_id AS attachmentId,
+        a.message_id    AS messageId,
+        a.stored_name    AS storedFileName,
+        a.storage_path   AS storagePath,
+        a.original_name  AS originalName,
+        a.mime_type      AS mimeType,
+        a.file_size      AS fileSize
+      FROM comm_attachments a
+      WHERE a.attachment_id = @attachmentId
+        AND a.is_deleted = 0
+        AND (
+          a.uploaded_by = @userId
+          OR EXISTS (
+            SELECT 1
+            FROM comm_messages m
+            INNER JOIN comm_participants p
+              ON p.conversation_id = m.conversation_id
+             AND p.user_id = @userId
+             AND p.is_deleted = 0
+            WHERE m.message_id = a.message_id
+              AND m.is_deleted = 0
+          )
         )
-      )
-    `,
-    [attachmentId, userId]
-  );
+    `);
 
-  return rows[0] || null;
+  return recordset[0] || null;
 }
 
 /**
  * Marks an unattached uploaded file as deleted.
  */
-async function softDeleteStagedAttachment(
-  attachmentId,
-  userId
-) {
-<<<<<<< HEAD
+async function softDeleteStagedAttachment(attachmentId, userId) {
   const pool = await getPool();
-=======
-  const pool = getPool();
->>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
 
-  const { rowCount } = await pool.query(
-    `
-    UPDATE comm_attachments
-    SET is_deleted = TRUE
-    WHERE attachment_id = $1
-      AND uploaded_by = $2::uuid
-      AND message_id IS NULL
-      AND is_deleted = FALSE
-    `,
-    [attachmentId, userId]
-  );
+  const result = await pool.request()
+    .input('attachmentId', sql.Int,              attachmentId)
+    .input('userId',       sql.UniqueIdentifier, userId)
+    .query(`
+      UPDATE comm_attachments
+      SET is_deleted = 1
+      WHERE attachment_id = @attachmentId
+        AND uploaded_by = @userId
+        AND message_id IS NULL
+        AND is_deleted = 0
+    `);
 
-  return rowCount > 0;
+  return result.rowsAffected.reduce((a, b) => a + b, 0) > 0;
 }
 
 module.exports = {

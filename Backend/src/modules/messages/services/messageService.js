@@ -595,13 +595,23 @@ async function replyToConversation(conversationId, senderUserId, payload) {
       .input('convId', sql.Int, conversationId)
       .query(`UPDATE comm_participants SET is_archived = 0 WHERE conversation_id = @convId AND is_deleted = 0`);
 
-    const metaRes   = await pool.request()
+    // NOTE: read these through req() (the transaction's own connection),
+    // not a fresh pool.request(). A separate connection reading rows this
+    // same open transaction just updated above would block under MSSQL's
+    // default locking until the transaction commits — but commit can't
+    // happen until this callback returns, which is waiting on that read.
+    // That's a self-deadlock that wouldn't necessarily surface under
+    // Postgres' MVCC, so it's an easy thing to miss in this migration.
+    const metaRes   = await req()
       .input('convId', sql.Int, conversationId)
       .query(`SELECT subject FROM comm_conversations WHERE conversation_id = @convId`);
-    const senderRes = await pool.request()
+    const senderRes = await req()
       .input('userId', sql.UniqueIdentifier, senderUserId)
       .query(`SELECT first_name, last_name, email FROM auth_users WHERE user_id = @userId`);
-    const participantIds = await getParticipantUserIds(conversationId);
+    const participantRes = await req()
+      .input('convId', sql.Int, conversationId)
+      .query(`SELECT user_id FROM comm_participants WHERE conversation_id = @convId AND is_deleted = 0`);
+    const participantIds = participantRes.recordset.map(r => r.user_id);
 
     return {
       conversationId, messageId,

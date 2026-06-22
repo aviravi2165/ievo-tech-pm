@@ -293,7 +293,7 @@ async function addMembers(groupId, actorUserId, userIds) {
     }
   }
 
-  return withTransaction(async (req) => {
+  await withTransaction(async (req) => {
     for (const memberId of userIds) {
       // Add to group (idempotent)
       await req()
@@ -337,8 +337,14 @@ async function addMembers(groupId, actorUserId, userIds) {
           DELETE FROM comm_group_hidden WHERE group_id = @groupId AND user_id = @memberId
         `);
     }
-    return getGroupMembers(groupId, actorUserId);
   });
+
+  // Read the refreshed member list with a separate pool request, AFTER the
+  // transaction above has committed. Calling this from inside the open
+  // transaction (a different connection) can block on the rows it just
+  // wrote under MSSQL's default locking, unlike Postgres' MVCC — so we
+  // wait for commit first.
+  return getGroupMembers(groupId, actorUserId);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
