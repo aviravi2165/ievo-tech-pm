@@ -19,19 +19,12 @@
     "express-rate-limit": "^7.5.0",
     "jsdom": "^25.0.1",
     "jsonwebtoken": "^9.0.2",
+    "mssql": "^11.0.1",
     "multer": "^1.4.5-lts.1",
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.16",
-<<<<<<< HEAD
-    "socket.io": "^4.8.1",
-    "uuid": "^11.0.5",
-    "mssql": "^11.0.1"
-  }
-}
-=======
     "pg": "^8.21.0",
     "socket.io": "^4.8.1",
     "uuid": "^11.0.5"
   }
 }
->>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
