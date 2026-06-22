@@ -1,8 +1,12 @@
 const bcrypt = require('bcrypt');
 const jwt    = require('jsonwebtoken');
+<<<<<<< HEAD
 const { getMssqlPool: _getPool } = require('../../../config/dbHelper');
 let _pool;
 async function getPool() { if (!_pool) _pool = await _getPool(); return _pool; }
+=======
+const { getPool } = require('../../../config/db');
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
 
 // ── Login ─────────────────────────────────────────────────────────────────────
 
@@ -11,6 +15,7 @@ async function login({ username, password }) {
     const err = new Error('Username and password are required');
     err.statusCode = 400; throw err;
   }
+<<<<<<< HEAD
   const pool = await getPool();
   const { rows } = await pool.query(
   `SELECT user_id, username, password_hash, first_name, last_name,
@@ -19,6 +24,17 @@ async function login({ username, password }) {
    WHERE username = $1`,
   [username.trim().toLowerCase()]
 );
+=======
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT user_id, username, password_hash, first_name, last_name,
+            email, user_type, is_active, allow_login, profile_picture, dept_id
+     FROM auth_users
+     WHERE username = $1
+     LIMIT 1`,
+    [username.trim().toLowerCase()]
+  );
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const user = rows[0];
   if (!user || !user.is_active || !user.allow_login) {
     const err = new Error('Invalid credentials'); err.statusCode = 401; throw err;
@@ -57,7 +73,11 @@ async function login({ username, password }) {
 // UUID-based checks (send, reply, read receipts) for every user.
 
 async function getMe(userId) {
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows } = await pool.query(
     `SELECT user_id, username, first_name, last_name, email,
             user_type, profile_picture, dept_id
@@ -86,7 +106,11 @@ async function getMe(userId) {
 // ── Search users for RecipientPicker ─────────────────────────────────────────
 
 async function searchUsers(q, limit = 10, excludeUserId = null) {
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   if (!q) {
     const { rows } = await pool.query(
       `SELECT user_id AS "userId", first_name AS "firstName", last_name AS "lastName",
@@ -127,7 +151,11 @@ async function changePassword(
   currentPassword,
   newPassword
 ) {
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
 
   const { rows } = await pool.query(
     `

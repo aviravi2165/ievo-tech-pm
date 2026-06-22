@@ -1,6 +1,10 @@
+<<<<<<< HEAD
 const { getMssqlPool: _getPool } = require('../../../config/dbHelper');
 let _pool;
 async function getPool() { if (!_pool) _pool = await _getPool(); return _pool; }
+=======
+const { getPool } = require('../../../config/db');
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
 
 // ── Guards ────────────────────────────────────────────────────────────────────
 
@@ -12,7 +16,11 @@ async function getPool() { if (!_pool) _pool = await _getPool(); return _pool; }
  * admin only — see assertCanManageAdmins) promote/demote co-admins.
  */
 async function isGroupAdminOrSuperAdmin(groupId, userId) {
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows } = await pool.query(
     `SELECT
        (g.created_by = $2::uuid)         AS "isCreator",
@@ -46,7 +54,11 @@ async function assertGroupAdmin(groupId, userId) {
  * trivially escalated by someone who was only just promoted themselves.
  */
 async function assertCanManageAdmins(groupId, userId) {
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows } = await pool.query(
     `SELECT
        (g.created_by = $2::uuid) AS "isCreator",
@@ -65,7 +77,11 @@ async function assertCanManageAdmins(groupId, userId) {
 }
 
 async function assertGroupMember(groupId, userId) {
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows } = await pool.query(
     `SELECT g.group_id FROM comm_groups g
      WHERE g.group_id = $1
@@ -103,7 +119,11 @@ async function assertGroupMember(groupId, userId) {
  * Hiding does not apply to the super admin view.
  */
 async function listGroupsForUser(userId) {
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
 
   const { rows: meRows } = await pool.query(
     `SELECT user_type AS "userType" FROM auth_users WHERE user_id = $1::uuid`,
@@ -168,7 +188,11 @@ async function listGroupsForUser(userId) {
 // ── Create ────────────────────────────────────────────────────────────────────
 
 async function createGroup(userId, groupName) {
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -212,7 +236,11 @@ async function createGroup(userId, groupName) {
 async function getGroupMembers(groupId, userId) {
   await assertGroupMember(groupId, userId);
 
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows } = await pool.query(
     `SELECT
        u.user_id    AS "userId",
@@ -235,7 +263,11 @@ async function getGroupMembers(groupId, userId) {
 
 async function getMemberUserIdsForGroups(groupIds = []) {
   if (!groupIds.length) return [];
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows } = await pool.query(
     `SELECT DISTINCT gm.user_id
      FROM comm_group_members gm
@@ -252,7 +284,11 @@ async function getMemberUserIdsForGroups(groupIds = []) {
 async function addMembers(groupId, actorUserId, userIds) {
   await assertGroupAdmin(groupId, actorUserId);
 
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows: groupRows } = await pool.query(
     `SELECT is_disabled FROM comm_groups WHERE group_id = $1`, [groupId]
   );
@@ -320,7 +356,11 @@ async function addMembers(groupId, actorUserId, userIds) {
 async function removeMember(groupId, actorUserId, memberUserId) {
   await assertGroupAdmin(groupId, actorUserId);
 
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows: groupRows } = await pool.query(
     `SELECT created_by, is_disabled FROM comm_groups WHERE group_id = $1`, [groupId]
   );
@@ -382,7 +422,11 @@ async function removeMember(groupId, actorUserId, memberUserId) {
 async function setMemberAdminStatus(groupId, actorUserId, targetUserId, makeAdmin) {
   await assertCanManageAdmins(groupId, actorUserId);
 
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows: groupRows } = await pool.query(
     `SELECT created_by, is_disabled FROM comm_groups WHERE group_id = $1`, [groupId]
   );
@@ -427,7 +471,11 @@ async function setMemberAdminStatus(groupId, actorUserId, targetUserId, makeAdmi
  */
 async function disableGroup(groupId, actorUserId) {
   await assertGroupAdmin(groupId, actorUserId);
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   await pool.query(
     `UPDATE comm_groups
      SET is_disabled = TRUE, disabled_at = NOW(), disabled_by = $2::uuid
@@ -440,7 +488,11 @@ async function disableGroup(groupId, actorUserId) {
 /** Re-enable a disabled group — admin (creator/co-admin) or super admin only. */
 async function enableGroup(groupId, actorUserId) {
   await assertGroupAdmin(groupId, actorUserId);
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   await pool.query(
     `UPDATE comm_groups
      SET is_disabled = FALSE, disabled_at = NULL, disabled_by = NULL
@@ -462,7 +514,11 @@ async function enableGroup(groupId, actorUserId) {
 async function deleteGroupForActor(groupId, actorUserId) {
   await assertGroupAdmin(groupId, actorUserId);
 
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows } = await pool.query(
     `SELECT is_disabled FROM comm_groups WHERE group_id = $1`, [groupId]
   );
@@ -491,7 +547,11 @@ async function deleteGroupForActor(groupId, actorUserId) {
  * participant, and does not touch comm_group_members or the group itself.
  */
 async function hideDisabledGroupForUser(groupId, userId) {
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows } = await pool.query(
     `SELECT is_disabled FROM comm_groups WHERE group_id = $1`, [groupId]
   );
@@ -516,7 +576,11 @@ async function hideDisabledGroupForUser(groupId, userId) {
 // ── Get latest conversation for a group ────────────────────────────────────────
 
 async function getLatestGroupConversation(groupId, userId) {
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows } = await pool.query(
     `SELECT
        c.conversation_id   AS "conversationId",

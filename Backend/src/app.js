@@ -1,5 +1,5 @@
-const express  = require('express');
-const cors     = require('cors');
+const express = require('express');
+const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const { getPool } = require('./config/db');
 const { registerAllModules } = require('./modules');
@@ -10,17 +10,17 @@ function createApp() {
 
   const limiter = rateLimit({
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10),
-    max:      parseInt(process.env.RATE_LIMIT_MAX       || '100',    10),
+    max: parseInt(process.env.RATE_LIMIT_MAX || '100', 10),
     standardHeaders: true,
-    legacyHeaders:   false,
+    legacyHeaders: false,
     message: { error: 'Too many requests, please try again later.' },
   });
 
   const corsOptions = {
-    origin:        process.env.CORS_ORIGIN.split(','),
-    methods:       'GET,POST,PUT,PATCH,DELETE',
-    allowedHeader: ['Content-Type', 'Authorization'],
-    credentials:   true,
+    origin: process.env.CORS_ORIGIN.split(','),
+    methods: 'GET,POST,PUT,PATCH,DELETE',
+    allowedHeaders: ['Content-Type', 'Authorization'], 
+    credentials: true,
   };
 
   app.use(limiter);
@@ -44,7 +44,7 @@ function createApp() {
   app.use((err, req, res, _next) => {
     console.error(err);
     res.status(err.statusCode || 500).json({
-      error:   err.message || 'Internal server error',
+      error: err.message || 'Internal server error',
       message: err.message || 'Internal server error',
     });
   });

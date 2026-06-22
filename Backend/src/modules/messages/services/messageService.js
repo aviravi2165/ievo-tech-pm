@@ -1,7 +1,11 @@
 'use strict';
+<<<<<<< HEAD
 const { getMssqlPool: _getPool } = require('../../../config/dbHelper');
 let _pool;
 async function getPool() { if (!_pool) _pool = await _getPool(); return _pool; }
+=======
+const { getPool } = require('../../../config/db');
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
 
 let archiveColumnReady;
 
@@ -23,7 +27,11 @@ function displayName(row) {
 
 async function ensureParticipantArchiveColumn() {
   if (!archiveColumnReady) {
+<<<<<<< HEAD
     archiveColumnReady = (await getPool()).query(
+=======
+    archiveColumnReady = getPool().query(
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
       `ALTER TABLE comm_participants
        ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
        ALTER TABLE comm_participants
@@ -34,7 +42,11 @@ async function ensureParticipantArchiveColumn() {
 }
 
 async function assertConversationParticipant(conversationId, userId) {
+<<<<<<< HEAD
   const { rows } = (await getPool()).query(
+=======
+  const { rows } = await getPool().query(
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
     `SELECT 1
      FROM comm_participants p
      WHERE p.conversation_id = $1 AND p.user_id = $2::uuid AND p.is_deleted = FALSE
@@ -59,7 +71,11 @@ async function assertConversationParticipant(conversationId, userId) {
  * admin status gates those actions for groups.
  */
 async function isThreadAdminOrSuperAdmin(conversationId, userId) {
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows } = await pool.query(
     `SELECT
        (c.created_by = $2::uuid) AS "isCreator",
@@ -84,7 +100,11 @@ async function assertThreadAdmin(conversationId, userId) {
 }
 
 async function getParticipantUserIds(conversationId) {
+<<<<<<< HEAD
   const { rows } = (await getPool()).query(
+=======
+  const { rows } = await getPool().query(
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
     `SELECT user_id FROM comm_participants
      WHERE conversation_id = $1 AND is_deleted = FALSE`,
     [conversationId]
@@ -99,7 +119,11 @@ async function getParticipantUserIds(conversationId) {
  */
 async function getMemberUserIdsForGroups(groupIds = [], excludeUserId = null) {
   if (!groupIds.length) return [];
+<<<<<<< HEAD
   const { rows } = (await getPool()).query(
+=======
+  const { rows } = await getPool().query(
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
     `SELECT DISTINCT gm.user_id
      FROM comm_group_members gm
      INNER JOIN comm_groups g ON g.group_id = gm.group_id
@@ -176,8 +200,12 @@ async function addParticipants(client, conversationId, userIds, participantType 
   }
 }
 
+<<<<<<< HEAD
 async function assertActiveGroupMember(groupId, userId, client = null) {
   if (!client) client = await getPool();
+=======
+async function assertActiveGroupMember(groupId, userId, client = getPool()) {
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows } = await client.query(
     `SELECT g.is_disabled AS "isDisabled", gm.user_id AS "memberUserId"
      FROM comm_groups g
@@ -219,7 +247,11 @@ async function insertMessage(client, conversationId, senderId, bodyHtml, parentM
 async function assertNoAdminRecipients(userIds = []) {
   const ids = [...new Set((userIds || []).map(String))].filter(Boolean);
   if (!ids.length) return;
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows } = await pool.query(
     `SELECT user_id FROM auth_users WHERE user_id = ANY($1::uuid[]) AND user_type = 'admin'`,
     [ids]
@@ -253,7 +285,11 @@ async function sendMessage(senderUserId, payload) {
     const e = new Error('Subject is required'); e.statusCode = 400; throw e;
   }
 
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
 
   // ── CC mode ───────────────────────────────────────────────────────────────
   if (mode === 'cc') {
@@ -436,7 +472,11 @@ async function sendMessage(senderUserId, payload) {
 // ── Remove participant from CC thread ─────────────────────────────────────────
 
 async function removeParticipant(conversationId, targetUserId, actorUserId) {
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows } = await pool.query(
     `SELECT created_by, conv_type FROM comm_conversations
      WHERE conversation_id = $1 AND is_deleted = FALSE`,
@@ -466,7 +506,11 @@ async function removeParticipant(conversationId, targetUserId, actorUserId) {
 
 // ── Add participant to CC conversation ───────────────────────────────────────
 async function addParticipant(conversationId, userIds, actorUserId, actorUserType) {
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows } = await pool.query(
     `SELECT created_by, conv_type, is_disabled FROM comm_conversations
      WHERE conversation_id = $1 AND is_deleted = FALSE`,
@@ -541,7 +585,11 @@ async function replyToConversation(conversationId, senderUserId, payload) {
   await assertConversationParticipant(conversationId, senderUserId);
   await ensureParticipantArchiveColumn();
 
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows: convRows } = await pool.query(
     `SELECT allow_reply, is_deleted, conv_type, group_id, is_disabled
      FROM comm_conversations WHERE conversation_id = $1`,
@@ -607,7 +655,11 @@ async function replyToConversation(conversationId, senderUserId, payload) {
 
 async function getInbox(userId, page = 1, limit = 30) {
   await ensureParticipantArchiveColumn();
+<<<<<<< HEAD
   const pool   = await getPool();
+=======
+  const pool   = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const offset = (Math.max(page, 1) - 1) * limit;
   const { rows } = await pool.query(
     `SELECT
@@ -619,14 +671,20 @@ async function getInbox(userId, page = 1, limit = 30) {
        c.conv_type        AS "convType",
        c.created_by       AS "createdBy",
        c.group_id         AS "groupId",
+<<<<<<< HEAD
        (SELECT COUNT(*) FROM comm_participants cp
         WHERE cp.conversation_id = c.conversation_id AND cp.is_deleted = 0
+=======
+       (SELECT COUNT(*)::int FROM comm_participants cp
+        WHERE cp.conversation_id = c.conversation_id AND cp.is_deleted = FALSE
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
        ) AS "participantCount",
        COALESCE(NULLIF(TRIM(CONCAT(su.first_name,' ',su.last_name)),''), su.email, 'Unknown') AS "latestSender",
        LEFT(lm.body_html, 120) AS preview,
        cg.group_name AS "groupName",
        (SELECT STRING_AGG(
            COALESCE(NULLIF(TRIM(CONCAT(u2.first_name,' ',u2.last_name)),''), u2.email),
+<<<<<<< HEAD
            ', '
          ) WITHIN GROUP (ORDER BY u2.first_name, u2.last_name)
          FROM comm_participants p2
@@ -644,11 +702,31 @@ async function getInbox(userId, page = 1, limit = 30) {
           AND NOT EXISTS (
             SELECT 1 FROM comm_read_receipts rr
             WHERE rr.message_id = um.message_id AND rr.user_id = CAST($1 AS UNIQUEIDENTIFIER)
+=======
+           ', ' ORDER BY u2.first_name, u2.last_name
+         )
+         FROM comm_participants p2
+         INNER JOIN auth_users u2 ON u2.user_id = p2.user_id
+         WHERE p2.conversation_id = c.conversation_id
+           AND p2.user_id <> $1::uuid AND p2.is_deleted = FALSE
+       ) AS "participantNames",
+       (SELECT COUNT(*)::int
+        FROM comm_messages um
+        WHERE um.conversation_id = c.conversation_id
+          AND um.is_deleted = FALSE
+          AND um.sent_at > COALESCE(p.archived_at, '-infinity'::timestamptz)
+          AND um.sent_at <= COALESCE(p.left_at, 'infinity'::timestamptz)
+          AND um.sender_id <> $1::uuid
+          AND NOT EXISTS (
+            SELECT 1 FROM comm_read_receipts rr
+            WHERE rr.message_id = um.message_id AND rr.user_id = $1::uuid
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
           )
        ) AS "unreadCount"
      FROM comm_conversations c
      INNER JOIN comm_participants p
        ON p.conversation_id = c.conversation_id
+<<<<<<< HEAD
        AND p.user_id = CAST($1 AS UNIQUEIDENTIFIER) AND p.is_deleted = 0 AND p.is_archived = 0
      OUTER APPLY (
        SELECT TOP 1 body_html, sender_id FROM comm_messages
@@ -665,6 +743,24 @@ async function getInbox(userId, page = 1, limit = 30) {
        AND gh.user_id IS NULL
      ORDER BY c.last_message_at DESC
      OFFSET CAST($3 AS INT) ROWS FETCH NEXT CAST($2 AS INT) ROWS ONLY`,
+=======
+       AND p.user_id = $1::uuid AND p.is_deleted = FALSE AND p.is_archived = FALSE
+     LEFT JOIN LATERAL (
+       SELECT body_html, sender_id FROM comm_messages
+       WHERE conversation_id = c.conversation_id AND is_deleted = FALSE
+         AND sent_at > COALESCE(p.archived_at, '-infinity'::timestamptz)
+         AND sent_at <= COALESCE(p.left_at, 'infinity'::timestamptz)
+       ORDER BY sent_at DESC LIMIT 1
+     ) lm ON TRUE
+     LEFT JOIN auth_users su ON su.user_id = lm.sender_id
+     LEFT JOIN comm_groups cg ON cg.group_id = c.group_id
+     LEFT JOIN comm_group_hidden gh
+       ON gh.group_id = c.group_id AND gh.user_id = $1::uuid
+     WHERE c.is_deleted = FALSE
+       AND gh.user_id IS NULL
+     ORDER BY c.last_message_at DESC
+     LIMIT $2 OFFSET $3`,
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
     [userId, limit, offset]
   );
   return { conversations: rows, page, limit };
@@ -673,7 +769,11 @@ async function getInbox(userId, page = 1, limit = 30) {
 // ── Sent ──────────────────────────────────────────────────────────────────────
 
 async function getSent(userId, page = 1, limit = 30) {
+<<<<<<< HEAD
   const pool   = await getPool();
+=======
+  const pool   = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const offset = (Math.max(page, 1) - 1) * limit;
   const { rows } = await pool.query(
     `SELECT
@@ -685,8 +785,13 @@ async function getSent(userId, page = 1, limit = 30) {
        c.conv_type        AS "convType",
        c.created_by       AS "createdBy",
        c.group_id         AS "groupId",
+<<<<<<< HEAD
        (SELECT COUNT(*) FROM comm_participants cp
         WHERE cp.conversation_id = c.conversation_id AND cp.is_deleted = 0
+=======
+       (SELECT COUNT(*)::int FROM comm_participants cp
+        WHERE cp.conversation_id = c.conversation_id AND cp.is_deleted = FALSE
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
        ) AS "participantCount",
        'You' AS "latestSender",
        LEFT(lm.body_html, 120) AS preview,
@@ -694,16 +799,26 @@ async function getSent(userId, page = 1, limit = 30) {
        cg.group_name AS "groupName",
        (SELECT STRING_AGG(
            COALESCE(NULLIF(TRIM(CONCAT(u2.first_name,' ',u2.last_name)),''), u2.email),
+<<<<<<< HEAD
            ', '
          ) WITHIN GROUP (ORDER BY u2.first_name, u2.last_name)
          FROM comm_participants p2
          INNER JOIN auth_users u2 ON u2.user_id = p2.user_id
          WHERE p2.conversation_id = c.conversation_id
            AND p2.user_id <> CAST($1 AS UNIQUEIDENTIFIER) AND p2.is_deleted = 0
+=======
+           ', ' ORDER BY u2.first_name, u2.last_name
+         )
+         FROM comm_participants p2
+         INNER JOIN auth_users u2 ON u2.user_id = p2.user_id
+         WHERE p2.conversation_id = c.conversation_id
+           AND p2.user_id <> $1::uuid AND p2.is_deleted = FALSE
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
        ) AS "participantNames"
      FROM comm_conversations c
      INNER JOIN comm_participants p
        ON p.conversation_id = c.conversation_id
+<<<<<<< HEAD
        AND p.user_id = CAST($1 AS UNIQUEIDENTIFIER) AND p.is_deleted = 0
      OUTER APPLY (
        SELECT TOP 1 body_html FROM comm_messages
@@ -717,6 +832,21 @@ async function getSent(userId, page = 1, limit = 30) {
        AND gh.user_id IS NULL
      ORDER BY c.last_message_at DESC
      OFFSET CAST($3 AS INT) ROWS FETCH NEXT CAST($2 AS INT) ROWS ONLY`,
+=======
+       AND p.user_id = $1::uuid AND p.is_deleted = FALSE
+     LEFT JOIN LATERAL (
+       SELECT body_html FROM comm_messages
+       WHERE conversation_id = c.conversation_id AND is_deleted = FALSE
+       ORDER BY sent_at DESC LIMIT 1
+     ) lm ON TRUE
+     LEFT JOIN comm_groups cg ON cg.group_id = c.group_id
+     LEFT JOIN comm_group_hidden gh
+       ON gh.group_id = c.group_id AND gh.user_id = $1::uuid
+     WHERE c.is_deleted = FALSE AND c.created_by = $1::uuid
+       AND gh.user_id IS NULL
+     ORDER BY c.last_message_at DESC
+     LIMIT $2 OFFSET $3`,
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
     [userId, limit, offset]
   );
   return { conversations: rows, page, limit };
@@ -726,7 +856,11 @@ async function getSent(userId, page = 1, limit = 30) {
 
 async function getUnreadCount(userId) {
   await ensureParticipantArchiveColumn();
+<<<<<<< HEAD
   const { rows } = (await getPool()).query(
+=======
+  const { rows } = await getPool().query(
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
     `SELECT COUNT(DISTINCT m.conversation_id)::int AS count
      FROM comm_messages m
      INNER JOIN comm_participants p
@@ -748,7 +882,11 @@ async function getUnreadCount(userId) {
 
 async function getUnreadConversationIds(userId) {
   await ensureParticipantArchiveColumn();
+<<<<<<< HEAD
   const { rows } = (await getPool()).query(
+=======
+  const { rows } = await getPool().query(
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
     `SELECT DISTINCT m.conversation_id AS "conversationId"
      FROM comm_messages m
      INNER JOIN comm_participants p
@@ -772,7 +910,11 @@ async function getUnreadConversationIds(userId) {
 
 async function searchMessages(userId, query) {
   await ensureParticipantArchiveColumn();
+<<<<<<< HEAD
   const { rows } = (await getPool()).query(
+=======
+  const { rows } = await getPool().query(
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
     `SELECT DISTINCT c.conversation_id AS "conversationId", c.subject,
             c.last_message_at AS "latestAt"
      FROM comm_conversations c
@@ -795,7 +937,11 @@ async function searchMessages(userId, query) {
 async function getThread(conversationId, userId) {
   await assertConversationParticipant(conversationId, userId);
   await ensureParticipantArchiveColumn();
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
 
   const convRes = await pool.query(
     `SELECT conversation_id AS "conversationId", subject,
@@ -937,7 +1083,11 @@ if (convRes.rows[0].convType === 'group_thread') {
 // ── Mark read ─────────────────────────────────────────────────────────────────
 
 async function markMessageRead(messageId, userId) {
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows } = await pool.query(
     `SELECT m.message_id, m.conversation_id
      FROM comm_messages m
@@ -973,7 +1123,11 @@ async function markMessageRead(messageId, userId) {
 async function archiveConversation(conversationId, userId) {
   await assertConversationParticipant(conversationId, userId);
   await ensureParticipantArchiveColumn();
+<<<<<<< HEAD
   (await getPool()).query(
+=======
+  await getPool().query(
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
     `UPDATE comm_participants SET is_archived = TRUE, archived_at = NOW()
      WHERE conversation_id = $1 AND user_id = $2::uuid AND is_deleted = FALSE`,
     [conversationId, userId]
@@ -984,7 +1138,11 @@ async function archiveConversation(conversationId, userId) {
 // ── Soft delete message ───────────────────────────────────────────────────────
 
 async function softDeleteMessage(messageId, userId) {
+<<<<<<< HEAD
   const { rowCount } = (await getPool()).query(
+=======
+  const { rowCount } = await getPool().query(
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
     `UPDATE comm_messages SET is_deleted = TRUE
      WHERE message_id = $1 AND sender_id = $2::uuid AND is_deleted = FALSE`,
     [messageId, userId]
@@ -998,7 +1156,11 @@ async function softDeleteMessage(messageId, userId) {
 // ── Email digest ──────────────────────────────────────────────────────────────
 
 async function getUsersForUnreadDigest() {
+<<<<<<< HEAD
   const { rows } = (await getPool()).query(
+=======
+  const { rows } = await getPool().query(
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
     `SELECT u.user_id AS "userId", u.email,
             u.first_name AS "firstName", u.last_name AS "lastName",
             COUNT(m.message_id)::int AS "unreadCount"
@@ -1023,7 +1185,11 @@ async function getUsersForUnreadDigest() {
  * Inbox/Sent already show the threads they participate in.
  */
 async function listAllThreadsForAdmin(userId) {
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows: meRows } = await pool.query(
     `SELECT user_type AS "userType" FROM auth_users WHERE user_id = $1::uuid`,
     [userId]
@@ -1067,7 +1233,11 @@ async function listAllThreadsForAdmin(userId) {
  */
 async function disableThread(conversationId, actorUserId) {
   await assertThreadAdmin(conversationId, actorUserId);
+<<<<<<< HEAD
   (await getPool()).query(
+=======
+  await getPool().query(
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
     `UPDATE comm_conversations
      SET is_disabled = TRUE, disabled_at = NOW(), disabled_by = $2::uuid
      WHERE conversation_id = $1`,
@@ -1079,7 +1249,11 @@ async function disableThread(conversationId, actorUserId) {
 /** Re-enable a disabled thread — creator or super admin only. */
 async function enableThread(conversationId, actorUserId) {
   await assertThreadAdmin(conversationId, actorUserId);
+<<<<<<< HEAD
   (await getPool()).query(
+=======
+  await getPool().query(
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
     `UPDATE comm_conversations
      SET is_disabled = FALSE, disabled_at = NULL, disabled_by = NULL
      WHERE conversation_id = $1`,
@@ -1096,7 +1270,11 @@ async function enableThread(conversationId, actorUserId) {
  */
 async function deleteThreadForActor(conversationId, actorUserId) {
   await assertThreadAdmin(conversationId, actorUserId);
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows } = await pool.query(
     `SELECT is_disabled FROM comm_conversations WHERE conversation_id = $1`,
     [conversationId]
@@ -1122,7 +1300,11 @@ async function deleteThreadForActor(conversationId, actorUserId) {
  * thread has been disabled. Hides it from the caller's own view only.
  */
 async function hideDisabledThreadForUser(conversationId, userId) {
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
   const { rows } = await pool.query(
     `SELECT is_disabled FROM comm_conversations WHERE conversation_id = $1`,
     [conversationId]

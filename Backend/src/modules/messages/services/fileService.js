@@ -1,6 +1,10 @@
+<<<<<<< HEAD
 const { getMssqlPool: _getPool } = require('../../../config/dbHelper');
 let _pool;
 async function getPool() { if (!_pool) _pool = await _getPool(); return _pool; }
+=======
+const { getPool } = require('../../../config/db');
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
 
 /**
  * Inserts attachment metadata.
@@ -13,7 +17,11 @@ async function createAttachment({
   fileSize,
   storagePath,
 }) {
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
 
   const { rows } = await pool.query(
     `
@@ -104,7 +112,11 @@ async function getAttachmentForUser(
   attachmentId,
   userId
 ) {
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
 
   const { rows } = await pool.query(
     `
@@ -146,7 +158,11 @@ async function softDeleteStagedAttachment(
   attachmentId,
   userId
 ) {
+<<<<<<< HEAD
   const pool = await getPool();
+=======
+  const pool = getPool();
+>>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
 
   const { rowCount } = await pool.query(
     `
