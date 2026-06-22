@@ -1129,7 +1129,7 @@ async function listAllThreadsForAdmin(userId) {
       LEFT JOIN comm_conversation_hidden ch
         ON ch.conversation_id = c.conversation_id AND ch.user_id = @userId
       WHERE c.is_deleted = 0
-        AND c.conv_type IN ('bcc', 'cc')
+        AND c.conv_type = 'cc'
         AND ch.user_id IS NULL
       ORDER BY c.is_disabled ASC, c.created_at DESC
     `);

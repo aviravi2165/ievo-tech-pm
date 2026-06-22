@@ -631,8 +631,10 @@ export default function GroupManager({
 
           {(threads || [])
             .filter(t => {
-              // exclude group threads from the plain Threads list
-              if (t.convType === 'group_thread' || t.groupId) return false;
+              // Threads tab is for SHARED (cc) threads only — group chats
+              // are managed in the Groups tab, and private 1:1 (bcc) chats
+              // don't need any admin governance at all.
+              if (t.convType !== 'cc') return false;
               if (!threadSearch.trim()) return true;
               return (t.subject || '').toLowerCase().includes(threadSearch.toLowerCase());
             })

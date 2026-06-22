@@ -1,5 +1,6 @@
 'use strict';
 const messageService = require('../services/messageService');
+const socketHandler  = require('../socket/socketHandler');
 
 function handleError(res, err) {
   console.error('[messageController]', err.message);
@@ -51,6 +52,12 @@ async function search(req, res) {
 async function send(req, res) {
   try {
     const results = await messageService.sendMessage(req.user.userId, req.body);
+    // sendMessage returns one entry per conversation it created (e.g. one
+    // per BCC recipient) — broadcast each so every affected client updates
+    // live instead of only seeing the new message after a manual refresh.
+    results.forEach(r => socketHandler.broadcastNewMessage(r).catch(err =>
+      console.error('[messageController] broadcastNewMessage failed:', err.message)
+    ));
     return res.status(201).json(results);
   } catch (err) { return handleError(res, err); }
 }
@@ -69,6 +76,9 @@ async function reply(req, res) {
     const conversationId = parseInt(req.params.conversationId, 10);
     if (isNaN(conversationId)) return res.status(400).json({ error: 'Invalid conversation id' });
     const result = await messageService.replyToConversation(conversationId, req.user.userId, req.body);
+    socketHandler.broadcastNewMessage(result).catch(err =>
+      console.error('[messageController] broadcastNewMessage failed:', err.message)
+    );
     return res.status(201).json(result);
   } catch (err) { return handleError(res, err); }
 }

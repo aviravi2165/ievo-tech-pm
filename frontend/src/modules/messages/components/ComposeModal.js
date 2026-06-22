@@ -312,17 +312,22 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
           fromGroup: groupItem.label,
         }));
 
-      if (replace) {
-        setRecipients(prev => {
-          const without = prev.filter(r => r.id !== chipId);
-          const newOnes = chips.filter(c => !without.find(p => p.id === c.id));
-          return [...without, ...newOnes];
-        });
-      } else {
-        setRecipients(prev =>
-          prev.map(r => r.id === chipId ? { ...r, expanded: true, members: chips } : r)
+      setRecipients(prev => {
+        // Don't duplicate anyone who is already a standalone individual
+        // chip elsewhere in the list — they'd otherwise show up twice
+        // (once on their own, once nested under this group).
+        const standaloneIds = new Set(
+          prev.filter(r => r.id !== chipId && r.type === 'user').map(r => String(r.id))
         );
-      }
+        const dedupedChips = chips.filter(c => !standaloneIds.has(String(c.id)));
+
+        if (replace) {
+          const without = prev.filter(r => r.id !== chipId);
+          const newOnes = dedupedChips.filter(c => !without.find(p => p.id === c.id));
+          return [...without, ...newOnes];
+        }
+        return prev.map(r => r.id === chipId ? { ...r, expanded: true, members: dedupedChips } : r);
+      });
     } catch {
       setError(`Failed to expand group "${groupItem.label}". Try again.`);
     } finally {
