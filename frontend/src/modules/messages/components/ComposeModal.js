@@ -656,9 +656,21 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
                 }
                 // FIX: same manual line-break normalization as Composer.js
                 if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  document.execCommand('insertLineBreak');
-                }
+  let node = window.getSelection()?.anchorNode;
+
+  while (node) {
+    if (
+      node.nodeType === 1 &&
+      ['LI', 'UL', 'OL'].includes(node.nodeName)
+    ) {
+      return;
+    }
+    node = node.parentNode;
+  }
+
+  e.preventDefault();
+  document.execCommand('insertLineBreak');
+}
               }}
             />
           </div>

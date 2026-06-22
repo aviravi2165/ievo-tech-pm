@@ -77,10 +77,11 @@ export default function MessagingPage({ currentUser }) {
     if (tab === 'sent') fetchSent();
   }, [tab, fetchSent]);
 
-  // If the current user is a super admin, prefer the compact admin tab set.
+  // Redirect super admins away from inbox on initial load
   useEffect(() => {
-    if (isSuperAdmin && tab === 'inbox') setTab('threads');
-  }, [isSuperAdmin]);
+    if (isSuperAdmin && (tab === 'inbox' || tab === 'sent')) setTab('threads');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuperAdmin]); // intentionally omits tab — only redirect on initial auth resolution
 
   // ── Socket: refresh sent when current user sends ──────────────────────────
   useEffect(() => {

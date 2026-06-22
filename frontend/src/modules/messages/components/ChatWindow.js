@@ -81,7 +81,7 @@ export default function ChatWindow({ conversation, currentUserId, onArchive, onB
   const isGroupThread = convType === 'group_thread';
   const isSender   = String(createdBy) === String(currentUserId);
   const canReply   = conv.userCanReply ?? conv.allowReply;
-  const isGroupDisabled = isGroupThread && Boolean(conv.isGroupDisabled);
+  const isGroupDisabled = Boolean(conv.isGroupDisabled);
 
   // Find the matching group from the groups list to determine admin rights
   const matchedGroup = isGroupThread

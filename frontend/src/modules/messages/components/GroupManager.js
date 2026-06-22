@@ -46,6 +46,7 @@ export default function GroupManager({
   onComposeToGroup,
 }) {
   const [creating,       setCreating]       = useState(false);
+  const [groupSearch,    setGroupSearch]    = useState('');   // Bug 1 fix: groups search
   const [threadSearch,   setThreadSearch]   = useState('');
   const [newName,        setNewName]        = useState('');
   const [createError,    setCreateError]    = useState('');
@@ -270,6 +271,8 @@ export default function GroupManager({
     setManagingGroup(null);
     setManagingThread(null);
     setThreadActionError({});
+    setActionError({});
+    setGroupSearch('');
   }, [currentTab]);
 
   // ── Manage panel ─────────────────────────────────────────────────────────
@@ -728,7 +731,7 @@ export default function GroupManager({
       )}
       {currentTab !== 'threads' && (
       <>
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
         <h3 style={{ margin: 0 }}>Recipient Groups</h3>
         <button
           className="btn btn-primary"
@@ -737,6 +740,20 @@ export default function GroupManager({
         >
           + New Group
         </button>
+      </div>
+
+      {/* Search bar — mirrors the Threads tab search */}
+      <div style={{ marginBottom: 14 }}>
+        <input
+          placeholder="Search groups by name…"
+          value={groupSearch}
+          onChange={e => setGroupSearch(e.target.value)}
+          style={{
+            width: '100%', padding: '8px 10px', borderRadius: 8,
+            border: '1px solid var(--divider)', background: 'var(--mid)',
+            color: 'var(--light)', boxSizing: 'border-box',
+          }}
+        />
       </div>
 
       {creating && (
@@ -787,7 +804,12 @@ export default function GroupManager({
         </div>
       )}
 
-      {groups.map(g => {
+      {groups
+        .filter(g =>
+          !groupSearch.trim() ||
+          (g.groupName || '').toLowerCase().includes(groupSearch.toLowerCase())
+        )
+        .map(g => {
         const canManage = Boolean(g.isCreator || g.isSuperAdmin);
         const isDisabled = Boolean(g.isDisabled);
         const isActing = actingGroupId === g.groupId;

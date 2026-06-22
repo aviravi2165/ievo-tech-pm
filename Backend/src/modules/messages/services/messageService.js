@@ -914,14 +914,18 @@ async function getThread(conversationId, userId) {
       .input('convId', sql.Int,              conversationId)
       .input('userId', sql.UniqueIdentifier, userId)
       .query(`
-        SELECT g.is_disabled AS isDisabled
-        FROM comm_group_members gm
-        INNER JOIN comm_conversations c ON c.group_id = gm.group_id
-        INNER JOIN comm_groups        g ON g.group_id = gm.group_id
-        WHERE c.conversation_id = @convId AND gm.user_id = @userId
+        SELECT g.is_disabled AS isDisabled,
+               gm.user_id   AS memberUserId
+        FROM comm_conversations c
+        INNER JOIN comm_groups g ON g.group_id = c.group_id
+        LEFT  JOIN comm_group_members gm
+          ON gm.group_id = g.group_id AND gm.user_id = @userId
+        WHERE c.conversation_id = @convId
       `);
-    isGroupDisabled = Boolean(memberRes.recordset[0]?.isDisabled) || isThreadDisabled;
-    userCanReply    = userCanReply && Boolean(memberRes.recordset[0]) && !isGroupDisabled;
+    const mr = memberRes.recordset[0];
+    isGroupDisabled = Boolean(mr?.isDisabled) || isThreadDisabled;
+    // Only actual members (not super-admin observers) can reply
+    userCanReply    = userCanReply && Boolean(mr?.memberUserId) && !isGroupDisabled;
   } else {
     isGroupDisabled = isThreadDisabled;
     userCanReply    = userCanReply && !isThreadDisabled;
