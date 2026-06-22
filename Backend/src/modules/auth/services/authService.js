@@ -1,12 +1,8 @@
+'use strict';
+
 const bcrypt = require('bcrypt');
 const jwt    = require('jsonwebtoken');
-<<<<<<< HEAD
-const { getMssqlPool: _getPool } = require('../../../config/dbHelper');
-let _pool;
-async function getPool() { if (!_pool) _pool = await _getPool(); return _pool; }
-=======
-const { getPool } = require('../../../config/db');
->>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
+const { getPool, sql } = require('../../../config/db');
 
 // ── Login ─────────────────────────────────────────────────────────────────────
 
@@ -15,34 +11,27 @@ async function login({ username, password }) {
     const err = new Error('Username and password are required');
     err.statusCode = 400; throw err;
   }
-<<<<<<< HEAD
+
   const pool = await getPool();
-  const { rows } = await pool.query(
-  `SELECT user_id, username, password_hash, first_name, last_name,
-          email, user_type, is_active, allow_login, profile_picture, dept_id
-   FROM auth_users
-   WHERE username = $1`,
-  [username.trim().toLowerCase()]
-);
-=======
-  const pool = getPool();
-  const { rows } = await pool.query(
-    `SELECT user_id, username, password_hash, first_name, last_name,
-            email, user_type, is_active, allow_login, profile_picture, dept_id
-     FROM auth_users
-     WHERE username = $1
-     LIMIT 1`,
-    [username.trim().toLowerCase()]
-  );
->>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
-  const user = rows[0];
+  const result = await pool.request()
+    .input('username', sql.NVarChar, username.trim().toLowerCase())
+    .query(`
+      SELECT TOP 1 user_id, username, password_hash, first_name, last_name,
+                   email, user_type, is_active, allow_login, profile_picture, dept_id
+      FROM auth_users
+      WHERE username = @username
+    `);
+
+  const user = result.recordset[0];
   if (!user || !user.is_active || !user.allow_login) {
     const err = new Error('Invalid credentials'); err.statusCode = 401; throw err;
   }
+
   const valid = await bcrypt.compare(password, user.password_hash);
   if (!valid) {
     const err = new Error('Invalid credentials'); err.statusCode = 401; throw err;
   }
+
   const payload = {
     userId:      user.user_id,
     username:    user.username,
@@ -51,9 +40,11 @@ async function login({ username, password }) {
     userType:    user.user_type,
     deptId:      user.dept_id,
   };
+
   const token = jwt.sign(payload, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRES_IN || '8h',
   });
+
   return {
     token,
     user: {
@@ -69,28 +60,24 @@ async function login({ username, password }) {
   };
 }
 
-
-// UUID-based checks (send, reply, read receipts) for every user.
+// ── Get current user ──────────────────────────────────────────────────────────
 
 async function getMe(userId) {
-<<<<<<< HEAD
   const pool = await getPool();
-=======
-  const pool = getPool();
->>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
-  const { rows } = await pool.query(
-    `SELECT user_id, username, first_name, last_name, email,
-            user_type, profile_picture, dept_id
-     FROM auth_users
-     WHERE user_id = $1 AND is_active = TRUE`,
-    [userId]
-  );
-  if (!rows[0]) {
+  const result = await pool.request()
+    .input('userId', sql.UniqueIdentifier, userId)
+    .query(`
+      SELECT user_id, username, first_name, last_name, email,
+             user_type, profile_picture, dept_id
+      FROM auth_users
+      WHERE user_id = @userId AND is_active = 1
+    `);
+
+  const u = result.recordset[0];
+  if (!u) {
     const err = new Error('User not found'); err.statusCode = 404; throw err;
   }
-  const u = rows[0];
-  // Return camelCase so AuthContext.user shape is identical whether
-  // the user just logged in OR reloaded the page.
+
   return {
     userId:         u.user_id,
     username:       u.username,
@@ -104,101 +91,88 @@ async function getMe(userId) {
 }
 
 // ── Search users for RecipientPicker ─────────────────────────────────────────
+// Super-admin accounts (user_type = 'admin') are excluded — they manage
+// all communication via the governance panel and are never valid recipients.
 
 async function searchUsers(q, limit = 10, excludeUserId = null) {
-<<<<<<< HEAD
   const pool = await getPool();
-=======
-  const pool = getPool();
->>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
-  if (!q) {
-    const { rows } = await pool.query(
-      `SELECT user_id AS "userId", first_name AS "firstName", last_name AS "lastName",
-              email, username, user_type AS "userType"
-       FROM auth_users
-       WHERE is_active = TRUE
-         AND user_type <> 'admin'
-         AND ($1::uuid IS NULL OR user_id != $1::uuid)
-       ORDER BY first_name, last_name
-       LIMIT $2`,
-      [excludeUserId || null, limit]
-    );
-    return rows;
-  }
-  const search = `%${q.toLowerCase()}%`;
-  const { rows } = await pool.query(
-    `SELECT user_id AS "userId", first_name AS "firstName", last_name AS "lastName",
-            email, username, user_type AS "userType"
-     FROM auth_users
-     WHERE is_active = TRUE
-       AND user_type <> 'admin'
-       AND ($1::uuid IS NULL OR user_id != $1::uuid)
-       AND (
-         LOWER(first_name) LIKE $2
-         OR LOWER(last_name)  LIKE $2
-         OR LOWER(username)   LIKE $2
-         OR LOWER(email)      LIKE $2
-         OR LOWER(CONCAT(first_name, ' ', last_name)) LIKE $2
-       )
-     ORDER BY first_name, last_name
-     LIMIT $3`,
-    [excludeUserId || null, search, limit]
-  );
-  return rows;
-}
-async function changePassword(
-  userId,
-  currentPassword,
-  newPassword
-) {
-<<<<<<< HEAD
-  const pool = await getPool();
-=======
-  const pool = getPool();
->>>>>>> 2a58f874468df0c80c7e06e35da0681865f70648
+  const req  = pool.request();
+  req.input('limit', sql.Int, Math.min(limit, 50));
 
-  const { rows } = await pool.query(
-    `
-    SELECT password_hash
+  let excludeClause = '';
+  if (excludeUserId) {
+    req.input('excludeUserId', sql.UniqueIdentifier, excludeUserId);
+    excludeClause = 'AND user_id <> @excludeUserId';
+  }
+
+  if (!q || !q.trim()) {
+    const result = await req.query(`
+      SELECT TOP (@limit)
+        user_id    AS userId,
+        first_name AS firstName,
+        last_name  AS lastName,
+        email,
+        username,
+        user_type  AS userType
+      FROM auth_users
+      WHERE is_active = 1
+        AND user_type <> 'admin'
+        ${excludeClause}
+      ORDER BY first_name, last_name
+    `);
+    return result.recordset;
+  }
+
+  req.input('search', sql.NVarChar, `%${q.trim()}%`);
+  const result = await req.query(`
+    SELECT TOP (@limit)
+      user_id    AS userId,
+      first_name AS firstName,
+      last_name  AS lastName,
+      email,
+      username,
+      user_type  AS userType
     FROM auth_users
-    WHERE user_id = $1
-    `,
-    [userId]
-  );
+    WHERE is_active = 1
+      AND user_type <> 'admin'
+      ${excludeClause}
+      AND (
+        first_name                     LIKE @search
+        OR last_name                   LIKE @search
+        OR username                    LIKE @search
+        OR email                       LIKE @search
+        OR CONCAT(first_name, ' ', last_name) LIKE @search
+      )
+    ORDER BY first_name, last_name
+  `);
+  return result.recordset;
+}
 
-  if (!rows.length) {
-    const err = new Error('User not found');
-    err.statusCode = 404;
-    throw err;
+// ── Change password ───────────────────────────────────────────────────────────
+
+async function changePassword(userId, currentPassword, newPassword) {
+  const pool = await getPool();
+
+  const result = await pool.request()
+    .input('userId', sql.UniqueIdentifier, userId)
+    .query(`SELECT password_hash FROM auth_users WHERE user_id = @userId`);
+
+  if (!result.recordset.length) {
+    const err = new Error('User not found'); err.statusCode = 404; throw err;
   }
 
-  const user = rows[0];
-
-  const valid = await bcrypt.compare(
-    currentPassword,
-    user.password_hash
-  );
-
+  const valid = await bcrypt.compare(currentPassword, result.recordset[0].password_hash);
   if (!valid) {
-    const err = new Error('Current password is incorrect');
-    err.statusCode = 400;
-    throw err;
+    const err = new Error('Current password is incorrect'); err.statusCode = 400; throw err;
   }
 
-  const newHash = await bcrypt.hash(
-    newPassword,
-    10
-  );
-
-  await pool.query(
-    `
-    UPDATE auth_users
-    SET password_hash = $1
-    WHERE user_id = $2
-    `,
-    [newHash, userId]
-  );
+  const newHash = await bcrypt.hash(newPassword, 10);
+  await pool.request()
+    .input('newHash', sql.NVarChar, newHash)
+    .input('userId',  sql.UniqueIdentifier, userId)
+    .query(`UPDATE auth_users SET password_hash = @newHash WHERE user_id = @userId`);
 
   return true;
 }
-module.exports = { login, getMe, searchUsers,changePassword, };
+
+module.exports = { login, getMe, searchUsers, changePassword };
