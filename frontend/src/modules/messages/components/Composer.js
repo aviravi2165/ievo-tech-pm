@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { fileApi } from '../api/fileApi';
-import { ALLOWED_MIME_TYPES, ALLOWED_ACCEPT, MAX_FILE_SIZE_BYTES } from '../api/allowedFileTypes';
+import { MAX_FILE_SIZE_BYTES } from '../api/allowedFileTypes';
 
 /**
  * Composer
@@ -110,10 +110,6 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
     e.target.value = '';
 
     for (const file of files) {
-      if (!ALLOWED_MIME_TYPES.has(file.type)) {
-        setError(`File type not allowed: ${file.name}`);
-        continue;
-      }
       if (file.size > MAX_FILE_SIZE_BYTES) {
         setError(`File exceeds 25 MB limit: ${file.name}`);
         continue;
@@ -216,7 +212,6 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
           ref={fileInputRef}
           type="file"
           multiple
-          accept={ALLOWED_ACCEPT}
           style={{ display: 'none' }}
           onChange={handleFileSelect}
         />
@@ -329,7 +324,7 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
 
       <div className="composer-footer">
         <span style={{ fontSize: 11, color: 'var(--muted)' }}>
-          Ctrl+Enter to send &nbsp;·&nbsp; Max 25 MB per file
+          Ctrl+Enter to send &nbsp;·&nbsp; Max 100 MB per file
         </span>
         <button className="btn-send" onClick={handleSend} disabled={disabled || sending}>
           {sending

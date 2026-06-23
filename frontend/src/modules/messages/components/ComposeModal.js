@@ -4,7 +4,7 @@ import { groupApi }   from '../api/groupApi';
 import { fileApi }    from '../api/fileApi';
 import { useAuth }    from '../../auth/AuthContext';
 import api            from '../api/axiosInstance';
-import { ALLOWED_MIME_TYPES, ALLOWED_ACCEPT, MAX_FILE_SIZE_BYTES } from '../api/allowedFileTypes';
+import { MAX_FILE_SIZE_BYTES } from '../api/allowedFileTypes';
 
 // ── User-search hook (debounced 240 ms) ──────────────────────────────────────
 function useUserSearch(query) {
@@ -341,12 +341,8 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
     const files = Array.from(e.target.files || []);
     e.target.value = '';
     for (const file of files) {
-      if (!ALLOWED_MIME_TYPES.has(file.type)) {
-        setError(`File type not allowed: ${file.name}`);
-        continue;
-      }
       if (file.size > MAX_FILE_SIZE_BYTES) {
-        setError(`File too large (max 25 MB): ${file.name}`);
+        setError(`File too large (max 100 MB): ${file.name}`);
         continue;
       }
       setError('');
@@ -615,7 +611,6 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
                 </svg>
               </button>
               <input ref={fileRef} type="file" multiple style={{ display: 'none' }}
-                accept={ALLOWED_ACCEPT}
                 onChange={handleFile}/>
             </div>
 
