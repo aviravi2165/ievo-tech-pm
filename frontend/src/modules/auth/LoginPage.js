@@ -37,7 +37,7 @@ export default function LoginPage() {
       <div style={styles.brand}>
         <div style={styles.brandInner}>
           <div style={styles.logo}>I.EVO</div>
-          <div style={styles.logoSub}>ERP Platform</div>
+          <div style={styles.logoSub}>Unified Platform</div>
           <p style={styles.tagline}>Design | Demonstrate | Deliver</p>
           <ul style={styles.featureList}>
             {['Communication & Messaging', 'Project Management', 'Production Scheduling', 'HR & Workforce'].map((f) => (
@@ -63,7 +63,7 @@ export default function LoginPage() {
           </div>
 
           <h1 style={styles.heading}>Welcome back</h1>
-          <p style={styles.subheading}>Sign in to your ERP account</p>
+          <p style={styles.subheading}>Sign in to your account</p>
 
           <form onSubmit={handleSubmit} noValidate>
             <div style={styles.field}>

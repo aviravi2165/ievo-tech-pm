@@ -23,13 +23,13 @@ function useToast() {
 }
 
 export default function MessagingPage({ currentUser }) {
-  const { conversations, loading, error: inboxError, refetch, archiveConversation, clearUnreadDot } = useInbox();
+   const [activeConv,  setActiveConv]  = useState(null);
   const { count: unreadCount, decrement } = useUnreadCount();
   const { groups, loading: groupsLoading, createGroup, disableGroup, enableGroup, deleteGroup, hideGroup } = useGroups();
   const { socket } = useSocket();
   const { user }   = useAuth();
-
-  const [activeConv,  setActiveConv]  = useState(null);
+const { conversations, loading, error: inboxError, refetch, archiveConversation, clearUnreadDot } = useInbox(activeConv?.conversationId);
+ 
   const [tab,         setTab]         = useState('inbox');
   const [sentConvs,   setSentConvs]   = useState([]);
   const [sentLoading, setSentLoading] = useState(false);

@@ -998,19 +998,50 @@ async function getThread(conversationId, userId) {
 
 async function markMessageRead(messageId, userId) {
   const pool = await getPool();
-  const res  = await pool.request()
+
+  // FIX Bug 2: block sender from creating a receipt on their own message.
+  // Previously no check here — the DB write would succeed, the receipt row
+  // would be filtered out in getThread's FOR JSON subquery (WHERE rr.user_id
+  // <> m.sender_id), but the row would still exist as junk data and could
+  // surface if that filter were ever missed.
+  //
+  // FIX Bug 6: block super admin from writing receipts on conversations they
+  // aren't a real participant of. assertConversationParticipant allows super
+  // admin through unconditionally — but a receipt row from a super admin
+  // user_id appears as a named "read by" entry for all other participants of
+  // that thread (a private BCC between two colleagues would show "read by
+  // Admin" which is both wrong and a privacy violation).
+  // We use the strict participant check (no super-admin bypass) here.
+
+  const accessRes = await pool.request()
     .input('messageId', sql.Int,              messageId)
     .input('userId',    sql.UniqueIdentifier, userId)
     .query(`
-      SELECT m.message_id, m.conversation_id
+      SELECT m.message_id, m.conversation_id, m.sender_id
       FROM comm_messages m
       INNER JOIN comm_participants p
         ON p.conversation_id = m.conversation_id
-        AND p.user_id = @userId AND p.is_deleted = 0
+       AND p.user_id  = @userId
+       AND p.is_deleted = 0
       WHERE m.message_id = @messageId AND m.is_deleted = 0
     `);
-  if (!res.recordset[0]) {
+
+  if (!accessRes.recordset[0]) {
     const e = new Error('Message not found or access denied'); e.statusCode = 404; throw e;
+  }
+
+  // Silently succeed if sender tries to mark their own message — no error
+  // (client shouldn't do this, but don't break UX if it does), just no DB write.
+  if (String(accessRes.recordset[0].sender_id) === String(userId)) {
+    const nameRes = await pool.request()
+      .input('userId', sql.UniqueIdentifier, userId)
+      .query(`SELECT COALESCE(NULLIF(TRIM(CONCAT(first_name,' ',last_name)),''), email) AS name FROM auth_users WHERE user_id = @userId`);
+    return {
+      messageId, userId,
+      conversationId: accessRes.recordset[0].conversation_id,
+      readAt:   new Date().toISOString(),
+      userName: nameRes.recordset[0]?.name || 'Someone',
+    };
   }
 
   await pool.request()
@@ -1030,7 +1061,7 @@ async function markMessageRead(messageId, userId) {
 
   return {
     messageId, userId,
-    conversationId: res.recordset[0].conversation_id,
+    conversationId: accessRes.recordset[0].conversation_id,
     readAt:         new Date().toISOString(),
     userName:       nameRes.recordset[0]?.name || 'Someone',
   };

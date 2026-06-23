@@ -77,46 +77,51 @@ export function useThread(conversationId) {
 
   /**
    * Mark a single message read.
-   * - Writes to DB via REST
-   * - REST response includes userName (from messageService.markMessageRead)
-   * - Emits MARK_READ socket event with userName so co-viewers update live
+   * - Writes to DB via REST (strict participant check — no super-admin bypass)
+   * - Server now calls broadcastMarkRead() after DB write, so co-viewers
+   *   receive live MARK_READ events via the server broadcast. The client
+   *   no longer emits MARK_READ itself — doing so after the server already
+   *   broadcast it would cause co-viewers to receive the event twice and
+   *   briefly show duplicate tick animations.
    * - Deduped via markedReadRef so repeated calls are no-ops
    */
   const markRead = useCallback(async (messageId) => {
     if (markedReadRef.current.has(messageId)) return;
     markedReadRef.current.add(messageId);
     try {
-      const result = await messageApi.markRead(messageId);
-      if (socket) {
-        socket.emit('MARK_READ', {
-          messageId,
-          conversationId,
-          userName: result.userName,
-          readAt:   result.readAt,
-        });
-      }
+      await messageApi.markRead(messageId);
+      // No client-side socket.emit('MARK_READ') — server handles broadcast.
     } catch (_) {
       // Remove from ref on failure so it can be retried
       markedReadRef.current.delete(messageId);
     }
-  }, [socket, conversationId]);
+  }, []);
 
   /**
-   * Mark ALL unread messages in this thread read.
-   * Called once by ChatWindow when the conversation opens.
-   * Uses markedReadRef to ensure no message is marked twice even if
-   * this function is called multiple times (e.g. on message list refresh).
+   * FIX Bug 3: markAllRead previously called setMessages() to access the
+   * latest messages snapshot, then called markRead() as a side effect
+   * inside the updater function. Side effects inside setState updaters are
+   * unreliable (React may call them multiple times in concurrent/strict mode).
+   * Fixed by reading the ref-attached snapshot directly.
+   *
+   * Also: ChatWindow was triggering this on `messages.length` change —
+   * meaning every new incoming message caused a full re-scan of all messages.
+   * The markedReadRef deduplication prevents double DB writes, but the
+   * iteration still happened. This function now uses the messages ref so
+   * ChatWindow can call it once on conversation open without depending on
+   * messages in its effect dependency array.
    */
+  const messagesRef = useRef([]);
+  messagesRef.current = messages;
+
   const markAllRead = useCallback((currentUserId) => {
-    // Read messages snapshot at call time — don't put messages in dep array
-    setMessages(currentMessages => {
-      const unread = currentMessages.filter(
-        m => String(m.senderId) !== String(currentUserId) &&
-          !m.readReceipts?.find(r => String(r.userId) === String(currentUserId))
-      );
-      unread.forEach(m => markRead(m.messageId));
-      return currentMessages; // no state change, just side effects
-    });
+    const currentMessages = messagesRef.current;
+    const unread = currentMessages.filter(
+      m => String(m.senderId) !== String(currentUserId) &&
+        !m.readReceipts?.find(r => String(r.userId) === String(currentUserId)) &&
+        !markedReadRef.current.has(m.messageId)
+    );
+    unread.forEach(m => markRead(m.messageId));
   }, [markRead]);
 
   const sendReply = useCallback(async (payload) => {

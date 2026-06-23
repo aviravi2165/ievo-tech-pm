@@ -144,13 +144,26 @@ useEffect(() => {
   }
 }, [messages.length, currentUserId]);
   // Mark all unread once on open
+  // FIX Bug 3 (part 2): removed `messages.length` from the dependency array.
+  // Previously this effect re-ran on every single new message arrival (because
+  // messages.length changed), which caused markAllRead to iterate all messages
+  // again on each arrival. markedReadRef deduplication prevented double DB
+  // writes but the full scan still fired. Since markAllRead now uses a ref
+  // snapshot internally (not state) and pre-checks markedReadRef before
+  // iterating, calling it once per conversation open (when conversationId
+  // changes or currentUserId is first set) is enough — newly arriving
+  // messages are handled individually by the NEW_MESSAGE socket handler which
+  // calls fetchThread(), and the fresh messages from that refetch will be
+  // picked up on the next markAllRead call when the conversation re-opens.
   useEffect(() => {
-    if (!messages.length || !currentUserId) return;
+    if (!currentUserId) return;
     const cid = conversation?.conversationId;
+    if (!cid) return;
     if (markedAllRef.current === cid) return;
     markedAllRef.current = cid;
     markAllRead(currentUserId);
-  }, [conversation?.conversationId, messages.length, currentUserId, markAllRead]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversation?.conversationId, currentUserId]);
 
   const lastSentByMeId = useMemo(() => {
     const mine = messages.filter(m => String(m.senderId) === String(currentUserId));

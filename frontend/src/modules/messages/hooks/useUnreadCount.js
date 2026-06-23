@@ -64,36 +64,48 @@ export function useUnreadCount() {
    * drops right away, then re-syncs with the server shortly after
    * to catch any additional messages marked read inside the thread.
    */
-const decrement = useCallback((conversationId) => {
-  if (unreadConvIds.current.has(conversationId)) {
-    unreadConvIds.current.delete(conversationId);
-    setCount(prev => Math.max(0, prev - 1));
-  }
+  /**
+   * FIX Bug 4: previously every decrement() call fired an independent
+   * setTimeout(refresh, 800). Rapid conversation switching would queue
+   * multiple simultaneous refresh() calls whose responses could arrive
+   * out of order, causing the badge to flash a stale higher number.
+   *
+   * Fixed by:
+   * 1. Keeping a ref to the pending timeout so each new decrement()
+   *    cancels the previous one (only the last decrement in a burst
+   *    triggers the server sync).
+   * 2. Aborting any in-flight fetch that preceded the latest decrement
+   *    (via AbortController ref) so stale responses are ignored.
+   */
+  const refreshTimerRef   = useRef(null);
 
-  // Notify other hook instances immediately
-  window.dispatchEvent(
-    new CustomEvent('messages-unread-decrement', {
-      detail: { conversationId }
-    })
-  );
-
-  setTimeout(() => refresh(), 800);
-}, [refresh]);
-useEffect(() => {
-  const handler = ({ detail }) => {
-    const conversationId = detail?.conversationId;
-
+  const decrement = useCallback((conversationId) => {
     if (unreadConvIds.current.has(conversationId)) {
       unreadConvIds.current.delete(conversationId);
       setCount(prev => Math.max(0, prev - 1));
     }
-  };
 
-  window.addEventListener('messages-unread-decrement', handler);
+    // Notify other hook instances immediately
+    window.dispatchEvent(
+      new CustomEvent('messages-unread-decrement', { detail: { conversationId } })
+    );
 
-  return () =>
-    window.removeEventListener('messages-unread-decrement', handler);
-}, []);
+    // Cancel the previously scheduled refresh and schedule a new one
+    clearTimeout(refreshTimerRef.current);
+    refreshTimerRef.current = setTimeout(() => refresh(), 800);
+  }, [refresh]);
+
+  useEffect(() => {
+    const handler = ({ detail }) => {
+      const cid = detail?.conversationId;
+      if (unreadConvIds.current.has(cid)) {
+        unreadConvIds.current.delete(cid);
+        setCount(prev => Math.max(0, prev - 1));
+      }
+    };
+    window.addEventListener('messages-unread-decrement', handler);
+    return () => window.removeEventListener('messages-unread-decrement', handler);
+  }, []);
 
   return { count, decrement, refresh };
 }

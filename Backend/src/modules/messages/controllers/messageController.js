@@ -125,6 +125,18 @@ async function markRead(req, res) {
     const messageId = parseInt(req.params.messageId, 10);
     if (isNaN(messageId)) return res.status(400).json({ error: 'Invalid message id' });
     const result = await messageService.markMessageRead(messageId, req.user.userId);
+    // FIX Bug 1: broadcast to co-viewers in the same conversation room so
+    // their read-receipt ticks update live without a full thread refetch.
+    // Previously broadcastMarkRead existed but was never called here —
+    // only the client's own socket.emit('MARK_READ') was firing, which
+    // meant other open viewers (CC/group threads) never saw live ticks.
+    socketHandler.broadcastMarkRead({
+      conversationId: result.conversationId,
+      messageId:      result.messageId,
+      userId:         result.userId,
+      readAt:         result.readAt,
+      userName:       result.userName,
+    });
     return res.json(result);
   } catch (err) { return handleError(res, err); }
 }
