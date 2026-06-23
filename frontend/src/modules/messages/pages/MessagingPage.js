@@ -24,7 +24,7 @@ function useToast() {
 
 export default function MessagingPage({ currentUser }) {
    const [activeConv,  setActiveConv]  = useState(null);
-  const { count: unreadCount, decrement } = useUnreadCount();
+  const { count: unreadCount, decrement, activeConvIdRef } = useUnreadCount();
   const { groups, loading: groupsLoading, createGroup, disableGroup, enableGroup, deleteGroup, hideGroup } = useGroups();
   const { socket } = useSocket();
   const { user }   = useAuth();
@@ -110,10 +110,11 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
   // ── Select conversation ───────────────────────────────────────────────────
   const handleSelectConv = (conv) => {
     setActiveConv(conv);
-    if (conv.unreadCount > 0) {
-      decrement(conv.conversationId);
-      clearUnreadDot(conv.conversationId);
-    }
+    activeConvIdRef.current = conv.conversationId;
+    // Always clear dot + decrement — don't rely on stale unreadCount from inbox row
+    // decrement() is a no-op internally if the conv isn't in the unread set
+    decrement(conv.conversationId);
+    clearUnreadDot(conv.conversationId);
   };
 
   // ── Open group conversation from Groups tab (existing thread found) ───────
@@ -264,7 +265,7 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
               conversation={activeConv}
               currentUserId={currentUser?.userId}
               onArchive={handleArchive}
-              onBack={() => setActiveConv(null)}
+              onBack={() => { setActiveConv(null); activeConvIdRef.current = null; }}
               toast={toast}
               groups={groups}
             />

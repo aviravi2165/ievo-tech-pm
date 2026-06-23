@@ -45,7 +45,11 @@ export function useThread(conversationId) {
 
     const onNew = (payload) => {
       if (payload.conversationId !== conversationId) return;
-      fetchThread();
+      fetchThread().then(() => {
+        // After fetch, mark the new message read immediately since user is already in chat
+        // markAllRead will handle deduplication via markedReadRef
+        if (onNewMessageRef.current) onNewMessageRef.current(payload);
+      });
     };
 
     // Live read receipt — update the specific message in place
@@ -113,6 +117,8 @@ export function useThread(conversationId) {
    */
   const messagesRef = useRef([]);
   messagesRef.current = messages;
+  // Callback ref so ChatWindow can react to new messages (highlight, mark-read)
+  const onNewMessageRef = useRef(null);
 
   const markAllRead = useCallback((currentUserId) => {
     const currentMessages = messagesRef.current;
@@ -134,5 +140,6 @@ export function useThread(conversationId) {
     messages, conversation, loading, error,
     markRead, markAllRead, sendReply,
     refetch: fetchThread,
+    onNewMessageRef,
   };
 }

@@ -9,7 +9,9 @@ export function useUnreadCount() {
   const [count, setCount] = useState(0);
 
   // Source of truth — which conv IDs are currently unread for this session
-  const unreadConvIds = useRef(new Set());
+  const unreadConvIds    = useRef(new Set());
+  // MessagingPage sets this so we don't increment for the currently open conversation
+  const activeConvIdRef  = useRef(null);
 
   /**
    * Rebuild unreadConvIds ref and count from the server.
@@ -46,6 +48,11 @@ export function useUnreadCount() {
       if (isMine) return;
 
       const convId = payload.conversationId;
+
+      // Bug 4 fix: don't increment if user is currently reading this conversation
+      const isOpen = activeConvIdRef.current != null &&
+        String(activeConvIdRef.current) === String(convId);
+      if (isOpen) return;
 
       // Only bump if this conv wasn't already in our unread set
       if (!unreadConvIds.current.has(convId)) {
@@ -92,7 +99,7 @@ export function useUnreadCount() {
 
     // Cancel the previously scheduled refresh and schedule a new one
     clearTimeout(refreshTimerRef.current);
-    refreshTimerRef.current = setTimeout(() => refresh(), 800);
+    refreshTimerRef.current = setTimeout(() => refresh(), 2000);
   }, [refresh]);
 
   useEffect(() => {
@@ -107,5 +114,5 @@ export function useUnreadCount() {
     return () => window.removeEventListener('messages-unread-decrement', handler);
   }, []);
 
-  return { count, decrement, refresh };
+  return { count, decrement, refresh, activeConvIdRef };
 }

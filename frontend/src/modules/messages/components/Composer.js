@@ -1,13 +1,6 @@
 import { useState, useRef } from 'react';
 import { fileApi } from '../api/fileApi';
-
-const ALLOWED_MIME = [
-  'application/pdf',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'image/jpeg', 'image/png', 'text/plain',
-];
-const MAX_SIZE = 25 * 1024 * 1024; // 25 MB
+import { ALLOWED_MIME_TYPES, ALLOWED_ACCEPT, MAX_FILE_SIZE_BYTES } from '../api/allowedFileTypes';
 
 /**
  * Composer
@@ -22,12 +15,12 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
   const editorRef = useRef(null);
   const composerRef = useRef(null);
   const fileInputRef = useRef(null);
-  const [attachments, setAttachments] = useState([]); // { id, name, size, uploading, progress }
+  const [attachments, setAttachments] = useState([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
 
   // ── @mention state ──────────────────────────────────────────────────────
-  const [mentionQuery, setMentionQuery]   = useState(null); // null = closed
+  const [mentionQuery, setMentionQuery]   = useState(null);
   const [mentionActive, setMentionActive] = useState(0);
   const [mentionPos, setMentionPos]       = useState({ anchor: 'top', value: 0, left: 0 });
 
@@ -50,7 +43,6 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
         mentionName(p).toLowerCase().includes(mentionQuery.toLowerCase())
       ).slice(0, 8);
 
-  // Detect "@query" immediately before the caret and open/update/close the dropdown
   const DROPDOWN_HEIGHT = 200;
   const DROPDOWN_WIDTH  = 220;
 
@@ -74,9 +66,6 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
     const spaceBelow = window.innerHeight - rect.bottom;
     const left = Math.min(rect.left, window.innerWidth - DROPDOWN_WIDTH - 8);
 
-    // Prefer opening right below the caret line (where the person is
-    // actually looking). Only flip above if there truly isn't room below,
-    // so it never has to fight with the toolbar or footer for space.
     if (spaceBelow >= DROPDOWN_HEIGHT + 8) {
       setMentionPos({ anchor: 'top', value: rect.bottom + 6, left });
     } else {
@@ -84,7 +73,6 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
     }
   };
 
-  // Replace the "@query" text immediately before the caret with the chosen mention
   const insertMention = (person) => {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return;
@@ -101,7 +89,7 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
     const newText = `${text.slice(0, atIndex)}@${name} ${text.slice(caret)}`;
     node.textContent = newText;
 
-    const newCaretPos = atIndex + name.length + 2; // "@" + name + " "
+    const newCaretPos = atIndex + name.length + 2;
     const newRange = document.createRange();
     newRange.setStart(node, newCaretPos);
     newRange.collapse(true);
@@ -122,11 +110,11 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
     e.target.value = '';
 
     for (const file of files) {
-      if (!ALLOWED_MIME.includes(file.type)) {
+      if (!ALLOWED_MIME_TYPES.has(file.type)) {
         setError(`File type not allowed: ${file.name}`);
         continue;
       }
-      if (file.size > MAX_SIZE) {
+      if (file.size > MAX_FILE_SIZE_BYTES) {
         setError(`File exceeds 25 MB limit: ${file.name}`);
         continue;
       }
@@ -219,11 +207,7 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
           </svg>
         </button>
         <div className="fmt-sep" />
-        <button
-          className="fmt-btn"
-          title="Attach file"
-          onClick={() => fileInputRef.current?.click()}
-        >
+        <button className="fmt-btn" title="Attach file" onClick={() => fileInputRef.current?.click()}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
           </svg>
@@ -232,7 +216,7 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".pdf,.docx,.xlsx,.jpg,.jpeg,.png,.txt"
+          accept={ALLOWED_ACCEPT}
           style={{ display: 'none' }}
           onChange={handleFileSelect}
         />
@@ -275,50 +259,34 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
             handleSend();
             return;
           }
-          // FIX (manual formatting not sending as typed): plain Enter in a
-          // contentEditable div normally splits into a new <div>, which
-          // collapses visually/semantically compared to pasted HTML that
-          // already contains <br>/<p> tags. Force a real <br> insertion so
-          // manually typed line breaks are preserved the same way pasted
-          // content is.
           if (e.key === 'Enter' && !e.shiftKey) {
-  const sel = window.getSelection();
-
-  let node = sel?.anchorNode;
-
-  while (node) {
-    if (
-      node.nodeType === 1 &&
-      ['LI', 'UL', 'OL'].includes(node.nodeName)
-    ) {
-      return; // allow native list behavior
-    }
-    node = node.parentNode;
-  }
-
-  e.preventDefault();
-  document.execCommand('insertLineBreak');
-}
+            const sel = window.getSelection();
+            let node = sel?.anchorNode;
+            while (node) {
+              if (node.nodeType === 1 && ['LI', 'UL', 'OL'].includes(node.nodeName)) return;
+              node = node.parentNode;
+            }
+            e.preventDefault();
+            document.execCommand('insertLineBreak');
+          }
         }}
       />
 
       {/* @mention dropdown */}
       {mentionQuery !== null && mentionMatches.length > 0 && (
-        <div
-          style={{
-            position: 'fixed',
-            [mentionPos.anchor]: mentionPos.value,
-            left: mentionPos.left,
-            zIndex: 1000,
-            background: '#ffffff',
-            border: '1px solid #d1d5db',
-            borderRadius: 8,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
-            width: DROPDOWN_WIDTH,
-            maxHeight: DROPDOWN_HEIGHT,
-            overflowY: 'auto',
-          }}
-        >
+        <div style={{
+          position: 'fixed',
+          [mentionPos.anchor]: mentionPos.value,
+          left: mentionPos.left,
+          zIndex: 1000,
+          background: '#ffffff',
+          border: '1px solid #d1d5db',
+          borderRadius: 8,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+          width: DROPDOWN_WIDTH,
+          maxHeight: DROPDOWN_HEIGHT,
+          overflowY: 'auto',
+        }}>
           {mentionMatches.map((p, i) => (
             <div
               key={p.userId}

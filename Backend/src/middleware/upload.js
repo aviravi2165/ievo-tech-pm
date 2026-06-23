@@ -19,6 +19,21 @@ const ALLOWED_MIME_TYPES = new Set([
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   'application/zip',
   'application/x-zip-compressed',
+  'image/svg+xml',           // SVG
+'image/tiff',              // TIFF
+'application/json',        // JSON
+'application/xml',         // XML
+'text/xml',
+'text/html',               // HTML
+'video/mp4',               // MP4 video
+'video/quicktime',         // MOV
+'audio/mpeg',              // MP3
+'audio/wav',               // WAV
+'application/x-rar-compressed', // RAR
+'application/x-7z-compressed',  // 7zip
+'application/vnd.oasis.opendocument.text',         // ODT (LibreOffice)
+'application/vnd.oasis.opendocument.spreadsheet',  // ODS
+'application/octet-stream', // generic binary (catches some files browsers misidentify)
 ]);
 
 const STORAGE_ROOT =

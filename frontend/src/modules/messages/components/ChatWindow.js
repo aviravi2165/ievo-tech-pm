@@ -13,7 +13,7 @@ const CONV_TYPE_LABEL = {
 };
 
 export default function ChatWindow({ conversation, currentUserId, onArchive, onBack, toast, groups = [] }) {
-  const { messages, conversation: threadConv, loading, error, markAllRead, sendReply, refetch } =
+  const { messages, conversation: threadConv, loading, error, markAllRead, sendReply, refetch, onNewMessageRef } =
     useThread(conversation?.conversationId);
 
   const [replyingTo,       setReplyingTo]       = useState(null);
@@ -21,6 +21,7 @@ export default function ChatWindow({ conversation, currentUserId, onArchive, onB
   const [removing,         setRemoving]          = useState(null); // userId being removed
   const [removeError,      setRemoveError]       = useState('');
   const [highlightedId,    setHighlightedId]     = useState(null);
+  const [newMsgFlash,      setNewMsgFlash]        = useState(false); // pulse when new msg arrives
   const [addingMember,     setAddingMember]      = useState(false);
   const [memberSearch,     setMemberSearch]      = useState('');
   const [searchResults,    setSearchResults]     = useState([]);
@@ -143,6 +144,24 @@ useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }
 }, [messages.length, currentUserId]);
+  // Wire: when a new message arrives while chat is open, mark it read + flash
+  useEffect(() => {
+    if (!onNewMessageRef) return;
+    onNewMessageRef.current = (payload) => {
+      // Mark the new messages read immediately
+      if (currentUserId) markAllRead(currentUserId);
+      // Flash the chat window to grab attention if sender != me
+      const isMine = payload.senderUserId &&
+        String(payload.senderUserId) === String(currentUserId);
+      if (!isMine) {
+        setNewMsgFlash(true);
+        setTimeout(() => setNewMsgFlash(false), 1200);
+        toast?.(`New message from ${payload.senderName || 'someone'}`, 'info');
+      }
+    };
+    return () => { if (onNewMessageRef) onNewMessageRef.current = null; };
+  }, [onNewMessageRef, currentUserId, markAllRead, toast]);
+
   // Mark all unread once on open
   // FIX Bug 3 (part 2): removed `messages.length` from the dependency array.
   // Previously this effect re-ran on every single new message arrival (because
@@ -155,15 +174,22 @@ useEffect(() => {
   // messages are handled individually by the NEW_MESSAGE socket handler which
   // calls fetchThread(), and the fresh messages from that refetch will be
   // picked up on the next markAllRead call when the conversation re-opens.
+  // Reset markedAllRef whenever conversation changes so re-opening same conv works
+  useEffect(() => {
+    markedAllRef.current = null;
+  }, [conversation?.conversationId]);
+
+  // Mark all unread on open — fires once per conversation open
   useEffect(() => {
     if (!currentUserId) return;
     const cid = conversation?.conversationId;
     if (!cid) return;
     if (markedAllRef.current === cid) return;
     markedAllRef.current = cid;
-    markAllRead(currentUserId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversation?.conversationId, currentUserId]);
+    // Small delay to let messages render first
+    const t = setTimeout(() => markAllRead(currentUserId), 100);
+    return () => clearTimeout(t);
+  }, [conversation?.conversationId, currentUserId, markAllRead]);
 
   const lastSentByMeId = useMemo(() => {
     const mine = messages.filter(m => String(m.senderId) === String(currentUserId));

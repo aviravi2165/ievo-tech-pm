@@ -4,6 +4,7 @@ import { groupApi }   from '../api/groupApi';
 import { fileApi }    from '../api/fileApi';
 import { useAuth }    from '../../auth/AuthContext';
 import api            from '../api/axiosInstance';
+import { ALLOWED_MIME_TYPES, ALLOWED_ACCEPT, MAX_FILE_SIZE_BYTES } from '../api/allowedFileTypes';
 
 // ── User-search hook (debounced 240 ms) ──────────────────────────────────────
 function useUserSearch(query) {
@@ -59,7 +60,6 @@ function RecipientChip({ item, onRemove, onExpand, expanding, mode }) {
         )}
       </span>
 
-      {/* BCC: expand-group button */}
       {showExpand && (
         <button type="button" title="Expand — send individually to each member"
           onClick={onExpand} disabled={expanding}
@@ -100,14 +100,12 @@ function RecipientInput({ selectedIds, onAdd, groups, mode, placeholder, current
   const inputRef = useRef(null);
   const dropRef  = useRef(null);
 
-  // FIX: groups shown in ALL modes (CC now shows groups — they auto-expand when added)
-  // Filter out already-selected groups and the current user from user results
   const groupMatches = mode !== 'group_thread'
     ? groups.filter(g =>
         !selectedIds.has(`g-${g.groupId}`) &&
         (!query.trim() || g.groupName.toLowerCase().includes(query.toLowerCase()))
       )
-    : groups.filter(g => // group_thread: only groups
+    : groups.filter(g =>
         !selectedIds.has(`g-${g.groupId}`) &&
         (!query.trim() || g.groupName.toLowerCase().includes(query.toLowerCase()))
       );
@@ -115,7 +113,7 @@ function RecipientInput({ selectedIds, onAdd, groups, mode, placeholder, current
   const userResults = mode !== 'group_thread'
     ? users.filter(u =>
         !selectedIds.has(String(u.userId)) &&
-        String(u.userId) !== String(currentUserId)  // FIX: exclude self
+        String(u.userId) !== String(currentUserId)
       )
     : [];
 
@@ -261,12 +259,10 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
   const bodyRef = useRef(null);
   const fileRef = useRef(null);
 
-  // Set initial recipients when provided (e.g. pre-filled from group card)
   useEffect(() => {
     if (initialRecipients?.length) setRecipients(initialRecipients);
   }, []); // eslint-disable-line
 
-  // Deduplication set for the search dropdown
   const selectedIds = new Set(
     recipients.flatMap(r => {
       if (r.type === 'group') {
@@ -278,32 +274,26 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
     })
   );
 
-  // ── Mode change ────────────────────────────────────────────────────────────
   const handleModeChange = async (newMode) => {
     setMode(newMode);
     setError('');
     if (newMode === 'cc') {
-      // Auto-expand all group chips currently in the list
       const groupChips = recipients.filter(r => r.type === 'group');
       for (const g of groupChips) await doExpandGroup(g, true);
     }
     if (newMode === 'group_thread') {
-      // Keep only group chips
       setRecipients(prev => prev.filter(r => r.type === 'group'));
     }
   };
 
-  // ── Expand group chip into individual member chips ─────────────────────────
-  // replace=true: replaces the group chip with member chips (CC mode / explicit)
-  // replace=false: marks the chip as expanded, stores members as sub-list (BCC)
   const doExpandGroup = useCallback(async (groupItem, replace) => {
-    const chipId = groupItem.id; // `g-${groupId}` string
+    const chipId = groupItem.id;
     setExpanding(prev => ({ ...prev, [chipId]: true }));
     try {
       const numericId = groupItem._groupId ?? parseInt(String(chipId).replace('g-', ''), 10);
       const members   = await groupApi.getMembers(numericId);
       const chips     = members
-        .filter(m => String(m.userId) !== String(currentUserId)) // FIX: exclude sender
+        .filter(m => String(m.userId) !== String(currentUserId))
         .map(m => ({
           id:        String(m.userId),
           label:     `${m.firstName || ''} ${m.lastName || ''}`.trim() || m.email,
@@ -313,9 +303,6 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
         }));
 
       setRecipients(prev => {
-        // Don't duplicate anyone who is already a standalone individual
-        // chip elsewhere in the list — they'd otherwise show up twice
-        // (once on their own, once nested under this group).
         const standaloneIds = new Set(
           prev.filter(r => r.id !== chipId && r.type === 'user').map(r => String(r.id))
         );
@@ -335,9 +322,8 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
     }
   }, [currentUserId]);
 
-  // ── Add recipient ──────────────────────────────────────────────────────────
   const addRecipient = useCallback(async (item) => {
-    if (selectedIds.has(item.id)) return; // dedupe
+    if (selectedIds.has(item.id)) return;
     if (item.type === 'group' && mode === 'cc') {
       await doExpandGroup(item, true);
       return;
@@ -345,28 +331,24 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
     setRecipients(prev => [...prev, item]);
   }, [selectedIds, mode, doExpandGroup]); // eslint-disable-line
 
-  // ── Remove recipient ───────────────────────────────────────────────────────
   const removeRecipient = useCallback((id) => {
     setRecipients(prev => prev.filter(r => r.id !== id));
   }, []);
 
-  // ── Formatting toolbar ─────────────────────────────────────────────────────
   const execCmd = (cmd) => { bodyRef.current?.focus(); document.execCommand(cmd, false, null); };
-
-  // ── File upload ────────────────────────────────────────────────────────────
-  const ALLOWED = [
-    'application/pdf',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'image/jpeg', 'image/png', 'text/plain',
-  ];
 
   const handleFile = async e => {
     const files = Array.from(e.target.files || []);
     e.target.value = '';
     for (const file of files) {
-      if (!ALLOWED.includes(file.type)) { setError(`File type not allowed: ${file.name}`); continue; }
-      if (file.size > 25 * 1024 * 1024) { setError(`File too large (max 25 MB): ${file.name}`); continue; }
+      if (!ALLOWED_MIME_TYPES.has(file.type)) {
+        setError(`File type not allowed: ${file.name}`);
+        continue;
+      }
+      if (file.size > MAX_FILE_SIZE_BYTES) {
+        setError(`File too large (max 25 MB): ${file.name}`);
+        continue;
+      }
       setError('');
       const tempId = `tmp_${Date.now()}_${file.name}`;
       setAttachments(prev => [...prev, { tempId, name: file.name, uploading: true, progress: 0 }]);
@@ -384,7 +366,6 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
     }
   };
 
-  // ── Build payload ──────────────────────────────────────────────────────────
   const buildPayload = () => {
     const bodyHtml = bodyRef.current?.innerHTML?.trim();
     if (!bodyHtml || bodyHtml === '<br>') { setError('Message body is required.'); return null; }
@@ -442,7 +423,6 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
     return { ...base, recipientIds, groupIds, expandedGroupMembers };
   };
 
-  // ── Send ───────────────────────────────────────────────────────────────────
   const handleSend = async () => {
     setError('');
     const payload = buildPayload();
@@ -462,7 +442,6 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
 
   const currentModeObj = MODES.find(m => m.key === mode) || MODES[0];
 
-  // Flat chip list — for BCC, expanded group members shown inline below group chip
   const chipRows = [];
   for (const r of recipients) {
     chipRows.push({ ...r, _isParent: true });
@@ -603,7 +582,6 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
                 style={{ textDecoration: 'underline' }}
                 onMouseDown={e => { e.preventDefault(); execCmd('underline'); }}>U</button>
               <div className="fmt-sep"/>
-              {/* FIX: bullet list */}
               <button type="button" className="fmt-btn" title="Bullet list"
                 onMouseDown={e => { e.preventDefault(); execCmd('insertUnorderedList'); }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
@@ -616,7 +594,6 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
                   <circle cx="4" cy="18" r="1.5" fill="currentColor"/>
                 </svg>
               </button>
-              {/* FIX: numbered list — was missing */}
               <button type="button" className="fmt-btn" title="Numbered list"
                 onMouseDown={e => { e.preventDefault(); execCmd('insertOrderedList'); }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
@@ -638,7 +615,7 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
                 </svg>
               </button>
               <input ref={fileRef} type="file" multiple style={{ display: 'none' }}
-                accept=".pdf,.docx,.xlsx,.jpg,.jpeg,.png,.txt"
+                accept={ALLOWED_ACCEPT}
                 onChange={handleFile}/>
             </div>
 
@@ -654,23 +631,15 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
                   e.preventDefault(); handleSend();
                   return;
                 }
-                // FIX: same manual line-break normalization as Composer.js
                 if (e.key === 'Enter' && !e.shiftKey) {
-  let node = window.getSelection()?.anchorNode;
-
-  while (node) {
-    if (
-      node.nodeType === 1 &&
-      ['LI', 'UL', 'OL'].includes(node.nodeName)
-    ) {
-      return;
-    }
-    node = node.parentNode;
-  }
-
-  e.preventDefault();
-  document.execCommand('insertLineBreak');
-}
+                  let node = window.getSelection()?.anchorNode;
+                  while (node) {
+                    if (node.nodeType === 1 && ['LI', 'UL', 'OL'].includes(node.nodeName)) return;
+                    node = node.parentNode;
+                  }
+                  e.preventDefault();
+                  document.execCommand('insertLineBreak');
+                }
               }}
             />
           </div>
