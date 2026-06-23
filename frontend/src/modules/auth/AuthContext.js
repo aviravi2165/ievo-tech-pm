@@ -57,6 +57,20 @@ export function AuthProvider({ children }) {
   [token]
 );
 
+  // Forced first-login flow only — no currentPassword needed, since the
+  // JWT already proves they just authenticated with the temp password.
+  const setInitialPassword = useCallback(
+    async ({ newPassword }) => {
+      const { data } = await axios.post(
+        `${BASE_URL}/auth/set-initial-password`,
+        { newPassword },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      return data;
+    },
+    [token]
+  );
+
   const logout = useCallback(() => {
     localStorage.removeItem('erp_token');
     setToken(null);
@@ -64,7 +78,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, logout,  changePassword, }}>
+    <AuthContext.Provider value={{ user, token, loading, login, logout,  changePassword, setInitialPassword, }}>
       {children}
     </AuthContext.Provider>
   );

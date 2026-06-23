@@ -17,7 +17,8 @@ async function login({ username, password }) {
     .input('username', sql.NVarChar, username.trim().toLowerCase())
     .query(`
       SELECT TOP 1 user_id, username, password_hash, first_name, last_name,
-                   email, user_type, is_active, allow_login, profile_picture, dept_id
+                   email, user_type, is_active, allow_login, profile_picture,
+                   dept_id, must_change_password
       FROM auth_users
       WHERE username = @username
     `);
@@ -48,14 +49,15 @@ async function login({ username, password }) {
   return {
     token,
     user: {
-      userId:         user.user_id,
-      username:       user.username,
-      firstName:      user.first_name,
-      lastName:       user.last_name,
-      email:          user.email,
-      userType:       user.user_type,
-      profilePicture: user.profile_picture,
-      deptId:         user.dept_id,
+      userId:            user.user_id,
+      username:          user.username,
+      firstName:         user.first_name,
+      lastName:          user.last_name,
+      email:             user.email,
+      userType:          user.user_type,
+      profilePicture:    user.profile_picture,
+      deptId:            user.dept_id,
+      mustChangePassword: Boolean(user.must_change_password),
     },
   };
 }
@@ -68,7 +70,7 @@ async function getMe(userId) {
     .input('userId', sql.UniqueIdentifier, userId)
     .query(`
       SELECT user_id, username, first_name, last_name, email,
-             user_type, profile_picture, dept_id
+             user_type, profile_picture, dept_id, must_change_password
       FROM auth_users
       WHERE user_id = @userId AND is_active = 1
     `);
@@ -79,14 +81,15 @@ async function getMe(userId) {
   }
 
   return {
-    userId:         u.user_id,
-    username:       u.username,
-    firstName:      u.first_name,
-    lastName:       u.last_name,
-    email:          u.email,
-    userType:       u.user_type,
-    profilePicture: u.profile_picture,
-    deptId:         u.dept_id,
+    userId:            u.user_id,
+    username:          u.username,
+    firstName:         u.first_name,
+    lastName:          u.last_name,
+    email:             u.email,
+    userType:          u.user_type,
+    profilePicture:    u.profile_picture,
+    deptId:            u.dept_id,
+    mustChangePassword: Boolean(u.must_change_password),
   };
 }
 
@@ -170,9 +173,48 @@ async function changePassword(userId, currentPassword, newPassword) {
   await pool.request()
     .input('newHash', sql.NVarChar, newHash)
     .input('userId',  sql.UniqueIdentifier, userId)
-    .query(`UPDATE auth_users SET password_hash = @newHash WHERE user_id = @userId`);
+    .query(`
+      UPDATE auth_users
+      SET password_hash = @newHash, must_change_password = 0
+      WHERE user_id = @userId
+    `);
 
   return true;
 }
 
-module.exports = { login, getMe, searchUsers, changePassword };
+// ── Set initial password (forced first-login flow) ────────────────────────────
+// Used only when must_change_password = 1. The JWT already proves the user
+// authenticated with their current (temp) password seconds earlier at login,
+// so we don't ask for it again here. We re-verify must_change_password on the
+// server (not just trust the client) so this lenient path can't be reused
+// later — once the flag is cleared, callers must go through changePassword()
+// and supply their current password like normal.
+async function setInitialPassword(userId, newPassword) {
+  const pool = await getPool();
+
+  const result = await pool.request()
+    .input('userId', sql.UniqueIdentifier, userId)
+    .query(`SELECT must_change_password FROM auth_users WHERE user_id = @userId`);
+
+  if (!result.recordset.length) {
+    const err = new Error('User not found'); err.statusCode = 404; throw err;
+  }
+  if (!result.recordset[0].must_change_password) {
+    const err = new Error('Password change is not required for this account');
+    err.statusCode = 403; throw err;
+  }
+
+  const newHash = await bcrypt.hash(newPassword, 10);
+  await pool.request()
+    .input('newHash', sql.NVarChar, newHash)
+    .input('userId',  sql.UniqueIdentifier, userId)
+    .query(`
+      UPDATE auth_users
+      SET password_hash = @newHash, must_change_password = 0
+      WHERE user_id = @userId
+    `);
+
+  return true;
+}
+
+module.exports = { login, getMe, searchUsers, changePassword, setInitialPassword };

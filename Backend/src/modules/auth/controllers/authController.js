@@ -1,4 +1,4 @@
-const {login,getMe,searchUsers,changePassword} = require('../services/authService');
+const {login,getMe,searchUsers,changePassword,setInitialPassword} = require('../services/authService');
 
 async function handleLogin(req, res, next) {
   try {
@@ -54,9 +54,28 @@ async function handleChangePassword(req, res, next) {
   }
 }
 
+async function handleSetInitialPassword(req, res, next) {
+  try {
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    }
+
+    await setInitialPassword(req.user.userId, newPassword);
+
+    res.json({
+      success: true,
+      message: 'Password set successfully'
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   handleLogin,
   handleMe,
   handleUserSearch,
-  handleChangePassword
+  handleChangePassword,
+  handleSetInitialPassword
 };

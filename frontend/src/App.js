@@ -2,6 +2,7 @@ import './shell/assets/shell.css';
 import { AuthProvider, useAuth } from './modules/auth/AuthContext';
 import { SocketProvider } from './modules/messages/context/SocketContext';
 import LoginPage from './modules/auth/LoginPage';
+import ForceChangePasswordPage from './modules/auth/ForceChangePasswordPage';
 import AppShell from './shell/AppShell';
 
 /**
@@ -32,6 +33,10 @@ function AuthGate() {
 
   if (!user || !token) {
     return <LoginPage />;
+  }
+
+  if (user.mustChangePassword) {
+    return <ForceChangePasswordPage />;
   }
 
   return (

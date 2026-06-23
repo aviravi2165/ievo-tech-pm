@@ -3,7 +3,8 @@ const {
   handleLogin,
   handleMe,
   handleUserSearch,
-  handleChangePassword
+  handleChangePassword,
+  handleSetInitialPassword
 } = require('../controllers/authController');
 const { authenticate } = require('../../../middleware/auth');
 
@@ -24,4 +25,15 @@ router.post(
   authenticate,
   handleChangePassword
 );
+
+// POST /api/auth/set-initial-password — forced first-login password change.
+// No currentPassword required: the JWT already proves they just authenticated
+// with the temp password; setInitialPassword() re-checks must_change_password
+// server-side so this can't be reused once that flag is cleared.
+router.post(
+  '/set-initial-password',
+  authenticate,
+  handleSetInitialPassword
+);
+
 module.exports = router;

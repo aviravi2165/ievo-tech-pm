@@ -8,6 +8,11 @@ export default function LoginPage() {
   const [error,    setError]    = useState('');
   const [loading,  setLoading]  = useState(false);
   const [showPass, setShowPass] = useState(false);
+  const [justChangedPassword] = useState(() => {
+    const flag = sessionStorage.getItem('erp_pwd_changed');
+    if (flag) sessionStorage.removeItem('erp_pwd_changed');
+    return Boolean(flag);
+  });
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -64,6 +69,12 @@ export default function LoginPage() {
 
           <h1 style={styles.heading}>Welcome back</h1>
           <p style={styles.subheading}>Sign in to your account</p>
+
+          {justChangedPassword && (
+            <div style={styles.successBox} role="status">
+              Password changed successfully. Please sign in with your new password.
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} noValidate>
             <div style={styles.field}>
@@ -299,6 +310,15 @@ const styles = {
     padding: '10px 14px',
     fontSize: 13,
     color: '#7b1d1d',
+    marginBottom: 18,
+  },
+  successBox: {
+    background: '#eafaf1',
+    border: '1px solid #b7e4c7',
+    borderRadius: 4,
+    padding: '10px 14px',
+    fontSize: 13,
+    color: '#1f6e43',
     marginBottom: 18,
   },
   submitBtn: {
