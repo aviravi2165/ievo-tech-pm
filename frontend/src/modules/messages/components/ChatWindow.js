@@ -12,7 +12,7 @@ const CONV_TYPE_LABEL = {
   group_thread: { label: 'Group Chat', color: 'var(--gold)' },
 };
 
-export default function ChatWindow({ conversation, currentUserId, onArchive, onBack, toast, groups = [] }) {
+export default function ChatWindow({ conversation, currentUserId, onBack, toast, groups = [] }) {
   const { messages, conversation: threadConv, loading, error, markAllRead, sendReply, refetch, onNewMessageRef } =
     useThread(conversation?.conversationId);
 
@@ -33,6 +33,7 @@ export default function ChatWindow({ conversation, currentUserId, onArchive, onB
   const [adminToggling,    setAdminToggling]     = useState(null); // userId being promoted/demoted
   const markedAllRef = useRef(null);
   const bottomRef    = useRef(null);
+  const containerRef  = useRef(null);
   const messageNodesRef = useRef({}); // messageId -> DOM node
   const dividerComputedForRef = useRef(null); // conversationId we've already computed the divider for
 
@@ -158,7 +159,7 @@ useEffect(() => {
     return;
   }
 
-  const container = document.querySelector('.gmail-thread-view');
+  const container = containerRef.current;
   if (!container) return;
 
   const distanceFromBottom =
@@ -175,16 +176,23 @@ useEffect(() => {
   // from the bottom. If they're already at the bottom, the existing
   // auto-scroll effect (below, keyed off messages.length) already brings
   // it into view, so a pill there would just be redundant noise.
+  // Keep refs to avoid stale closures inside onNewMessageRef
+  const currentUserIdRef = useRef(currentUserId);
+  useEffect(() => { currentUserIdRef.current = currentUserId; }, [currentUserId]);
+  const markAllReadRef = useRef(markAllRead);
+  useEffect(() => { markAllReadRef.current = markAllRead; }, [markAllRead]);
+
   useEffect(() => {
     if (!onNewMessageRef) return;
     onNewMessageRef.current = (payload) => {
-      if (currentUserId) markAllRead(currentUserId);
+      const uid = currentUserIdRef.current;
+      if (uid) markAllReadRef.current(uid);
 
       const isMine = payload.senderUserId &&
-        String(payload.senderUserId) === String(currentUserId);
+        String(payload.senderUserId) === String(uid);
       if (isMine) return;
 
-      const container = document.querySelector('.gmail-thread-view');
+      const container = containerRef.current;
       const distanceFromBottom = container
         ? container.scrollHeight - container.scrollTop - container.clientHeight
         : 0;
@@ -195,7 +203,7 @@ useEffect(() => {
       }
     };
     return () => { if (onNewMessageRef) onNewMessageRef.current = null; };
-  }, [onNewMessageRef, currentUserId, markAllRead]);
+  }, [onNewMessageRef]);
 
   const handleJumpToBottom = () => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -326,7 +334,11 @@ useEffect(() => {
     p => String(p.userId) !== String(currentUserId)
   );
 
-  const participantNames = others.join(', ') || conv.participantNames || '';
+  // Cap header names at 3 to prevent overflow, show +N for the rest
+  const MAX_HEADER_NAMES = 3;
+  const participantNames = others.length > MAX_HEADER_NAMES
+    ? `${others.slice(0, MAX_HEADER_NAMES).join(', ')} +${others.length - MAX_HEADER_NAMES} more`
+    : (others.join(', ') || conv.participantNames || '');
   const typeInfo = CONV_TYPE_LABEL[convType] || CONV_TYPE_LABEL.bcc;
 
   return (
@@ -396,14 +408,7 @@ useEffect(() => {
             </button>
           )}
 
-          <button className="icon-btn" title="Archive" onClick={onArchive}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="2">
-              <polyline points="21 8 21 21 3 21 3 8"/>
-              <rect x="1" y="3" width="22" height="5"/>
-              <line x1="10" y1="12" x2="14" y2="12"/>
-            </svg>
-          </button>
+
         </div>
       </div>
 
@@ -488,7 +493,7 @@ useEffect(() => {
               )}
             </div>
           )}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, maxHeight: 160, overflowY: 'auto', paddingRight: 4 }}>
             {conv.participants.map(p => {
               const isMe    = String(p.userId) === String(currentUserId);
               const pName   = `${p.firstName || ''} ${p.lastName || ''}`.trim() || p.email || 'Unknown';
@@ -564,6 +569,7 @@ useEffect(() => {
       <div className="thread-scroll-wrap">
         <div
           className="gmail-thread-view"
+          ref={containerRef}
           onScroll={(e) => {
             if (!showNewPill) return;
             const el = e.currentTarget;

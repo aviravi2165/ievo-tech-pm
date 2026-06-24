@@ -23,22 +23,29 @@ function initials(name = '') {
  *   - Private (bcc)    → other person's name (big) / subject (small)
  */
 function convDisplayLines(conv) {
+  const count = conv.participantCount != null ? conv.participantCount : null;
+
   if (conv.convType === 'group_thread' || conv.groupName) {
+    // Group chat: group name on top, subject (first message topic) below with member count
+    const sub = [conv.subject, count != null ? `${count} members` : null]
+      .filter(Boolean).join(' · ');
     return {
       primary:   conv.groupName || conv.subject || '?',
-      secondary: conv.participantNames || '',
+      secondary: sub || '',
     };
   }
   if (conv.convType === 'bcc') {
+    // Private: recipient name on top, subject below
     return {
       primary:   conv.participantNames || conv.subject || '?',
       secondary: conv.subject || '',
     };
   }
-  // 'cc' (shared) and any other/unknown type
+  // Shared (cc): subject on top, participant count below
+  const participantLabel = count != null ? `${count} participants` : (conv.participantNames || '');
   return {
     primary:   conv.subject || conv.participantNames || '?',
-    secondary: conv.participantNames || '',
+    secondary: participantLabel,
   };
 }
 

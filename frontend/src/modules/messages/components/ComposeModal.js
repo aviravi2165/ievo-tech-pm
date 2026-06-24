@@ -147,7 +147,7 @@ function RecipientInput({ selectedIds, onAdd, groups, mode, placeholder, current
         onFocus={() => setOpen(true)}
       />
       {hasDrop && (
-        <div ref={dropRef} className="dropdown" style={{ zIndex: 700 }}>
+        <div ref={dropRef} className="dropdown" style={{ zIndex: 700, maxHeight: 260, overflowY: 'auto' }}>
           {loading && (
             <div className="dropdown-item" style={{ color: 'var(--muted)' }}>Searching…</div>
           )}
@@ -243,11 +243,11 @@ const MODES = [
 ];
 
 // ── Main ComposeModal ─────────────────────────────────────────────────────────
-export default function ComposeModal({ onClose, onSent, groups = [], initialRecipients = [] }) {
+export default function ComposeModal({ onClose, onSent, groups = [], initialRecipients = [], initialMode = 'bcc' }) {
   const { user } = useAuth();
   const currentUserId = user?.userId;
 
-  const [mode,        setMode]        = useState('bcc');
+  const [mode,        setMode]        = useState(initialMode || 'bcc');
   const [recipients,  setRecipients]  = useState(() => initialRecipients || []);
   const [subject,     setSubject]     = useState('');
   const [allowReply,  setAllowReply]  = useState(true);
@@ -261,6 +261,7 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
 
   useEffect(() => {
     if (initialRecipients?.length) setRecipients(initialRecipients);
+    if (initialMode) setMode(initialMode);
   }, []); // eslint-disable-line
 
   const selectedIds = new Set(
@@ -503,7 +504,7 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
               {mode === 'group_thread' && 'Group(s)'}
             </label>
             <div className="recipient-box"
-              style={{ flexWrap: 'wrap', minHeight: 46, alignItems: 'flex-start', paddingTop: 8 }}>
+              style={{ flexWrap: 'wrap', minHeight: 46, maxHeight: 120, overflowY: 'auto', alignItems: 'flex-start', paddingTop: 8 }}>
               {chipRows.map(r => {
                 const isSubMember = !!r._fromGroup;
                 return (

@@ -87,9 +87,21 @@ export function useUnreadCount() {
   const refreshTimerRef   = useRef(null);
 
   const decrement = useCallback((conversationId) => {
-    if (unreadConvIds.current.has(conversationId)) {
+    const wasInSet = unreadConvIds.current.has(conversationId);
+    if (wasInSet) {
       unreadConvIds.current.delete(conversationId);
       setCount(prev => Math.max(0, prev - 1));
+    } else {
+      // Conv wasn't in our set — could be a fresh load where no NEW_MESSAGE
+      // arrived this session. Force a server sync immediately so the count
+      // reflects reality after opening the conversation.
+      clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = setTimeout(() => refresh(), 2000);
+      // Notify other instances
+      window.dispatchEvent(
+        new CustomEvent('messages-unread-decrement', { detail: { conversationId } })
+      );
+      return;
     }
 
     // Notify other hook instances immediately
@@ -97,9 +109,9 @@ export function useUnreadCount() {
       new CustomEvent('messages-unread-decrement', { detail: { conversationId } })
     );
 
-    // Cancel the previously scheduled refresh and schedule a new one
+    // Debounced server re-sync to catch any messages marked read in the thread
     clearTimeout(refreshTimerRef.current);
-    refreshTimerRef.current = setTimeout(() => refresh(), 2000);
+    refreshTimerRef.current = setTimeout(() => refresh(), 3000);
   }, [refresh]);
 
   useEffect(() => {

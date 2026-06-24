@@ -81,15 +81,17 @@ export default function MessageBubble({
     }
   };
 
-  // Who has seen this message (excluding the sender)
+  // Who has seen this message (excluding the sender themselves)
   const seenBy = (message.readReceipts || []).filter(
-    r => String(r.userId) !== String(currentUserId)
+    r => String(r.userId) !== String(message.senderId)
   );
   const isSeen = seenBy.length > 0;
 
   // ── Read receipt badge logic ──────────────────────────────────────────────
   // Only show on own messages AND only on the last sent message
-  const showReceiptBadge = isMine && isLastSentByMe;
+  // 1-on-1: only show on last sent message to avoid clutter
+  // Group: show on any message that has receipts (so sender sees who read each)
+  const showReceiptBadge = isMine && (isLastSentByMe || (isGroup && isSeen));
 
   const renderReceiptBadge = () => {
     if (!showReceiptBadge) return null;
@@ -122,20 +124,46 @@ export default function MessageBubble({
 
     return (
       <div style={{ marginTop: 4, textAlign: 'right' }}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 4 }}>
           <TickIcon seen={true} />
           <span style={{ fontSize: 11, color: '#4A9EFF' }}>
-            Seen by {shown.map(r => r.userName || 'someone').join(', ')}
-            {!showAllSeen && extra > 0 && (
-              <button
-                onClick={() => setShowAllSeen(true)}
+            Seen by{' '}
+            {!showAllSeen ? (
+              <>
+                {shown.map(r => r.userName || 'someone').join(', ')}
+                {extra > 0 && (
+                  <button
+                    onClick={() => setShowAllSeen(true)}
+                    style={{
+                      background: 'none', border: 'none', color: '#4A9EFF',
+                      cursor: 'pointer', fontSize: 11, marginLeft: 4, padding: 0,
+                      textDecoration: 'underline',
+                    }}
+                  >
+                    +{extra} more
+                  </button>
+                )}
+              </>
+            ) : (
+              <span
                 style={{
-                  background: 'none', border: 'none', color: '#4A9EFF',
-                  cursor: 'pointer', fontSize: 11, marginLeft: 4, padding: 0,
+                  display: 'inline-block', maxHeight: 56, overflowY: 'auto',
+                  verticalAlign: 'top', maxWidth: 220,
+                  wordBreak: 'break-word', textAlign: 'right',
                 }}
               >
-                +{extra} more
-              </button>
+                {seenBy.map(r => r.userName || 'someone').join(', ')}
+                <button
+                  onClick={() => setShowAllSeen(false)}
+                  style={{
+                    background: 'none', border: 'none', color: '#4A9EFF',
+                    cursor: 'pointer', fontSize: 11, marginLeft: 4, padding: 0,
+                    textDecoration: 'underline',
+                  }}
+                >
+                  show less
+                </button>
+              </span>
             )}
           </span>
         </div>

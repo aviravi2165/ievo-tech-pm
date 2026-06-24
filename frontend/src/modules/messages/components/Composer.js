@@ -144,7 +144,9 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
 
   const handleSend = async () => {
     const html = editorRef.current?.innerHTML?.trim();
-    if (!html || html === '<br>') { setError('Message body cannot be empty.'); return; }
+    const hasText        = html && html !== '<br>';
+    const hasAttachments = attachments.some(a => a.attachmentId);
+    if (!hasText && !hasAttachments) { setError('Add a message or attach a file before sending.'); return; }
     const still_uploading = attachments.some(a => a.uploading);
     if (still_uploading) { setError('Please wait for uploads to finish.'); return; }
 
@@ -152,7 +154,7 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
     setSending(true);
     try {
       await onSend({
-        bodyHtml: html,
+        bodyHtml: hasText ? html : '&nbsp;',
         attachmentIds: attachments.filter(a => a.attachmentId).map(a => a.attachmentId),
         parentMessageId: replyingTo?.messageId || null,
       });
@@ -294,6 +296,9 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
                 cursor: 'pointer',
                 background: i === mentionActive ? '#fdecea' : '#ffffff',
                 borderBottom: '1px solid #f1f2f4',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
               }}
             >
               {mentionName(p)}

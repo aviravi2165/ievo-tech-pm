@@ -546,6 +546,7 @@ setSelectedUsers([]);
 
       {membersLoading && <div className="loader-wrap"><div className="spinner" /></div>}
 
+            <div style={{ maxHeight: 400, overflowY: 'auto', paddingRight: 4 }}>
             {!membersLoading && members.map(m => (
           <div key={m.userId} style={{
             display: 'flex', alignItems: 'center', gap: 12,
@@ -605,6 +606,7 @@ setSelectedUsers([]);
           </div>
         ))}
 
+        </div>
         {!membersLoading && members.length === 0 && (
           <p style={{ color: 'var(--muted)', fontSize: 13 }}>
             No members yet. Add some above.
@@ -623,12 +625,11 @@ setSelectedUsers([]);
           <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
             <h3 style={{ margin: 0 }}>Threads</h3>
           </div>
-          <div style={{ marginBottom: 10 }}>
+          <div className="msg-search-wrap" style={{ padding: '0 0 10px' }}>
             <input
               placeholder="Search threads by subject…"
               value={threadSearch}
               onChange={e => setThreadSearch(e.target.value)}
-              style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--divider)', background: 'var(--mid)', color: 'var(--light)' }}
             />
           </div>
 
@@ -744,7 +745,7 @@ setSelectedUsers([]);
       {currentTab !== 'threads' && (
       <>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
-        <h3 style={{ margin: 0 }}>Recipient Groups</h3>
+        <h3 style={{ margin: 0 }}>Groups</h3>
         <button
           className="btn btn-primary"
           style={{ marginLeft: 'auto', padding: '7px 16px', fontSize: 12 }}
@@ -754,17 +755,11 @@ setSelectedUsers([]);
         </button>
       </div>
 
-      {/* Search bar — mirrors the Threads tab search */}
-      <div style={{ marginBottom: 14 }}>
+      <div className="msg-search-wrap" style={{ padding: '0 0 14px' }}>
         <input
           placeholder="Search groups by name…"
           value={groupSearch}
           onChange={e => setGroupSearch(e.target.value)}
-          style={{
-            width: '100%', padding: '8px 10px', borderRadius: 8,
-            border: '1px solid var(--divider)', background: 'var(--mid)',
-            color: 'var(--light)', boxSizing: 'border-box',
-          }}
         />
       </div>
 
@@ -838,8 +833,8 @@ setSelectedUsers([]);
             </div>
 
             <div className="group-info">
-              <div className="group-name" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                {g.groupName}
+              <div className="group-name" style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>{g.groupName}</span>
                 {g.isSuperAdmin && (
                   <span style={{
                     fontSize: 10, color: 'var(--gold)', border: '1px solid var(--gold)',

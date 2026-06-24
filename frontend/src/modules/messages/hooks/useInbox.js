@@ -41,7 +41,15 @@ export function useInbox(activeConversationId = null) {
       setLoading(true);
       const data = await messageApi.getInbox();
       const list = data.conversations || data || [];
-      setConversations(list);
+      // Don't re-show unread dot for the currently open conversation —
+      // mark-read REST calls may still be in flight when this fetch lands
+      const activeId = activeConvIdRef.current;
+      const adjusted = list.map(c =>
+        activeId && String(c.conversationId) === String(activeId)
+          ? { ...c, unreadCount: 0 }
+          : c
+      );
+      setConversations(adjusted);
       knownIdsRef.current = new Set(list.map(c => c.conversationId));
       setError(null);
     } catch (err) {

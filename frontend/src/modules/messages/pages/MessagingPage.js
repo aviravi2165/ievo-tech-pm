@@ -58,6 +58,7 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
 
   // FIX Bug 2: pre-filled recipients when opening compose from a group card
   const [composeInitialRecipients, setComposeInitialRecipients] = useState([]);
+  const [composeInitialMode,       setComposeInitialMode]       = useState('bcc');
 
   // Always stacked: open conversation takes the full panel width with no
   // inbox list beside it, regardless of screen resolution. The list and
@@ -191,25 +192,28 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
 
   // ── FIX Bug 2: group has no thread yet → open compose pre-filled ──────────
   const handleComposeToGroup = useCallback((group) => {
-    // Build a recipient entry in the same shape RecipientPicker uses
     const groupRecipient = {
-      id:    group.groupId,
-      label: group.groupName,
-      type:  'group',
+      id:       `g-${group.groupId}`,
+      _groupId: group.groupId,
+      label:    group.groupName,
+      type:     'group',
     };
     setComposeInitialRecipients([groupRecipient]);
+    setComposeInitialMode('group_thread');
     setComposeOpen(true);
   }, []);
 
   // ── Open compose (blank) ──────────────────────────────────────────────────
   const handleOpenCompose = useCallback(() => {
     setComposeInitialRecipients([]);
+    setComposeInitialMode('bcc');
     setComposeOpen(true);
   }, []);
 
   const handleCloseCompose = useCallback(() => {
     setComposeOpen(false);
     setComposeInitialRecipients([]);
+    setComposeInitialMode('bcc');
   }, []);
 
   // Disabling/enabling/hiding a group changes which conversations show up
@@ -264,18 +268,7 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
     fetchSent();
   }, [hideThread, refetch, fetchSent]);
 
-  // ── Archive ───────────────────────────────────────────────────────────────
-  const handleArchive = async () => {
-    if (!activeConv) return;
-    try {
-      await archiveConversation(activeConv.conversationId);
-      setActiveConv(null);
-      activeConvIdRef.current = null; // conversation is closed — clear the open-conv ref
-      toast('Conversation archived.', 'success');
-    } catch {
-      toast('Failed to archive.', 'error');
-    }
-  };
+
 
   // ── After sending ─────────────────────────────────────────────────────────
   const handleSent = () => {
@@ -329,7 +322,6 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
             <ChatWindow
               conversation={activeConv}
               currentUserId={currentUser?.userId}
-              onArchive={handleArchive}
               onBack={() => { setActiveConv(null); activeConvIdRef.current = null; }}
               toast={toast}
               groups={groups}
