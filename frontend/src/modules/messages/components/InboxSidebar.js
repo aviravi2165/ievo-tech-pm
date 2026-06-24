@@ -15,23 +15,31 @@ function initials(name = '') {
 }
 
 /**
- * Primary display name for a conversation row.
+ * Inbox/Sent row text — split into a primary (big, line 1) and secondary
+ * (smaller, line 2) line, based on conversation type:
  *
- * Inbox:  show group name (if group conv) OR all other participants
- *         — "who this conversation is with", NOT who sent the last message
- * Sent:   show group name (if group conv) OR recipient list
- *
- * Subject is shown as a smaller subtitle below, not as the heading.
+ *   - Group threads   → group name (big)        / participants (small)
+ *   - Shared (cc)      → subject (big)            / participants (small)
+ *   - Private (bcc)    → other person's name (big) / subject (small)
  */
-function convDisplayName(conv, tab) {
-  // Group conversation — always show group name regardless of tab
-  if (conv.groupName) return conv.groupName;
-
-  // For both inbox and sent: show the other participants
-  if (conv.participantNames) return conv.participantNames;
-
-  // Fallback
-  return conv.subject || '?';
+function convDisplayLines(conv) {
+  if (conv.convType === 'group_thread' || conv.groupName) {
+    return {
+      primary:   conv.groupName || conv.subject || '?',
+      secondary: conv.participantNames || '',
+    };
+  }
+  if (conv.convType === 'bcc') {
+    return {
+      primary:   conv.participantNames || conv.subject || '?',
+      secondary: conv.subject || '',
+    };
+  }
+  // 'cc' (shared) and any other/unknown type
+  return {
+    primary:   conv.subject || conv.participantNames || '?',
+    secondary: conv.participantNames || '',
+  };
 }
 
 export default function InboxSidebar({
@@ -127,24 +135,24 @@ export default function InboxSidebar({
         )}
 
         {!loading && !error && filtered.map(conv => {
-          const name = convDisplayName(conv, tab);
+          const { primary, secondary } = convDisplayLines(conv);
           return (
             <div
               key={conv.conversationId}
               className={`msg-conv-item ${activeId === conv.conversationId ? 'active' : ''} ${conv.unreadCount > 0 ? 'unread' : ''} ${conv._flash ? 'conv-flash' : ''}`}
               onClick={() => onSelect(conv)}
             >
-              <div className="conv-avatar">{initials(name)}</div>
+              <div className="conv-avatar">{initials(primary)}</div>
               <div className="conv-info">
                 <div className="conv-top">
-                  {/* PRIMARY LINE: group name or participant names */}
-                  <span className="conv-subject">{name}</span>
+                  {/* PRIMARY LINE — see convDisplayLines() for which field this is per type */}
+                  <span className="conv-subject">{primary}</span>
                   <span className="conv-time">{fmtTime(conv.latestAt || conv.createdAt)}</span>
                 </div>
                 <div className="conv-preview">
-                  {/* SUBTITLE: subject in muted italic */}
+                  {/* SECONDARY LINE — muted, smaller */}
                   <span style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
-                    {conv.subject}
+                    {secondary}
                   </span>
                 </div>
               </div>

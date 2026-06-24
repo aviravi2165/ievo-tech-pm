@@ -4,7 +4,7 @@ import { groupApi }   from '../api/groupApi';
 import { fileApi }    from '../api/fileApi';
 import { useAuth }    from '../../auth/AuthContext';
 import api            from '../api/axiosInstance';
-import { MAX_FILE_SIZE_BYTES } from '../api/allowedFileTypes';
+import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB } from '../api/allowedFileTypes';
 
 // ── User-search hook (debounced 240 ms) ──────────────────────────────────────
 function useUserSearch(query) {
@@ -342,7 +342,7 @@ export default function ComposeModal({ onClose, onSent, groups = [], initialReci
     e.target.value = '';
     for (const file of files) {
       if (file.size > MAX_FILE_SIZE_BYTES) {
-        setError(`File too large (max 100 MB): ${file.name}`);
+        setError(`File too large (max ${MAX_FILE_SIZE_MB} MB): ${file.name}`);
         continue;
       }
       setError('');

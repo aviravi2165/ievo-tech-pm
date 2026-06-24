@@ -137,13 +137,21 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
           setTab('inbox');
           setActiveConv({ conversationId: payload.conversationId, subject: payload.subject });
           activeConvIdRef.current = payload.conversationId;
+          // FIX: this previously only cleared the sidebar row's dot via
+          // clearUnreadDot, but never told useUnreadCount's global badge
+          // that this conversation was just read — so opening a conversation
+          // via this toast (rather than by clicking its inbox row directly)
+          // left the header badge count permanently out of sync with the
+          // sidebar, since it never got the matching decrement() call that
+          // every other "open a conversation" path already makes.
+          decrement(payload.conversationId);
           clearUnreadDot(payload.conversationId);
         }
       );
     };
     socket.on('NEW_MESSAGE', handler);
     return () => socket.off('NEW_MESSAGE', handler);
-  }, [socket, user?.userId, isSuperAdmin, activeConv?.conversationId, toast, activeConvIdRef, clearUnreadDot]);
+  }, [socket, user?.userId, isSuperAdmin, activeConv?.conversationId, toast, activeConvIdRef, clearUnreadDot, decrement]);
 
   // ── Tab change ────────────────────────────────────────────────────────────
   const handleTabChange = (nextTab) => {

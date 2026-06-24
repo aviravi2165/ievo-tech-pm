@@ -547,14 +547,38 @@ async function getLatestGroupConversation(groupId, userId) {
             )
         ) AS unreadCount
       FROM comm_conversations c
-      INNER JOIN comm_participants p
-        ON p.conversation_id = c.conversation_id
-        AND p.user_id = @userId AND p.is_deleted = 0
       INNER JOIN comm_groups g ON g.group_id = c.group_id
       WHERE c.group_id = @groupId AND c.is_deleted = 0
       ORDER BY c.last_message_at DESC
     `);
-  return result.recordset[0] || null;
+  // FIX: previously this required an INNER JOIN against comm_participants,
+  // meaning a real group member could get a 404 here ("chat exists but
+  // won't open") if their participant row was never backfilled for this
+  // conversation — e.g. they were added to the group around the same time
+  // the first message was sent, or by an older version of addMembers().
+  // Group MEMBERSHIP (already verified by the caller's assertGroupMember)
+  // is the actual authority for group threads — see replyToConversation's
+  // assertActiveGroupMember check, which never required comm_participants
+  // either. So: don't gate finding the conversation on that row's
+  // existence — but DO self-heal it here so the later getThread() call
+  // (which genuinely needs a participant row via assertConversationParticipant)
+  // succeeds too, instead of just moving the same failure one step later.
+  const conv = result.recordset[0];
+  if (conv) {
+    await pool.request()
+      .input('convId', sql.Int,              conv.conversationId)
+      .input('userId', sql.UniqueIdentifier, userId)
+      .query(`
+        IF EXISTS (SELECT 1 FROM comm_participants WHERE conversation_id = @convId AND user_id = @userId)
+          UPDATE comm_participants
+          SET is_deleted = 0
+          WHERE conversation_id = @convId AND user_id = @userId
+        ELSE
+          INSERT INTO comm_participants (conversation_id, user_id, participant_type)
+          VALUES (@convId, @userId, 'to')
+      `);
+  }
+  return conv || null;
 }
 
 module.exports = {
