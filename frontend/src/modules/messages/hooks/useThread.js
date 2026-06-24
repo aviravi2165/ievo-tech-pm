@@ -11,7 +11,10 @@ export function useThread(conversationId) {
 
   // Ref to track which messages have already been marked read this session
   // so we don't fire duplicate PATCH calls when messages state updates
-  const markedReadRef = useRef(new Set());
+  const markedReadRef   = useRef(new Set());
+  // Callback ref so ChatWindow can react to new messages (highlight, mark-read)
+  // Declared here (not below) so onNew socket handler can safely reference it
+  const onNewMessageRef = useRef(null);
 
   const fetchThread = useCallback(async () => {
     if (!conversationId) return;
@@ -20,8 +23,9 @@ export function useThread(conversationId) {
       const data = await messageApi.getThread(conversationId);
       setMessages(data.messages || []);
       setConversation(data.conversation || null);
+      setError(null); // clear any previous error on success
     } catch (err) {
-      setError(err.message);
+      setError(err?.response?.data?.error || err.message || 'Failed to load conversation.');
     } finally {
       setLoading(false);
     }
@@ -30,7 +34,10 @@ export function useThread(conversationId) {
   // Fetch on open + join socket room
   useEffect(() => {
     if (!conversationId) return;
-    // Reset the marked-read ref when switching conversations
+    // Reset everything when switching conversations
+    setError(null);
+    setMessages([]);
+    setConversation(null);
     markedReadRef.current = new Set();
     fetchThread();
     if (socket) socket.emit('join_conversation', { conversationId });
@@ -117,8 +124,6 @@ export function useThread(conversationId) {
    */
   const messagesRef = useRef([]);
   messagesRef.current = messages;
-  // Callback ref so ChatWindow can react to new messages (highlight, mark-read)
-  const onNewMessageRef = useRef(null);
 
   const markAllRead = useCallback((currentUserId) => {
     const currentMessages = messagesRef.current;

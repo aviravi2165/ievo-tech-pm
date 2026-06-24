@@ -86,10 +86,28 @@ async function assertConversationParticipant(conversationId, userId) {
     .input('convId', sql.Int,              conversationId)
     .input('userId', sql.UniqueIdentifier, userId)
     .query(`
+      -- Direct participant (BCC / CC threads)
       SELECT 1 AS ok
       FROM comm_participants p
       WHERE p.conversation_id = @convId AND p.user_id = @userId AND p.is_deleted = 0
       UNION ALL
+      -- Conversation creator (covers missing participant rows from data migration)
+      SELECT 1
+      FROM comm_conversations c
+      WHERE c.conversation_id = @convId AND c.created_by = @userId AND c.is_deleted = 0
+      UNION ALL
+      -- Anyone who has sent a message in this conversation
+      SELECT 1
+      FROM comm_messages m
+      WHERE m.conversation_id = @convId AND m.sender_id = @userId AND m.is_deleted = 0
+      UNION ALL
+      -- Group thread member
+      SELECT 1
+      FROM comm_conversations c
+      INNER JOIN comm_group_members gm ON gm.group_id = c.group_id
+      WHERE c.conversation_id = @convId AND gm.user_id = @userId AND c.conv_type = 'group_thread'
+      UNION ALL
+      -- Super admin always has access
       SELECT 1
       FROM auth_users u
       WHERE u.user_id = @userId AND u.user_type = 'admin'
