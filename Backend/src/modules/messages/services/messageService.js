@@ -71,7 +71,16 @@ async function ensureParticipantArchiveColumn() {
         )
           ALTER TABLE comm_participants ADD left_at DATETIMEOFFSET;
       `);
-    })();
+    })().catch(err => {
+      // FIX Bug 7: if the ALTER TABLE fails (e.g. permissions error on
+      // first run), reset the singleton so the next call retries instead
+      // of permanently returning the same rejected promise forever. Without
+      // this reset, every subsequent call to any function that calls
+      // ensureParticipantArchiveColumn() throws the original error even
+      // if the column was manually added in the interim.
+      _archiveColReady = null;
+      throw err;
+    });
   }
   await _archiveColReady;
 }
@@ -591,11 +600,19 @@ async function replyToConversation(conversationId, senderUserId, payload) {
   if (!conv.allow_reply) {
     const e = new Error('Replies are not allowed'); e.statusCode = 403; throw e;
   }
-  if (conv.conv_type === 'group_thread') {
-    await assertActiveGroupMember(conv.group_id, senderUserId);
-  } else if (conv.is_disabled) {
+  // FIX Bug 3: previously is_disabled was only checked for non-group
+  // threads (the else branch). For group_thread conversations the code
+  // relied solely on assertActiveGroupMember which checks
+  // comm_groups.is_disabled — but if the conversation row itself was
+  // disabled directly via disableThread() (comm_conversations.is_disabled),
+  // a group member could still reply because the group_thread branch never
+  // read that column. Now both paths check it.
+  if (conv.is_disabled) {
     const e = new Error('This thread has been disabled. No new messages can be sent, but past messages remain visible.');
     e.statusCode = 403; throw e;
+  }
+  if (conv.conv_type === 'group_thread') {
+    await assertActiveGroupMember(conv.group_id, senderUserId);
   }
 
   const sanitizedBody = sanitizeBodyHtml(bodyHtml);
@@ -888,17 +905,41 @@ async function getThread(conversationId, userId) {
     const e = new Error('Conversation not found'); e.statusCode = 404; throw e;
   }
 
-  // Participants — for group threads use the group member list
+  // FIX Bug 4: previously group_thread participants were read from
+  // comm_group_members directly, bypassing comm_participants entirely.
+  // This meant a removed group participant (who has left_at set in
+  // comm_participants via removeMember) still appeared in the thread's
+  // participant list because comm_group_members has no left_at concept.
+  // Non-group threads used comm_participants WHERE is_deleted=0 — the two
+  // paths were inconsistent.
+  //
+  // Fix: use comm_participants for both paths (which has is_deleted/left_at
+  // populated correctly by addMembers/removeMember), but for group threads
+  // enrich each row with the isAdmin/isCoAdmin/isCreator flags from the
+  // group member table so the UI can show admin badges correctly.
   let partRes;
   if (convRow.convType === 'group_thread') {
     partRes = await pool.request()
-      .input('groupId', sql.Int, convRow.groupId)
+      .input('convId',   sql.Int, conversationId)
+      .input('groupId',  sql.Int, convRow.groupId)
       .query(`
-        SELECT gm.user_id AS userId, 'to' AS participantType,
-               u.first_name AS firstName, u.last_name AS lastName, u.email
-        FROM comm_group_members gm
-        JOIN auth_users u ON u.user_id = gm.user_id
-        WHERE gm.group_id = @groupId
+        SELECT
+          p.user_id          AS userId,
+          p.participant_type AS participantType,
+          u.first_name       AS firstName,
+          u.last_name        AS lastName,
+          u.email,
+          CAST(CASE WHEN g.created_by = p.user_id          THEN 1 ELSE 0 END AS BIT) AS isCreator,
+          CAST(COALESCE(gm.is_co_admin, 0)                 AS BIT)                   AS isCoAdmin,
+          CAST(CASE WHEN g.created_by = p.user_id
+                      OR COALESCE(gm.is_co_admin, 0) = 1   THEN 1 ELSE 0 END AS BIT) AS isAdmin
+        FROM comm_participants p
+        LEFT JOIN auth_users        u  ON u.user_id  = p.user_id
+        LEFT JOIN comm_groups       g  ON g.group_id = @groupId
+        LEFT JOIN comm_group_members gm ON gm.group_id = @groupId AND gm.user_id = p.user_id
+        WHERE p.conversation_id = @convId
+          AND p.is_deleted = 0
+          AND p.left_at IS NULL
         ORDER BY u.first_name, u.last_name
       `);
   } else {
@@ -952,10 +993,18 @@ async function getThread(conversationId, userId) {
   const archivedAt = curPartRes.recordset[0]?.archivedAt || null;
   const leftAt     = curPartRes.recordset[0]?.leftAt     || null;
 
+  // FIX Bug 8: passing null as sql.DateTimeOffset parameter and then
+  // COALESCE-ing with a varchar literal '1753-01-01' triggers implicit
+  // type-conversion in some SQL Server versions. Use concrete
+  // DATETIMEOFFSET values when the DB values are null, binding them as
+  // proper typed parameters to avoid any implicit cast warnings.
+  const archivedBound = archivedAt  || new Date('1753-01-01T00:00:00Z');
+  const leftBound     = leftAt       || new Date('9999-12-31T23:59:59Z');
+
   const msgRes = await pool.request()
-    .input('convId',     sql.Int,             conversationId)
-    .input('archivedAt', sql.DateTimeOffset,  archivedAt)
-    .input('leftAt',     sql.DateTimeOffset,  leftAt)
+    .input('convId',       sql.Int,            conversationId)
+    .input('archivedAt',   sql.DateTimeOffset,  archivedBound)
+    .input('leftAt',       sql.DateTimeOffset,  leftBound)
     .query(`
       SELECT
         m.message_id,
@@ -992,8 +1041,8 @@ async function getThread(conversationId, userId) {
       LEFT JOIN auth_users  pu ON pu.user_id = pm.sender_id
       WHERE m.conversation_id = @convId
         AND m.is_deleted = 0
-        AND m.sent_at > COALESCE(@archivedAt, '1753-01-01')
-        AND m.sent_at <= COALESCE(@leftAt, '9999-12-31')
+        AND m.sent_at > @archivedAt
+        AND m.sent_at <= @leftAt
       ORDER BY m.sent_at ASC
     `);
 

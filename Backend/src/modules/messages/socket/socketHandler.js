@@ -1,6 +1,12 @@
-const { Server }     = require('socket.io');
-const { verifyToken } = require('../../../middleware/auth');
-const messageService  = require('../services/messageService');
+'use strict';
+
+const { Server }              = require('socket.io');
+const { verifyToken }         = require('../../../middleware/auth');
+const messageService          = require('../services/messageService');
+// FIX Bug 6: moved require to top-level instead of inside the MARK_READ
+// event handler where it ran on every event (needless cache lookups on
+// the hot path).
+const { getPool, sql }        = require('../../../config/db');
 
 let io = null;
 
@@ -31,16 +37,26 @@ function initSocket(httpServer) {
   });
 
   io.on('connection', (socket) => {
-    const { userId } = socket.data.user;
+    const { userId, userType } = socket.data.user;
     socket.join(`user:${userId}`);
 
     socket.on('join_conversation', async (data = {}) => {
       const conversationId = parseInt(data.conversationId, 10);
       if (Number.isNaN(conversationId)) return;
       try {
+        // FIX Bug 2: super admins must NOT join individual conversation rooms.
+        // assertConversationParticipant unconditionally passes for user_type='admin',
+        // which would let the super admin join every conv:N room and receive
+        // MARK_READ / NEW_MESSAGE events for private BCC threads between other
+        // users — a WebSocket-level privacy leak even though the REST thread
+        // endpoint is also guarded. Super admins have a governance view (all
+        // groups/threads list) but must not receive live message events for
+        // conversations they aren't actual participants of.
+        if (userType === 'admin') return;
+
         await messageService.assertConversationParticipant(conversationId, userId);
         socket.join(`conv:${conversationId}`);
-      } catch { /* ignore */ }
+      } catch { /* ignore — participant check failed, don't join */ }
     });
 
     socket.on('leave_conversation', (data = {}) => {
@@ -49,27 +65,28 @@ function initSocket(httpServer) {
     });
 
     /**
-     * MARK_READ flow:
-     * 1. Client REST-PATCHes /api/messages/:id/read (writes to DB, returns userName)
-     * 2. Client emits MARK_READ socket event with { messageId, conversationId, userName }
-     * 3. We validate participant then broadcast to conv: room so OTHER viewers update live
-     *
-     * We no longer write to DB here — that's already done by the REST call.
-     * We just relay the event so the tick updates for co-viewers without a full refetch.
+     * MARK_READ relay — client emits after its REST PATCH /read call succeeds.
+     * Server validates participant then re-emits to other viewers in the room
+     * so their tick marks update without a full thread refetch.
+     * Note: messageController also calls broadcastMarkRead() server-side
+     * after the DB write, so this acts as a belt-and-suspenders relay for
+     * any client that still emits it explicitly.
      */
     socket.on('MARK_READ', async (data = {}) => {
       const messageId      = parseInt(data.messageId,      10);
       const conversationId = parseInt(data.conversationId, 10);
       if (Number.isNaN(messageId) || Number.isNaN(conversationId)) return;
 
+      // Super admins cannot relay MARK_READ for conversations they don't
+      // genuinely participate in (see Bug 2 fix above).
+      if (userType === 'admin') return;
+
       try {
         await messageService.assertConversationParticipant(conversationId, userId);
 
-        // userName should be sent by the client from the REST response,
-        // but if missing we look it up as a fallback
         let userName = data.userName;
         if (!userName) {
-          const { getPool, sql } = require('../../../config/db');
+          // FIX Bug 6: getPool/sql are now top-level imports, not re-required here.
           const pool = await getPool();
           const { recordset } = await pool.request()
             .input('userId', sql.UniqueIdentifier, userId)
@@ -95,19 +112,42 @@ function initSocket(httpServer) {
   return io;
 }
 
+/**
+ * FIX Bug 1: broadcastNewMessage previously emitted NEW_MESSAGE to BOTH
+ * the conv:N room AND every user:N room for every participant. Any
+ * participant who had joined the conv: room (i.e. had the conversation
+ * open) received the event twice — once per room — causing useInbox's
+ * handler to increment unreadCount by 2 and potentially trigger duplicate
+ * fetchInbox calls.
+ *
+ * Fix: emit to conv:N (for open-thread live updates) SEPARATELY from
+ * user:N (for inbox sidebar updates). Participants in the conv: room
+ * must NOT also receive the user: emission. We achieve this by emitting
+ * to user:N with the `except` socket-filter: skip any socket already in
+ * the conv:N room, since those connections already got the event.
+ *
+ * Implementation: socket.io's `io.to('roomA').except('roomB')` API
+ * (available since socket.io v4.0) emits only to sockets in roomA that
+ * are NOT also in roomB.
+ */
 async function broadcastNewMessage(result) {
   if (!io || !result) return;
 
   const payload        = toNewMessagePayload(result);
   const conversationId = payload.conversationId;
+  const convRoom       = `conv:${conversationId}`;
 
-  io.to(`conv:${conversationId}`).emit('NEW_MESSAGE', payload);
+  // 1. Emit to sockets currently viewing this conversation (the thread pane).
+  io.to(convRoom).emit('NEW_MESSAGE', payload);
 
+  // 2. Emit to each participant's personal user: room, but ONLY if their
+  //    socket is NOT already in the conv: room (i.e. they have the thread
+  //    open). Those sockets already got the event in step 1.
   const participantIds = result.participantIds
     || await messageService.getParticipantUserIds(conversationId);
 
   participantIds.forEach(pid => {
-    io.to(`user:${pid}`).emit('NEW_MESSAGE', payload);
+    io.to(`user:${pid}`).except(convRoom).emit('NEW_MESSAGE', payload);
   });
 }
 
@@ -120,10 +160,6 @@ function broadcastMarkRead({ conversationId, messageId, userId, readAt, userName
 
 function closeSocket(callback) {
   if (io) {
-    // io.close() also closes the underlying httpServer it was attached to
-    // (it owns it, since we passed the raw http.Server into `new Server(...)`
-    // in initSocket). Callers should NOT also call server.close() separately
-    // afterward — that was causing a hung shutdown (see server.js).
     io.close(callback);
     io = null;
   } else if (callback) {
