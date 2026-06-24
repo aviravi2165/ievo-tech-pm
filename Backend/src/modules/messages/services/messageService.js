@@ -964,6 +964,38 @@ async function getThread(conversationId, userId) {
       WHERE conversation_id = @convId AND user_id = @userId AND is_deleted = 0
     `);
 
+  // ── Super-admin governance path ──────────────────────────────────────────
+  // assertConversationParticipant (above) has a super-admin bypass so admins
+  // can reach this function for the Threads tab's manage-panel
+  // (participants list, disable/enable). Message content is intentionally
+  // off-limits for admins — they are not participants and the UI never
+  // renders a chat window for them. We enforce the same restriction here at
+  // the API level so that the JSON response never carries message history to
+  // the admin's browser at all.
+  //
+  // The reliable signal: every genuine participant always has a
+  // comm_participants row (sendMessage/addParticipants always inserts one).
+  // If that row is absent yet the user passed the access guard, they got
+  // through via the super-admin bypass — return governance-only payload.
+  if (!curPartRes.recordset[0]) {
+    const adminCheck = await pool.request()
+      .input('userId', sql.UniqueIdentifier, userId)
+      .query(`SELECT 1 AS ok FROM auth_users WHERE user_id = @userId AND user_type = 'admin'`);
+    if (adminCheck.recordset[0]) {
+      return {
+        conversation: {
+          ...convRow,
+          participants:    partRes.recordset,
+          userCanReply:    false,
+          isGroupDisabled: Boolean(convRow.isThreadDisabled),
+          archivedAt:      null,
+          leftAt:          null,
+        },
+        messages: [], // admins never receive message content
+      };
+    }
+  }
+
   const isThreadDisabled = Boolean(convRow.isThreadDisabled);
   let userCanReply  = Boolean(convRow.allowReply);
   let isGroupDisabled = false;

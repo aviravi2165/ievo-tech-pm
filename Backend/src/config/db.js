@@ -21,27 +21,45 @@ const config = {
   },
 };
 
-let _pool = null;
+let _pool       = null;
+let _connecting = null; // in-flight connect() Promise — prevents duplicate pools on cold start
 
 /**
  * Returns the singleton mssql ConnectionPool, connecting on first call.
+ * Uses a promise singleton (_connecting) so concurrent requests during
+ * cold start all await the same sql.connect() call instead of each
+ * creating their own pool and orphaning the extras.
  * @returns {Promise<import('mssql').ConnectionPool>}
  */
 async function getPool() {
-  if (!_pool) {
-    _pool = await sql.connect(config);
-    _pool.on('error', (err) => {
-      console.error('[db] Pool error:', err.message);
-      _pool = null;
-    });
+  if (_pool) return _pool;
+
+  if (!_connecting) {
+    _connecting = sql.connect(config)
+      .then(pool => {
+        pool.on('error', (err) => {
+          console.error('[db] Pool error:', err.message);
+          _pool       = null;
+          _connecting = null;
+        });
+        _pool       = pool;
+        _connecting = null;
+        return pool;
+      })
+      .catch(err => {
+        _connecting = null; // allow retry on next call
+        throw err;
+      });
   }
-  return _pool;
+
+  return _connecting;
 }
 
 /**
  * Closes the pool (used during graceful shutdown).
  */
 async function closePool() {
+  _connecting = null;
   if (_pool) {
     await _pool.close();
     _pool = null;

@@ -60,9 +60,6 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
     refetch: refetchAdminThreads,
   } = useThreads(isSuperAdmin);
 
-  // DEBUG: expose resolved flag for troubleshooting
-  try { console.log('MessagingPage: user=', user, 'isSuperAdmin=', isSuperAdmin); } catch (e) {}
-
   // ── Load sent tab ─────────────────────────────────────────────────────────
   const fetchSent = useCallback(() => {
     setSentLoading(true);
@@ -155,8 +152,14 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
     refetch();
     setTab('inbox');
     setActiveConv(conv);
+    // Fix 3: tell useUnreadCount which conv is open so its socket handler
+    // doesn't increment the badge for messages arriving in this conversation
+    // while the user is already reading it.
+    activeConvIdRef.current = conv.conversationId;
+    // Fix 4: clear the sidebar unread dot immediately (same as handleSelectConv).
+    clearUnreadDot(conv.conversationId);
     if (conv.unreadCount > 0) decrement(conv.conversationId);
-  }, [refetch, decrement]);
+  }, [refetch, decrement, clearUnreadDot, activeConvIdRef]);
 
   // ── FIX Bug 2: group has no thread yet → open compose pre-filled ──────────
   const handleComposeToGroup = useCallback((group) => {
@@ -239,6 +242,7 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
     try {
       await archiveConversation(activeConv.conversationId);
       setActiveConv(null);
+      activeConvIdRef.current = null; // conversation is closed — clear the open-conv ref
       toast('Conversation archived.', 'success');
     } catch {
       toast('Failed to archive.', 'error');

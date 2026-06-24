@@ -17,7 +17,7 @@ function createApp() {
   });
 
   const corsOptions = {
-    origin: process.env.CORS_ORIGIN.split(','),
+    origin: (process.env.CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean),
     methods: 'GET,POST,PUT,PATCH,DELETE',
     allowedHeaders: ['Content-Type', 'Authorization'], 
     credentials: true,
