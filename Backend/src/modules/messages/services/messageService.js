@@ -1037,11 +1037,30 @@ async function markMessageRead(messageId, userId) {
     .query(`
       SELECT m.message_id, m.conversation_id, m.sender_id
       FROM comm_messages m
-      INNER JOIN comm_participants p
-        ON p.conversation_id = m.conversation_id
-       AND p.user_id  = @userId
-       AND p.is_deleted = 0
       WHERE m.message_id = @messageId AND m.is_deleted = 0
+        AND (
+          -- Direct participant (BCC / CC threads)
+          EXISTS (
+            SELECT 1 FROM comm_participants p
+            WHERE p.conversation_id = m.conversation_id
+              AND p.user_id = @userId AND p.is_deleted = 0
+          )
+          OR
+          -- Conversation creator
+          EXISTS (
+            SELECT 1 FROM comm_conversations c
+            WHERE c.conversation_id = m.conversation_id
+              AND c.created_by = @userId AND c.is_deleted = 0
+          )
+          OR
+          -- Group thread member
+          EXISTS (
+            SELECT 1 FROM comm_conversations c
+            INNER JOIN comm_group_members gm ON gm.group_id = c.group_id
+            WHERE c.conversation_id = m.conversation_id
+              AND gm.user_id = @userId AND c.conv_type = 'group_thread'
+          )
+        )
     `);
 
   if (!accessRes.recordset[0]) {
