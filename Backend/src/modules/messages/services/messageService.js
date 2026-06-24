@@ -1031,12 +1031,12 @@ async function getThread(conversationId, userId) {
   // DATETIMEOFFSET values when the DB values are null, binding them as
   // proper typed parameters to avoid any implicit cast warnings.
   const archivedBound = archivedAt  || new Date('1753-01-01T00:00:00Z');
-  const leftBound     = leftAt       || new Date('9999-12-31T23:59:59Z');
+
 
   const msgRes = await pool.request()
     .input('convId',       sql.Int,            conversationId)
     .input('archivedAt',   sql.DateTimeOffset,  archivedBound)
-    .input('leftAt',       sql.DateTimeOffset,  leftBound)
+  .input('leftAt', sql.DateTimeOffset, leftAt)
     .query(`
       SELECT
         m.message_id,
@@ -1074,7 +1074,10 @@ async function getThread(conversationId, userId) {
       WHERE m.conversation_id = @convId
         AND m.is_deleted = 0
         AND m.sent_at > @archivedAt
-        AND m.sent_at <= @leftAt
+        AND (
+      @leftAt IS NULL
+      OR m.sent_at <= @leftAt
+    )
       ORDER BY m.sent_at ASC
     `);
 
