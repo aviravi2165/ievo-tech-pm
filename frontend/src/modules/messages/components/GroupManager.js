@@ -89,13 +89,17 @@ export default function GroupManager({
   };
 
   const handleRemoveMember = async (userId) => {
-    try {
-      await groupApi.removeMember(managingGroup.groupId, userId);
-      setMembers(prev => prev.filter(m => m.userId !== userId));
-    } catch (err) {
-      setAddError(err?.response?.data?.error || 'Failed to remove member.');
-    }
-  };
+  try {
+    await groupApi.removeMember(managingGroup.groupId, userId);
+
+    setMembers(prev => prev.filter(m => m.userId !== userId));
+
+    // Refresh groups everywhere in the app
+    window.dispatchEvent(new Event('groups-updated'));
+  } catch (err) {
+    setAddError(err?.response?.data?.error || 'Failed to remove member.');
+  }
+};
 
   const handleToggleMemberAdmin = async (userId, makeAdmin) => {
     if (!managingGroup) return;
@@ -160,10 +164,18 @@ export default function GroupManager({
     if (!userIds.length) { setAddError('Only users can be added (not groups).'); return; }
     setAddSaving(true); setAddError('');
     try {
-      const updated = await groupApi.addMembers(managingGroup.groupId, userIds);
-      setMembers(updated || []);
-      setSelectedUsers([]);
-    } catch (err) {
+ const updated = await groupApi.addMembers(managingGroup.groupId, userIds);
+setMembers(updated || []);
+
+window.dispatchEvent(new Event('groups-updated'));
+
+setSelectedUsers([]);
+
+  // notify rest of app to refresh group/thread lists
+  window.dispatchEvent(new Event('groups-updated'));
+
+  setSelectedUsers([]);
+} catch (err) {
       setAddError(err?.response?.data?.error || 'Failed to add members.');
     } finally { setAddSaving(false); }
   };

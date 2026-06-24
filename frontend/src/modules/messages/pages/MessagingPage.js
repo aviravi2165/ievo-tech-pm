@@ -25,9 +25,29 @@ function useToast() {
 export default function MessagingPage({ currentUser }) {
    const [activeConv,  setActiveConv]  = useState(null);
   const { count: unreadCount, decrement, activeConvIdRef } = useUnreadCount();
-  const { groups, loading: groupsLoading, createGroup, disableGroup, enableGroup, deleteGroup, hideGroup } = useGroups();
+  const {
+  groups,
+  loading: groupsLoading,
+  createGroup,
+  disableGroup,
+  enableGroup,
+  deleteGroup,
+  hideGroup,
+  refetch: refetchGroups
+} = useGroups();
   const { socket } = useSocket();
   const { user }   = useAuth();
+  useEffect(() => {
+  const handler = () => {
+    refetchGroups();
+  };
+
+  window.addEventListener('groups-updated', handler);
+
+  return () => {
+    window.removeEventListener('groups-updated', handler);
+  };
+}, [refetchGroups]);
 const { conversations, loading, error: inboxError, refetch, archiveConversation, clearUnreadDot } = useInbox(activeConv?.conversationId);
  
   const [tab,         setTab]         = useState('inbox');
