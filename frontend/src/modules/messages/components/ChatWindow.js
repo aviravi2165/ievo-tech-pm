@@ -21,7 +21,9 @@ export default function ChatWindow({ conversation, currentUserId, onArchive, onB
   const [removing,         setRemoving]          = useState(null); // userId being removed
   const [removeError,      setRemoveError]       = useState('');
   const [highlightedId,    setHighlightedId]     = useState(null);
-  const [newMsgFlash,      setNewMsgFlash]        = useState(false); // pulse when new msg arrives
+  const [showNewPill,      setShowNewPill]        = useState(false); // Case A: scrolled away when a new msg lands in this same chat
+  const [newPillCount,     setNewPillCount]       = useState(0);
+  const [dividerId,        setDividerId]          = useState(null);  // first-unread marker, computed once per open
   const [addingMember,     setAddingMember]      = useState(false);
   const [memberSearch,     setMemberSearch]      = useState('');
   const [searchResults,    setSearchResults]     = useState([]);
@@ -32,6 +34,7 @@ export default function ChatWindow({ conversation, currentUserId, onArchive, onB
   const markedAllRef = useRef(null);
   const bottomRef    = useRef(null);
   const messageNodesRef = useRef({}); // messageId -> DOM node
+  const dividerComputedForRef = useRef(null); // conversationId we've already computed the divider for
 
   const registerMessageRef = (messageId, node) => {
     if (node) messageNodesRef.current[messageId] = node;
@@ -103,7 +106,30 @@ const firstLoadRef = useRef(true);
 
 useEffect(() => {
   firstLoadRef.current = true;
+  dividerComputedForRef.current = null;
+  setDividerId(null);
+  setShowNewPill(false);
+  setNewPillCount(0);
 }, [conversation?.conversationId]);
+
+// Compute the "unread starts here" divider ONCE per conversation open, from
+// the very first load — before markAllRead has had a chance to mark
+// anything read. This snapshot is what was genuinely unread when the
+// thread was opened, and stays frozen for the rest of this viewing session
+// (it intentionally does not move as messages get marked read while you
+// scroll, and won't reappear until you close and reopen the thread fresh).
+useEffect(() => {
+  const cid = conversation?.conversationId;
+  if (!cid || loading || !messages.length) return;
+  if (dividerComputedForRef.current === cid) return;
+  dividerComputedForRef.current = cid;
+
+  const firstUnread = messages.find(m =>
+    String(m.senderId) !== String(currentUserId) &&
+    !m.readReceipts?.some(r => String(r.userId) === String(currentUserId))
+  );
+  setDividerId(firstUnread ? firstUnread.messageId : null);
+}, [conversation?.conversationId, loading, messages, currentUserId]);
 
 useEffect(() => {
   if (
@@ -144,23 +170,38 @@ useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }
 }, [messages.length, currentUserId]);
-  // Wire: when a new message arrives while chat is open, mark it read + flash
+  // Wire: when a new message arrives while chat is open, mark it read and
+  // show the "new message" pill — but only if the user has scrolled away
+  // from the bottom. If they're already at the bottom, the existing
+  // auto-scroll effect (below, keyed off messages.length) already brings
+  // it into view, so a pill there would just be redundant noise.
   useEffect(() => {
     if (!onNewMessageRef) return;
     onNewMessageRef.current = (payload) => {
-      // Mark the new messages read immediately
       if (currentUserId) markAllRead(currentUserId);
-      // Flash the chat window to grab attention if sender != me
+
       const isMine = payload.senderUserId &&
         String(payload.senderUserId) === String(currentUserId);
-      if (!isMine) {
-        setNewMsgFlash(true);
-        setTimeout(() => setNewMsgFlash(false), 1200);
-        toast?.(`New message from ${payload.senderName || 'someone'}`, 'info');
+      if (isMine) return;
+
+      const container = document.querySelector('.gmail-thread-view');
+      const distanceFromBottom = container
+        ? container.scrollHeight - container.scrollTop - container.clientHeight
+        : 0;
+
+      if (distanceFromBottom > 120) {
+        setShowNewPill(true);
+        setNewPillCount(c => c + 1);
       }
     };
     return () => { if (onNewMessageRef) onNewMessageRef.current = null; };
-  }, [onNewMessageRef, currentUserId, markAllRead, toast]);
+  }, [onNewMessageRef, currentUserId, markAllRead]);
+
+  const handleJumpToBottom = () => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    setShowNewPill(false);
+    setNewPillCount(0);
+  };
 
   // Mark all unread once on open
   // FIX Bug 3 (part 2): removed `messages.length` from the dependency array.
@@ -520,32 +561,58 @@ useEffect(() => {
       )}
 
       {/* ── Messages ── */}
-      <div className="gmail-thread-view">
-        {loading && <div className="loader-wrap"><div className="spinner"/></div>}
-        {error && (
-          <div style={{ color: 'var(--danger)', padding: 16, fontSize: 13 }}>
-            Failed to load.{' '}
-            <button onClick={refetch}
-              style={{ color: 'var(--gold)', background: 'none', border: 'none', cursor: 'pointer' }}>
-              Retry
-            </button>
-          </div>
+      <div className="thread-scroll-wrap">
+        <div
+          className="gmail-thread-view"
+          onScroll={(e) => {
+            if (!showNewPill) return;
+            const el = e.currentTarget;
+            const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+            if (distanceFromBottom < 80) {
+              setShowNewPill(false);
+              setNewPillCount(0);
+            }
+          }}
+        >
+          {loading && <div className="loader-wrap"><div className="spinner"/></div>}
+          {error && (
+            <div style={{ color: 'var(--danger)', padding: 16, fontSize: 13 }}>
+              Failed to load.{' '}
+              <button onClick={refetch}
+                style={{ color: 'var(--gold)', background: 'none', border: 'none', cursor: 'pointer' }}>
+                Retry
+              </button>
+            </div>
+          )}
+          {!loading && messages.map(msg => (
+            <div key={msg.messageId}>
+              {msg.messageId === dividerId && (
+                <div className="unread-divider"><span>New messages</span></div>
+              )}
+              <MessageBubble
+                message={msg}
+                isMine={String(msg.senderId) === String(currentUserId)}
+                isGroup={isGroup}
+                currentUserId={currentUserId}
+                isLastSentByMe={msg.messageId === lastSentByMeId}
+                onReply={canReply ? setReplyingTo : null}
+                onJumpToParent={handleJumpToParent}
+                isHighlighted={msg.messageId === highlightedId}
+                registerRef={registerMessageRef}
+              />
+            </div>
+          ))}
+          <div ref={bottomRef}/>
+        </div>
+
+        {showNewPill && (
+          <button className="new-msg-pill" onClick={handleJumpToBottom}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>
+            </svg>
+            {newPillCount > 1 ? `${newPillCount} new messages` : 'New message'}
+          </button>
         )}
-        {!loading && messages.map(msg => (
-          <MessageBubble
-            key={msg.messageId}
-            message={msg}
-            isMine={String(msg.senderId) === String(currentUserId)}
-            isGroup={isGroup}
-            currentUserId={currentUserId}
-            isLastSentByMe={msg.messageId === lastSentByMeId}
-            onReply={canReply ? setReplyingTo : null}
-            onJumpToParent={handleJumpToParent}
-            isHighlighted={msg.messageId === highlightedId}
-            registerRef={registerMessageRef}
-          />
-        ))}
-        <div ref={bottomRef}/>
       </div>
 
       {/* ── Composer (or read-only banner when the group has been disabled) ── */}

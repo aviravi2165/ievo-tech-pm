@@ -131,7 +131,7 @@ export default function InboxSidebar({
           return (
             <div
               key={conv.conversationId}
-              className={`msg-conv-item ${activeId === conv.conversationId ? 'active' : ''} ${conv.unreadCount > 0 ? 'unread' : ''}`}
+              className={`msg-conv-item ${activeId === conv.conversationId ? 'active' : ''} ${conv.unreadCount > 0 ? 'unread' : ''} ${conv._flash ? 'conv-flash' : ''}`}
               onClick={() => onSelect(conv)}
             >
               <div className="conv-avatar">{initials(name)}</div>

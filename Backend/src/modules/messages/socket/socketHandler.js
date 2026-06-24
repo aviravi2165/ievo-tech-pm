@@ -118,8 +118,17 @@ function broadcastMarkRead({ conversationId, messageId, userId, readAt, userName
   });
 }
 
-function closeSocket() {
-  if (io) { io.close(); io = null; }
+function closeSocket(callback) {
+  if (io) {
+    // io.close() also closes the underlying httpServer it was attached to
+    // (it owns it, since we passed the raw http.Server into `new Server(...)`
+    // in initSocket). Callers should NOT also call server.close() separately
+    // afterward — that was causing a hung shutdown (see server.js).
+    io.close(callback);
+    io = null;
+  } else if (callback) {
+    callback();
+  }
 }
 
 function getIo() { return io; }

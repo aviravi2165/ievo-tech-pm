@@ -90,10 +90,22 @@ export function useInbox(activeConversationId = null) {
               isMine || isCurrentlyOpen
                 ? (exists.unreadCount || 0)          // already reading or own message — no dot
                 : (exists.unreadCount || 0) + 1,     // genuinely new unread
+            // Brief pulse highlight on the row — a quiet visual cue for a
+            // message landing in a conversation other than the one you're
+            // currently reading. Cleared below after ~1.6s.
+            _flash: !isMine && !isCurrentlyOpen,
           },
           ...prev.filter(c => c.conversationId !== payload.conversationId),
         ];
       });
+
+      if (!isMine && !isCurrentlyOpen) {
+        setTimeout(() => {
+          setConversations(prev => prev.map(c =>
+            c.conversationId === payload.conversationId ? { ...c, _flash: false } : c
+          ));
+        }, 1600);
+      }
     };
 
     socket.on('NEW_MESSAGE', handler);

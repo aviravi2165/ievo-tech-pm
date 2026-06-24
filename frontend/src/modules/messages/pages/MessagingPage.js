@@ -14,10 +14,10 @@ import { messageApi }     from '../api/messageApi';
 
 function useToast() {
   const [toasts, setToasts] = useState([]);
-  const add = (msg, type = 'info') => {
-    const id = Date.now();
-    setToasts(prev => [...prev, { id, msg, type }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
+  const add = (msg, type = 'info', onClick) => {
+    const id = Date.now() + Math.random();
+    setToasts(prev => [...prev, { id, msg, type, onClick }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
   };
   return { toasts, toast: add };
 }
@@ -94,6 +94,39 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
     socket.on('NEW_MESSAGE', handler);
     return () => socket.off('NEW_MESSAGE', handler);
   }, [socket, user?.userId, fetchSent]);
+
+  // ── Socket: subtle corner toast when a message lands in a DIFFERENT
+  //    conversation than the one currently open. The same-conversation case
+  //    is handled inside ChatWindow itself (the "new message" pill), and the
+  //    inbox row's own brief pulse highlight is handled inside useInbox —
+  //    this is just the cross-conversation "heads up" notice, clickable to
+  //    jump straight there. Skipped entirely for super admins, who don't use
+  //    the inbox/ChatWindow view at all.
+  useEffect(() => {
+    if (!socket || isSuperAdmin) return;
+    const handler = (payload) => {
+      const isMine = payload.senderUserId && user?.userId &&
+        String(payload.senderUserId) === String(user.userId);
+      if (isMine) return;
+
+      const isCurrentlyOpen = activeConv?.conversationId != null &&
+        String(activeConv.conversationId) === String(payload.conversationId);
+      if (isCurrentlyOpen) return; // ChatWindow's own pill already covers this
+
+      toast(
+        payload.senderName ? `New message from ${payload.senderName}` : 'New message',
+        'info',
+        () => {
+          setTab('inbox');
+          setActiveConv({ conversationId: payload.conversationId, subject: payload.subject });
+          activeConvIdRef.current = payload.conversationId;
+          clearUnreadDot(payload.conversationId);
+        }
+      );
+    };
+    socket.on('NEW_MESSAGE', handler);
+    return () => socket.off('NEW_MESSAGE', handler);
+  }, [socket, user?.userId, isSuperAdmin, activeConv?.conversationId, toast, activeConvIdRef, clearUnreadDot]);
 
   // ── Tab change ────────────────────────────────────────────────────────────
   const handleTabChange = (nextTab) => {
@@ -332,7 +365,13 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
       {toasts.length > 0 && (
         <div className="toast-container">
           {toasts.map(t => (
-            <div key={t.id} className={`toast ${t.type}`}>{t.msg}</div>
+            <div
+              key={t.id}
+              className={`toast ${t.type}${t.onClick ? ' toast-clickable' : ''}`}
+              onClick={t.onClick}
+            >
+              {t.msg}
+            </div>
           ))}
         </div>
       )}

@@ -1264,6 +1264,77 @@ html, body, #root {
   flex-direction: column;
 }
 
+.thread-scroll-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* ── "New message" pill — Case A: same chat is open, you've scrolled away ── */
+.new-msg-pill {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1a1d23;
+  color: #fff;
+  border: 1px solid rgba(237, 28, 36, 0.45);
+  border-radius: 20px;
+  padding: 7px 16px;
+  font-size: 12.5px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  z-index: 15;
+  animation: new-msg-pill-in 0.18s ease-out;
+}
+.new-msg-pill:hover { background: #25282f; }
+
+@keyframes new-msg-pill-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* ── Unread divider — separates already-read history from new arrivals ── */
+.unread-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 24px 18px;
+}
+.unread-divider::before,
+.unread-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(237, 28, 36, 0.35);
+}
+.unread-divider span {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #ed1c24;
+  white-space: nowrap;
+}
+
+/* ── Inbox row flash — Case B: a message arrived in a different chat ── */
+@keyframes conv-flash-pulse {
+  0%   { background: rgba(237, 28, 36, 0.14); }
+  100% { background: transparent; }
+}
+.conv-flash {
+  animation: conv-flash-pulse 1.6s ease-out 1;
+}
+
+.toast-clickable { cursor: pointer; }
+.toast-clickable:hover { opacity: 0.92; }
+
 .composer {
   flex-shrink: 0;
 }
