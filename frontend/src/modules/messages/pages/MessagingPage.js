@@ -231,21 +231,23 @@ export default function MessagingPage({ currentUser }) {
         {showGroups && (
           <main className="msg-main msg-main--full">
             <GroupManager
-              threads={isSuperAdmin ? adminThreads : undefined}
-              threadsLoading={adminThreadsLoading}
-              currentTab={tab}
-              onCreate={createGroup}
-              onDisable={handleDisableGroup}
-              onEnable={handleEnableGroup}
-              onDelete={handleDeleteGroup}
-              onHide={handleHideGroup}
-              onDisableThread={handleDisableThread}
-              onEnableThread={handleEnableThread}
-              onDeleteThread={handleDeleteThread}
-              onHideThread={handleHideThread}
-              onOpenConversation={handleOpenGroupConversation}
-              onComposeToGroup={handleComposeToGroup}
-            />
+  groups={groups}
+  loading={groupsLoading}
+  threads={isSuperAdmin ? adminThreads : undefined}
+  threadsLoading={adminThreadsLoading}
+  currentTab={tab}
+  onCreate={createGroup}
+  onDisable={handleDisableGroup}
+  onEnable={handleEnableGroup}
+  onDelete={handleDeleteGroup}
+  onHide={handleHideGroup}
+  onDisableThread={handleDisableThread}
+  onEnableThread={handleEnableThread}
+  onDeleteThread={handleDeleteThread}
+  onHideThread={handleHideThread}
+  onOpenConversation={handleOpenGroupConversation}
+  onComposeToGroup={handleComposeToGroup}
+/>
           </main>
         )}
       </div>
