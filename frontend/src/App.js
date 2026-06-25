@@ -1,13 +1,26 @@
 import './shell/assets/shell.css';
-import { AuthProvider, useAuth } from './modules/auth/AuthContext';
-import { SocketProvider } from './modules/messages/context/SocketContext';
-import LoginPage from './modules/auth/LoginPage';
-import ForceChangePasswordPage from './modules/auth/ForceChangePasswordPage';
-import AppShell from './shell/AppShell';
+import { AuthProvider, useAuth }       from './modules/auth/AuthContext';
+import { SocketProvider }              from './modules/messages/context/SocketContext';
+import { MessagingProvider }           from './modules/messages/context/MessagingContext';
+import LoginPage                       from './modules/auth/LoginPage';
+import ForceChangePasswordPage         from './modules/auth/ForceChangePasswordPage';
+import AppShell                        from './shell/AppShell';
 
 /**
  * Inner component — reads from AuthContext.
  * Shows LoginPage when logged out, AppShell when logged in.
+ *
+ * Provider order (innermost → outermost dependency):
+ *   AuthProvider → SocketProvider → MessagingProvider → AppShell
+ *
+ * MessagingProvider must be:
+ *   • inside SocketProvider  — it calls useSocket() for socket events
+ *   • inside AuthProvider    — it calls useAuth() for user identity
+ *   • ABOVE AppShell         — both MessagePanel (badge) and MessagingPage
+ *                              (inbox/chat) call useMessaging(); placing the
+ *                              provider here means it is always mounted,
+ *                              so the unread badge updates via socket even
+ *                              when the message panel is collapsed.
  */
 function AuthGate() {
   const { user, token, loading } = useAuth();
@@ -41,7 +54,9 @@ function AuthGate() {
 
   return (
     <SocketProvider token={token}>
-      <AppShell currentUser={user} />
+      <MessagingProvider>
+        <AppShell currentUser={user} />
+      </MessagingProvider>
     </SocketProvider>
   );
 }
