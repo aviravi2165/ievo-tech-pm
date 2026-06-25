@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useMessaging } from '../context/MessagingContext';
 
 function fmtTime(dateStr) {
   if (!dateStr) return '';
@@ -57,10 +58,10 @@ export default function InboxSidebar({
   onSelect,
   onCompose,
   hideTabs = false,
-  unreadCount = 0,
   tab,
   onTabChange,
 }) {
+  const { unreadCount } = useMessaging();
   const [search, setSearch] = useState('');
 
   const filtered = useMemo(() => {

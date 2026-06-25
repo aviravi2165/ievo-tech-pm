@@ -1,16 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import MessageTabBar   from '../components/MessageTabBar';
-import InboxSidebar    from '../components/InboxSidebar';
-import ChatWindow      from '../components/ChatWindow';
-import ComposeModal    from '../components/ComposeModal';
-import GroupManager    from '../components/GroupManager';
-import { useInbox }       from '../hooks/useInbox';
-import { useUnreadCount } from '../hooks/useUnreadCount';
-import { useGroups }      from '../hooks/useGroups';
-import { useThreads }     from '../hooks/useThreads';
-import { useSocket }      from '../context/SocketContext';
-import { useAuth }        from '../../auth/AuthContext';
-import { messageApi }     from '../api/messageApi';
+import MessageTabBar from '../components/MessageTabBar';
+import InboxSidebar  from '../components/InboxSidebar';
+import ChatWindow    from '../components/ChatWindow';
+import ComposeModal  from '../components/ComposeModal';
+import GroupManager  from '../components/GroupManager';
+import { useMessaging }  from '../context/MessagingContext';
+import { useGroups }     from '../hooks/useGroups';
+import { useThreads }    from '../hooks/useThreads';
+import { useSocket }     from '../context/SocketContext';
+import { useAuth }       from '../../auth/AuthContext';
+import { messageApi }    from '../api/messageApi';
 
 function useToast() {
   const [toasts, setToasts] = useState([]);
@@ -23,65 +22,63 @@ function useToast() {
 }
 
 export default function MessagingPage({ currentUser }) {
-   const [activeConv,  setActiveConv]  = useState(null);
-  const { count: unreadCount, decrement, activeConvIdRef } = useUnreadCount();
+  // ── Context (replaces useInbox + useUnreadCount prop drilling) ─────────────
   const {
-  groups,
-  loading: groupsLoading,
-  createGroup,
-  disableGroup,
-  enableGroup,
-  deleteGroup,
-  hideGroup,
-  refetch: refetchGroups
-} = useGroups();
-  const { socket } = useSocket();
-  const { user }   = useAuth();
-  useEffect(() => {
-  const handler = () => {
-    refetchGroups();
-  };
+    unreadCount,
+    decrement,
+    conversations,
+    inboxLoading,
+    inboxError,
+    fetchInbox,
+    clearUnreadDot,
+    archiveConversation,
+    activeConversationId,
+    setActiveConversationId,
+    activeConvIdRef,
+  } = useMessaging();
 
-  window.addEventListener('groups-updated', handler);
-
-  return () => {
-    window.removeEventListener('groups-updated', handler);
-  };
-}, [refetchGroups]);
-const { conversations, loading, error: inboxError, refetch, archiveConversation, clearUnreadDot } = useInbox(activeConv?.conversationId);
- 
-  const [tab,         setTab]         = useState('inbox');
-  const [sentConvs,   setSentConvs]   = useState([]);
-  const [sentLoading, setSentLoading] = useState(false);
-  const [sentError,   setSentError]   = useState(null);
-  const [composeOpen, setComposeOpen] = useState(false);
-
-  // FIX Bug 2: pre-filled recipients when opening compose from a group card
+  // ── Local UI state ─────────────────────────────────────────────────────────
+  const [activeConv,   setActiveConv]   = useState(null);
+  const [tab,          setTab]          = useState('inbox');
+  const [sentConvs,    setSentConvs]    = useState([]);
+  const [sentLoading,  setSentLoading]  = useState(false);
+  const [sentError,    setSentError]    = useState(null);
+  const [composeOpen,  setComposeOpen]  = useState(false);
   const [composeInitialRecipients, setComposeInitialRecipients] = useState([]);
   const [composeInitialMode,       setComposeInitialMode]       = useState('bcc');
 
-  // Always stacked: open conversation takes the full panel width with no
-  // inbox list beside it, regardless of screen resolution. The list and
-  // the thread are mutually exclusive — selecting a conversation hides
-  // the list, and "back" returns to the list.
-  const isNarrow = true;
+  const isNarrow  = true;
   const layoutRef = useRef(null);
   const { toasts, toast } = useToast();
-  // Support multiple possible user shape variants from the API
+  const { socket } = useSocket();
+  const { user }   = useAuth();
+
   const isSuperAdmin = Boolean(
     user?.isSuperAdmin || user?.is_super_admin || user?.isAdmin || user?.is_admin ||
     user?.user_type === 'admin' || user?.userType === 'admin' || user?.role === 'super_admin'
   );
 
-  // Super-admin-only: every non-group thread in the system, with the same
-  // disable/enable/delete/hide governance the Groups tab already has.
+  // ── Groups ─────────────────────────────────────────────────────────────────
+  const {
+    groups, loading: groupsLoading,
+    createGroup, disableGroup, enableGroup, deleteGroup, hideGroup,
+    refetch: refetchGroups,
+  } = useGroups();
+
+  useEffect(() => {
+    const handler = () => refetchGroups();
+    window.addEventListener('groups-updated', handler);
+    return () => window.removeEventListener('groups-updated', handler);
+  }, [refetchGroups]);
+
+  // ── Super-admin thread governance ──────────────────────────────────────────
   const {
     threads: adminThreads, loading: adminThreadsLoading,
     disableThread, enableThread, deleteThread, hideThread,
     refetch: refetchAdminThreads,
   } = useThreads(isSuperAdmin);
 
-  // ── Load sent tab ─────────────────────────────────────────────────────────
+  // ── Sent tab ───────────────────────────────────────────────────────────────
   const fetchSent = useCallback(() => {
     setSentLoading(true);
     setSentError(null);
@@ -98,10 +95,10 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
   // Redirect super admins away from inbox on initial load
   useEffect(() => {
     if (isSuperAdmin && (tab === 'inbox' || tab === 'sent')) setTab('threads');
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSuperAdmin]); // intentionally omits tab — only redirect on initial auth resolution
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuperAdmin]);
 
-  // ── Socket: refresh sent when current user sends ──────────────────────────
+  // ── Socket: refresh sent when current user sends ───────────────────────────
   useEffect(() => {
     if (!socket) return;
     const handler = (payload) => {
@@ -113,13 +110,11 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
     return () => socket.off('NEW_MESSAGE', handler);
   }, [socket, user?.userId, fetchSent]);
 
-  // ── Socket: subtle corner toast when a message lands in a DIFFERENT
-  //    conversation than the one currently open. The same-conversation case
-  //    is handled inside ChatWindow itself (the "new message" pill), and the
-  //    inbox row's own brief pulse highlight is handled inside useInbox —
-  //    this is just the cross-conversation "heads up" notice, clickable to
-  //    jump straight there. Skipped entirely for super admins, who don't use
-  //    the inbox/ChatWindow view at all.
+  // ── Socket: cross-conversation toast ──────────────────────────────────────
+  // MessagingContext already handles badge and inbox list updates.
+  // This listener is only responsible for the cross-conversation corner toast
+  // so the user can jump directly to a conversation that arrived while they
+  // were reading a different one.
   useEffect(() => {
     if (!socket || isSuperAdmin) return;
     const handler = (payload) => {
@@ -127,24 +122,18 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
         String(payload.senderUserId) === String(user.userId);
       if (isMine) return;
 
-      const isCurrentlyOpen = activeConv?.conversationId != null &&
-        String(activeConv.conversationId) === String(payload.conversationId);
-      if (isCurrentlyOpen) return; // ChatWindow's own pill already covers this
+      const isOpen = activeConvIdRef.current != null &&
+        String(activeConvIdRef.current) === String(payload.conversationId);
+      if (isOpen) return;
 
       toast(
         payload.senderName ? `New message from ${payload.senderName}` : 'New message',
         'info',
         () => {
           setTab('inbox');
-          setActiveConv({ conversationId: payload.conversationId, subject: payload.subject });
-          activeConvIdRef.current = payload.conversationId;
-          // FIX: this previously only cleared the sidebar row's dot via
-          // clearUnreadDot, but never told useUnreadCount's global badge
-          // that this conversation was just read — so opening a conversation
-          // via this toast (rather than by clicking its inbox row directly)
-          // left the header badge count permanently out of sync with the
-          // sidebar, since it never got the matching decrement() call that
-          // every other "open a conversation" path already makes.
+          const conv = { conversationId: payload.conversationId, subject: payload.subject };
+          setActiveConv(conv);
+          setActiveConversationId(payload.conversationId);
           decrement(payload.conversationId);
           clearUnreadDot(payload.conversationId);
         }
@@ -152,58 +141,44 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
     };
     socket.on('NEW_MESSAGE', handler);
     return () => socket.off('NEW_MESSAGE', handler);
-  }, [socket, user?.userId, isSuperAdmin, activeConv?.conversationId, toast, activeConvIdRef, clearUnreadDot, decrement]);
+  }, [socket, user?.userId, isSuperAdmin, toast, activeConvIdRef,
+      setActiveConversationId, decrement, clearUnreadDot]);
 
-  // ── Tab change ────────────────────────────────────────────────────────────
+  // ── Navigation ─────────────────────────────────────────────────────────────
   const handleTabChange = (nextTab) => {
     setTab(nextTab);
     setActiveConv(null);
+    setActiveConversationId(null);
   };
 
-  // ── Derived display state ─────────────────────────────────────────────────
-  const isMailTab        = tab === 'inbox' || tab === 'sent' || tab === 'threads';
-  const displayedConvs   = tab === 'sent' ? sentConvs   : conversations;
-  const displayedLoading = tab === 'sent' ? sentLoading  : loading;
-  const listError        = tab === 'sent' ? sentError    : inboxError;
-
-  // ── Select conversation ───────────────────────────────────────────────────
+  // ── Select conversation ────────────────────────────────────────────────────
   const handleSelectConv = (conv) => {
     setActiveConv(conv);
-    activeConvIdRef.current = conv.conversationId;
-    // Always clear dot + decrement — don't rely on stale unreadCount from inbox row
-    // decrement() is a no-op internally if the conv isn't in the unread set
+    setActiveConversationId(conv.conversationId);
     decrement(conv.conversationId);
     clearUnreadDot(conv.conversationId);
   };
 
-  // ── Open group conversation from Groups tab (existing thread found) ───────
+  // ── Open group conversation ────────────────────────────────────────────────
   const handleOpenGroupConversation = useCallback((conv) => {
-    refetch();
+    fetchInbox();
     setTab('inbox');
     setActiveConv(conv);
-    // Fix 3: tell useUnreadCount which conv is open so its socket handler
-    // doesn't increment the badge for messages arriving in this conversation
-    // while the user is already reading it.
-    activeConvIdRef.current = conv.conversationId;
-    // Fix 4: clear the sidebar unread dot immediately (same as handleSelectConv).
+    setActiveConversationId(conv.conversationId);
     clearUnreadDot(conv.conversationId);
     if (conv.unreadCount > 0) decrement(conv.conversationId);
-  }, [refetch, decrement, clearUnreadDot, activeConvIdRef]);
+  }, [fetchInbox, setActiveConversationId, decrement, clearUnreadDot]);
 
-  // ── FIX Bug 2: group has no thread yet → open compose pre-filled ──────────
+  // ── Compose ────────────────────────────────────────────────────────────────
   const handleComposeToGroup = useCallback((group) => {
-    const groupRecipient = {
-      id:       `g-${group.groupId}`,
-      _groupId: group.groupId,
-      label:    group.groupName,
-      type:     'group',
-    };
-    setComposeInitialRecipients([groupRecipient]);
+    setComposeInitialRecipients([{
+      id: `g-${group.groupId}`, _groupId: group.groupId,
+      label: group.groupName, type: 'group',
+    }]);
     setComposeInitialMode('group_thread');
     setComposeOpen(true);
   }, []);
 
-  // ── Open compose (blank) ──────────────────────────────────────────────────
   const handleOpenCompose = useCallback(() => {
     setComposeInitialRecipients([]);
     setComposeInitialMode('bcc');
@@ -216,92 +191,79 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
     setComposeInitialMode('bcc');
   }, []);
 
-  // Disabling/enabling/hiding a group changes which conversations show up
-  // in Inbox/Sent (frozen chats still show but read-only; hidden groups
-  // disappear from the caller's own tabs), so refresh both after each.
-  const handleDisableGroup = useCallback(async (groupId) => {
-    await disableGroup(groupId);
-    refetch();
-    fetchSent();
-  }, [disableGroup, refetch, fetchSent]);
-
-  const handleEnableGroup = useCallback(async (groupId) => {
-    await enableGroup(groupId);
-    refetch();
-    fetchSent();
-  }, [enableGroup, refetch, fetchSent]);
-
-  const handleDeleteGroup = useCallback(async (groupId) => {
-    await deleteGroup(groupId);
-    refetch();
-    fetchSent();
-  }, [deleteGroup, refetch, fetchSent]);
-
-  const handleHideGroup = useCallback(async (groupId) => {
-    await hideGroup(groupId);
-    refetch();
-    fetchSent();
-  }, [hideGroup, refetch, fetchSent]);
-
-  // ── Threads tab (super admin governance) ───────────────────────────────────
-  const handleDisableThread = useCallback(async (conversationId) => {
-    await disableThread(conversationId);
-    refetch();
-    fetchSent();
-  }, [disableThread, refetch, fetchSent]);
-
-  const handleEnableThread = useCallback(async (conversationId) => {
-    await enableThread(conversationId);
-    refetch();
-    fetchSent();
-  }, [enableThread, refetch, fetchSent]);
-
-  const handleDeleteThread = useCallback(async (conversationId) => {
-    await deleteThread(conversationId);
-    refetch();
-    fetchSent();
-  }, [deleteThread, refetch, fetchSent]);
-
-  const handleHideThread = useCallback(async (conversationId) => {
-    await hideThread(conversationId);
-    refetch();
-    fetchSent();
-  }, [hideThread, refetch, fetchSent]);
-
-
-
-  // ── After sending ─────────────────────────────────────────────────────────
   const handleSent = () => {
-    refetch();
+    fetchInbox();
     fetchSent();
     toast('Message sent.', 'success');
   };
 
-  // ── Layout flags ──────────────────────────────────────────────────────────
-  // Stacked layout only: show the list OR the open thread, never both —
-  // an open thread always takes the full panel width.
-  // For super-admins we hide the left inbox/sent list and never open
-  // the chat window — they manage threads/groups from the manager panel.
-  const showList      = isMailTab && !activeConv && !isSuperAdmin;
-  const showThread     = isMailTab && !!activeConv && !isSuperAdmin;
-  const showGroups     = tab === 'groups' || (isSuperAdmin && tab === 'threads');
-  // In stacked layout, the list already fills the panel when no conv is open,
-  // so we never show the empty hint alongside it.
-  const showEmptyHint  = false;
+  // ── Group actions ──────────────────────────────────────────────────────────
+  const handleDisableGroup = useCallback(async (groupId) => {
+    await disableGroup(groupId); fetchInbox(); fetchSent();
+  }, [disableGroup, fetchInbox, fetchSent]);
+
+  const handleEnableGroup = useCallback(async (groupId) => {
+    await enableGroup(groupId); fetchInbox(); fetchSent();
+  }, [enableGroup, fetchInbox, fetchSent]);
+
+  const handleDeleteGroup = useCallback(async (groupId) => {
+    await deleteGroup(groupId); fetchInbox(); fetchSent();
+  }, [deleteGroup, fetchInbox, fetchSent]);
+
+  const handleHideGroup = useCallback(async (groupId) => {
+    await hideGroup(groupId); fetchInbox(); fetchSent();
+  }, [hideGroup, fetchInbox, fetchSent]);
+
+  // ── Thread governance (super admin) ───────────────────────────────────────
+  const handleDisableThread = useCallback(async (id) => {
+    await disableThread(id); fetchInbox(); fetchSent();
+  }, [disableThread, fetchInbox, fetchSent]);
+
+  const handleEnableThread = useCallback(async (id) => {
+    await enableThread(id); fetchInbox(); fetchSent();
+  }, [enableThread, fetchInbox, fetchSent]);
+
+  const handleDeleteThread = useCallback(async (id) => {
+    await deleteThread(id); fetchInbox(); fetchSent();
+  }, [deleteThread, fetchInbox, fetchSent]);
+
+  const handleHideThread = useCallback(async (id) => {
+    await hideThread(id); fetchInbox(); fetchSent();
+  }, [hideThread, fetchInbox, fetchSent]);
+
+  // ── Archive ────────────────────────────────────────────────────────────────
+  const handleArchive = async () => {
+    if (!activeConv) return;
+    try {
+      await archiveConversation(activeConv.conversationId);
+      setActiveConv(null);
+      setActiveConversationId(null);
+      toast('Conversation archived.', 'success');
+    } catch {
+      toast('Failed to archive.', 'error');
+    }
+  };
+
+  // ── Derived display state ──────────────────────────────────────────────────
+  const isMailTab        = tab === 'inbox' || tab === 'sent' || tab === 'threads';
+  const displayedConvs   = tab === 'sent' ? sentConvs   : conversations;
+  const displayedLoading = tab === 'sent' ? sentLoading  : inboxLoading;
+  const listError        = tab === 'sent' ? sentError    : inboxError;
+
+  const showList     = isMailTab && !activeConv && !isSuperAdmin;
+  const showThread   = isMailTab && !!activeConv && !isSuperAdmin;
+  const showGroups   = tab === 'groups' || (isSuperAdmin && tab === 'threads');
+  const showEmptyHint = false;
 
   return (
     <div className="msg-module-screen">
       <MessageTabBar
         tab={tab}
         onTabChange={handleTabChange}
-        unreadCount={unreadCount}
         isSuperAdmin={isSuperAdmin}
       />
 
-      <div
-        ref={layoutRef}
-        className="msg-layout msg-layout--stacked"
-      >
+      <div ref={layoutRef} className="msg-layout msg-layout--stacked">
         {showList && (
           <InboxSidebar
             hideTabs
@@ -311,7 +273,6 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
             activeId={activeConv?.conversationId}
             onSelect={handleSelectConv}
             onCompose={handleOpenCompose}
-            unreadCount={unreadCount}
             tab={tab}
             onTabChange={handleTabChange}
           />
@@ -322,7 +283,11 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
             <ChatWindow
               conversation={activeConv}
               currentUserId={currentUser?.userId}
-              onBack={() => { setActiveConv(null); activeConvIdRef.current = null; }}
+              onBack={() => {
+                setActiveConv(null);
+                setActiveConversationId(null);
+              }}
+              onArchive={handleArchive}
               toast={toast}
               groups={groups}
             />
@@ -334,9 +299,6 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
             <GroupManager
               groups={groups}
               loading={groupsLoading}
-              // when super admin is viewing, surface ALL system threads
-              // (not just their own inbox) in the manager, with the same
-              // disable/enable/delete/hide controls groups already have
               threads={isSuperAdmin ? adminThreads : undefined}
               threadsLoading={adminThreadsLoading}
               currentTab={tab}
@@ -364,12 +326,8 @@ const { conversations, loading, error: inboxError, refetch, archiveConversation,
               </svg>
               <h3>Select a conversation</h3>
               <p>Choose from the list or compose a new message.</p>
-              <button
-                type="button"
-                className="msg-compose-btn"
-                style={{ marginTop: 8 }}
-                onClick={handleOpenCompose}
-              >
+              <button type="button" className="msg-compose-btn"
+                style={{ marginTop: 8 }} onClick={handleOpenCompose}>
                 New Message
               </button>
             </div>
