@@ -1,14 +1,10 @@
-import { useMessaging }       from '../../modules/messages/context/MessagingContext';
-import CommunicationModule   from '../../modules/messages/CommunicationModule';
+import { useMessaging }     from '../../modules/messages/context/MessagingContext';
+import CommunicationModule  from '../../modules/messages/CommunicationModule';
 
 /**
- * Collapsible right rail — communication module always available.
- *
- * MessagingProvider now lives in App.js (inside SocketProvider, above
- * AppShell), so it is always mounted regardless of whether this panel is
- * open or collapsed. useMessaging() is therefore safe to call directly —
- * no try/catch fallback needed, and the unread badge updates via socket
- * events even when the panel is closed.
+ * Collapsible right rail — communication module.
+ * MessagingProvider lives in AppShell (above this component),
+ * so useMessaging() is always safe to call directly here.
  */
 export default function MessagePanel({ currentUser, open, onToggle }) {
   const { unreadCount } = useMessaging();

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useMemo, useState } from 'react';
 import MessageBubble from './MessageBubble';
 import Composer      from './Composer';
-import { useThread } from '../hooks/useThread';
+import { useThread }    from '../hooks/useThread';
+import { useMessaging } from '../context/MessagingContext';
 import { messageApi } from '../api/messageApi';
 import { groupApi }   from '../api/groupApi';
 import api            from '../api/axiosInstance';
@@ -12,7 +13,8 @@ const CONV_TYPE_LABEL = {
   group_thread: { label: 'Group Chat', color: 'var(--gold)' },
 };
 
-export default function ChatWindow({ conversation, currentUserId, onBack, toast, groups = [] }) {
+export default function ChatWindow({ conversation, onBack }) {
+  const { currentUserId, toast, groups = [] } = useMessaging();
   const { messages, conversation: threadConv, loading, error, markAllRead, sendReply, refetch, onNewMessageRef } =
     useThread(conversation?.conversationId);
 

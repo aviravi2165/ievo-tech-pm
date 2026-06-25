@@ -3,6 +3,7 @@ import { messageApi } from '../api/messageApi';
 import { groupApi }   from '../api/groupApi';
 import { fileApi }    from '../api/fileApi';
 import { useAuth }    from '../../auth/AuthContext';
+import { useMessaging } from '../context/MessagingContext';
 import api            from '../api/axiosInstance';
 import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB } from '../api/allowedFileTypes';
 
@@ -243,7 +244,8 @@ const MODES = [
 ];
 
 // ── Main ComposeModal ─────────────────────────────────────────────────────────
-export default function ComposeModal({ onClose, onSent, groups = [], initialRecipients = [], initialMode = 'bcc' }) {
+export default function ComposeModal({ onClose, onSent, initialRecipients = [], initialMode = 'bcc' }) {
+  const { groups = [] } = useMessaging();
   const { user } = useAuth();
   const currentUserId = user?.userId;
 
