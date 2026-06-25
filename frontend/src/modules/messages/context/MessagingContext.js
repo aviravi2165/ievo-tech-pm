@@ -1,30 +1,27 @@
 /**
  * MessagingContext.js
  *
- * Single source of truth for all messaging state that previously required
- * either prop-drilling or the cross-instance window.dispatchEvent hack:
+ * Single source of truth for all messaging state.
  *
- *   • unreadCount  — global badge shown in MessagePanel toggle and inbox tab
- *   • decrement    — called when a conversation is opened; lowers badge immediately
- *   • conversations / clearUnreadDot / refetchInbox — inbox list state
- *   • activeConversationId — which conversation is currently open; shared
- *                            between useUnreadCount's socket handler and
- *                            useInbox's socket handler so neither needs a
- *                            prop or a cross-instance event to know
- *   • setActiveConversationId — called by MessagingPage when a conversation
- *                               is selected or closed
+ * Design: purely socket-driven after the initial page load.
  *
- * Both MessagePanel (header badge) and MessagingPage (inbox + chat) consume
- * this context, so they always see the same count and the same active
- * conversation — no cross-instance window events, no activeConvIdRef prop
- * threading, no duplicate socket listeners.
+ *   INITIAL LOAD  — fetchInbox() runs once on mount; loads all conversation
+ *                   rows including per-conversation unreadCount from the server.
  *
- * Usage:
- *   // Wrap once, high up in the tree (currently in CommunicationModule or App)
- *   <MessagingProvider currentUser={user}>...</MessagingProvider>
+ *   AFTER THAT    — socket events (NEW_MESSAGE, MARK_READ) mutate the in-memory
+ *                   conversations array directly. No timers, no polling, no
+ *                   debounced server re-syncs.
  *
- *   // Anywhere inside:
- *   const { unreadCount, decrement, conversations, ... } = useMessaging();
+ *   unreadCount   — derived inline from conversations state:
+ *                     conversations.filter(c => c.unreadCount > 0).length
+ *                   It updates instantly whenever a conversation row changes,
+ *                   with zero extra HTTP calls.
+ *
+ *   Brand-new conversation  — when a NEW_MESSAGE arrives for a conversationId
+ *                   that isn't in the current list yet (first message in a new
+ *                   thread), fetchInbox() is called once to pull the new row.
+ *                   That is the only non-initial server call and it is
+ *                   triggered by a socket event, not a timer.
  */
 
 import {
@@ -42,9 +39,8 @@ export function MessagingProvider({ children }) {
   const { user }   = useAuth();
 
   // ── Active conversation ────────────────────────────────────────────────────
-  // Stored as a ref AND state:
-  //   • ref  — read synchronously inside socket handlers without stale closure
-  //   • state — triggers re-renders in consumers that need it (MessagingPage)
+  // ref  — read synchronously inside socket handlers (no stale closure)
+  // state — drives re-renders in consumers
   const activeConvIdRef = useRef(null);
   const [activeConversationId, _setActiveConvId] = useState(null);
 
@@ -53,44 +49,13 @@ export function MessagingProvider({ children }) {
     _setActiveConvId(id ?? null);
   }, []);
 
-  // ── Unread badge ───────────────────────────────────────────────────────────
-  const unreadConvIds   = useRef(new Set());
-  const refreshTimerRef = useRef(null);
-  const [unreadCount, setUnreadCount] = useState(0);
-
-  const refreshUnread = useCallback(async () => {
-    try {
-      const ids   = await messageApi.getUnreadConversationIds();
-      const idSet = new Set(ids);
-      unreadConvIds.current = idSet;
-      setUnreadCount(idSet.size);
-    } catch {
-      try {
-        const n = await messageApi.getUnreadCount();
-        setUnreadCount(n);
-      } catch { /* silent */ }
-    }
-  }, []);
-
-  // Load on mount
-  useEffect(() => { refreshUnread(); }, [refreshUnread]);
-
-  // Called when a conversation is opened — drops badge immediately, then
-  // does a debounced server re-sync to catch any additional marks made inside
-  // the thread.
-  const decrement = useCallback((conversationId) => {
-    if (unreadConvIds.current.has(conversationId)) {
-      unreadConvIds.current.delete(conversationId);
-      setUnreadCount(prev => Math.max(0, prev - 1));
-    }
-    clearTimeout(refreshTimerRef.current);
-    refreshTimerRef.current = setTimeout(() => refreshUnread(), 3000);
-  }, [refreshUnread]);
-
   // ── Inbox list ─────────────────────────────────────────────────────────────
   const [conversations, setConversations] = useState([]);
   const [inboxLoading,  setInboxLoading]  = useState(true);
   const [inboxError,    setInboxError]    = useState(null);
+
+  // Tracks which conversationIds are currently rendered so the NEW_MESSAGE
+  // handler knows whether to update a row in-place or fetch the full list.
   const knownIdsRef = useRef(new Set());
 
   const fetchInbox = useCallback(async () => {
@@ -98,8 +63,9 @@ export function MessagingProvider({ children }) {
       setInboxLoading(true);
       const data = await messageApi.getInbox();
       const list = data.conversations || data || [];
-      // Zero out unread dot for the currently-open conversation in case
-      // this fetch races with an in-flight markRead call
+
+      // If a conversation is open while this fetch lands, make sure we don't
+      // re-show its unread dot (mark-read REST calls may still be in flight).
       const active = activeConvIdRef.current;
       setConversations(
         active
@@ -119,16 +85,35 @@ export function MessagingProvider({ children }) {
     }
   }, []);
 
+  // Single server call on mount — everything after this is socket-driven.
   useEffect(() => { fetchInbox(); }, [fetchInbox]);
 
+  // ── unreadCount ────────────────────────────────────────────────────────────
+  // Derived directly from conversations — always in sync, zero extra calls.
+  const unreadCount = conversations.filter(c => c.unreadCount > 0).length;
+
+  // ── clearUnreadDot ─────────────────────────────────────────────────────────
+  // Zeroes the per-row unread indicator when the user opens a conversation.
   const clearUnreadDot = useCallback((conversationId) => {
     setConversations(prev =>
       prev.map(c =>
-        c.conversationId === conversationId ? { ...c, unreadCount: 0 } : c
+        String(c.conversationId) === String(conversationId)
+          ? { ...c, unreadCount: 0 }
+          : c
       )
     );
   }, []);
 
+  // ── decrement ──────────────────────────────────────────────────────────────
+  // Called by MessagingPage when a conversation is opened.
+  // With socket-driven state the badge recalculates from conversations
+  // automatically — clearing the dot is the only action needed.
+  // No debounced server re-sync, no setTimeout.
+  const decrement = useCallback((conversationId) => {
+    clearUnreadDot(conversationId);
+  }, [clearUnreadDot]);
+
+  // ── archiveConversation ────────────────────────────────────────────────────
   const archiveConversation = useCallback(async (conversationId) => {
     await messageApi.archive(conversationId);
     setConversations(prev => prev.filter(c => c.conversationId !== conversationId));
@@ -136,9 +121,8 @@ export function MessagingProvider({ children }) {
   }, []);
 
   // ── Socket: NEW_MESSAGE ────────────────────────────────────────────────────
-  // Single listener handles everything: unread badge, inbox row update,
-  // per-row flash. No prop drilling, no window events, no duplicate listeners
-  // across hook instances.
+  // Handles badge, inbox row update, and flash highlight in one place.
+  // No polling, no timers — state changes are instant.
   useEffect(() => {
     if (!socket) return;
 
@@ -152,43 +136,38 @@ export function MessagingProvider({ children }) {
         activeConvIdRef.current != null &&
         String(activeConvIdRef.current) === String(payload.conversationId);
 
-      // ── Badge ──────────────────────────────────────────────────────────────
-      if (!isMine && !isOpen) {
-        const convId = payload.conversationId;
-        if (!unreadConvIds.current.has(convId)) {
-          unreadConvIds.current.add(convId);
-          setUnreadCount(prev => prev + 1);
-        }
-      }
-
-      // ── Inbox list ─────────────────────────────────────────────────────────
+      // Brand-new conversation not yet in the list — fetch once to get the
+      // full row (subject, participant names, etc.). This is the only
+      // non-initial fetch and it is socket-triggered, not a timer.
       if (!knownIdsRef.current.has(payload.conversationId)) {
-        // Brand-new conversation — fetch full list
-        fetchInbox();
+        if (!isMine) fetchInbox();
         return;
       }
 
       setConversations(prev => {
-        const exists = prev.find(c => c.conversationId === payload.conversationId);
+        const exists = prev.find(c =>
+          String(c.conversationId) === String(payload.conversationId)
+        );
         if (!exists) return prev;
 
         const updated = {
           ...exists,
           latestSender: payload.senderName,
           latestAt:     new Date().toISOString(),
+          // unreadCount drives both the row dot and the header badge (derived)
           unreadCount:
             isMine || isOpen
-              ? (exists.unreadCount || 0)
-              : (exists.unreadCount || 0) + 1,
+              ? (exists.unreadCount || 0)         // own message / already open — no dot
+              : (exists.unreadCount || 0) + 1,    // genuine new unread
           _flash: !isMine && !isOpen,
         };
 
-        // Clear the flash highlight after 1.6 s
+        // Clear the flash highlight after 1.6 s (visual cue only, no server call)
         if (updated._flash) {
           setTimeout(() => {
             setConversations(p =>
               p.map(c =>
-                c.conversationId === payload.conversationId
+                String(c.conversationId) === String(payload.conversationId)
                   ? { ...c, _flash: false }
                   : c
               )
@@ -196,7 +175,9 @@ export function MessagingProvider({ children }) {
           }, 1600);
         }
 
-        return [updated, ...prev.filter(c => c.conversationId !== payload.conversationId)];
+        return [updated, ...prev.filter(c =>
+          String(c.conversationId) !== String(payload.conversationId)
+        )];
       });
     };
 
@@ -204,17 +185,15 @@ export function MessagingProvider({ children }) {
     return () => socket.off('NEW_MESSAGE', handler);
   }, [socket, user?.userId, fetchInbox]);
 
-  // ── MARK_READ: update per-message read receipts in conversations list ──────
+  // ── Socket: MARK_READ ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!socket) return;
     const handler = (payload) => {
-      // Keep per-row unread dots accurate when a co-viewer marks messages
-      // read in a shared conversation (cc / group_thread)
       if (!payload.conversationId || !payload.userId) return;
       setConversations(prev =>
         prev.map(c =>
-          c.conversationId === payload.conversationId && c.unreadCount > 0
-            ? { ...c }  // triggers re-render; actual dot is per-message in ChatWindow
+          String(c.conversationId) === String(payload.conversationId) && c.unreadCount > 0
+            ? { ...c }  // shallow clone triggers re-render in ChatWindow
             : c
         )
       );
@@ -224,10 +203,9 @@ export function MessagingProvider({ children }) {
   }, [socket]);
 
   const value = {
-    // Badge
+    // Badge — derived from conversations, always in sync
     unreadCount,
     decrement,
-    refreshUnread,
 
     // Inbox
     conversations,
@@ -237,10 +215,10 @@ export function MessagingProvider({ children }) {
     clearUnreadDot,
     archiveConversation,
 
-    // Active conversation — set/clear when user opens/closes a thread
+    // Active conversation
     activeConversationId,
     setActiveConversationId,
-    activeConvIdRef,  // for consumers that need synchronous ref access
+    activeConvIdRef,
   };
 
   return (

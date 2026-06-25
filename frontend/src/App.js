@@ -1,101 +1,67 @@
-import './shell/assets/shell.css';
-import { AuthProvider, useAuth }       from './modules/auth/AuthContext';
-import { SocketProvider }              from './modules/messages/context/SocketContext';
-import { MessagingProvider }           from './modules/messages/context/MessagingContext';
-import LoginPage                       from './modules/auth/LoginPage';
-import ForceChangePasswordPage         from './modules/auth/ForceChangePasswordPage';
-import AppShell                        from './shell/AppShell';
+const express  = require('express');
+const cors     = require('cors');
+const { getPool }             = require('./config/db');
+const { registerAllModules }  = require('./modules');
 
 /**
- * Inner component — reads from AuthContext.
- * Shows LoginPage when logged out, AppShell when logged in.
+ * Builds the Express application and registers all ERP module routes.
  *
- * Provider order (innermost → outermost dependency):
- *   AuthProvider → SocketProvider → MessagingProvider → AppShell
+ * Rate limiting has been intentionally removed. Reasons:
  *
- * MessagingProvider must be:
- *   • inside SocketProvider  — it calls useSocket() for socket events
- *   • inside AuthProvider    — it calls useAuth() for user identity
- *   • ABOVE AppShell         — both MessagePanel (badge) and MessagingPage
- *                              (inbox/chat) call useMessaging(); placing the
- *                              provider here means it is always mounted,
- *                              so the unread badge updates via socket even
- *                              when the message panel is collapsed.
+ *  1. All routes are protected by JWT auth middleware — unauthenticated
+ *     requests are rejected before any business logic runs.
+ *
+ *  2. This is an internal ERP serving known employees. Every user is a
+ *     legitimate actor; there is no public attack surface.
+ *
+ *  3. The office network routes all users through one NAT/router IP.
+ *     express-rate-limit's default key (req.ip) therefore counted every
+ *     employee's requests against a single shared bucket, causing 429
+ *     errors under normal concurrent use — not abuse.
+ *
+ *  4. Switching to pure socket-driven state (MessagingContext) has already
+ *     removed polling and auto-refresh HTTP calls, so request volume is
+ *     far lower than it was when rate limiting was first added.
+ *
+ * If public exposure is ever needed, re-introduce rate limiting with a
+ * per-user key: keyGenerator: (req) => req.user?.userId || req.ip
  */
-function AuthGate() {
-  const { user, token, loading } = useAuth();
+function createApp() {
+  const app = express();
 
-  if (loading) {
-    return (
-      <div style={loadingStyles.root}>
-        <div style={loadingStyles.logo}>I.EVO</div>
-        <div style={loadingStyles.dots}>
-          <span style={{ ...loadingStyles.dot, animationDelay: '0ms' }} />
-          <span style={{ ...loadingStyles.dot, animationDelay: '160ms' }} />
-          <span style={{ ...loadingStyles.dot, animationDelay: '320ms' }} />
-        </div>
-        <style>{`
-          @keyframes blink {
-            0%, 80%, 100% { opacity: 0.2; }
-            40% { opacity: 1; }
-          }
-        `}</style>
-      </div>
-    );
-  }
+  const corsOptions = {
+    origin:         (process.env.CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean),
+    methods:        'GET,POST,PUT,PATCH,DELETE',
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials:    true,
+  };
 
-  if (!user || !token) {
-    return <LoginPage />;
-  }
+  app.use(cors(corsOptions));
+  app.use(express.json({ limit: '1mb' }));
+  app.use(express.urlencoded({ extended: true }));
 
-  if (user.mustChangePassword) {
-    return <ForceChangePasswordPage />;
-  }
+  // Health-check
+  app.get('/health', async (req, res) => {
+    try {
+      const pool = await getPool();
+      await pool.request().query('SELECT 1 AS ok');
+      res.json({ status: 'ok', database: 'connected' });
+    } catch {
+      res.status(503).json({ status: 'degraded', database: 'disconnected' });
+    }
+  });
 
-  return (
-    <SocketProvider token={token}>
-      <MessagingProvider>
-        <AppShell currentUser={user} />
-      </MessagingProvider>
-    </SocketProvider>
-  );
+  registerAllModules(app);
+
+  app.use((err, req, res, _next) => {
+    console.error(err);
+    res.status(err.statusCode || 500).json({
+      error:   err.message || 'Internal server error',
+      message: err.message || 'Internal server error',
+    });
+  });
+
+  return app;
 }
 
-export default function App() {
-  return (
-    <AuthProvider>
-      <AuthGate />
-    </AuthProvider>
-  );
-}
-
-const loadingStyles = {
-  root: {
-    height: '100vh',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: '#1a1d23',
-    gap: 20,
-  },
-  logo: {
-    fontFamily: 'Georgia, serif',
-    fontSize: 36,
-    fontWeight: 600,
-    letterSpacing: '0.12em',
-    color: '#ffffff',
-  },
-  dots: {
-    display: 'flex',
-    gap: 8,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: '50%',
-    background: '#ed1c24',
-    display: 'inline-block',
-    animation: 'blink 1.2s infinite ease-in-out',
-  },
-};
+module.exports = { createApp };
