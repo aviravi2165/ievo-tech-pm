@@ -4,6 +4,8 @@ const bcrypt = require('bcrypt');
 const { getPool, sql } = require('../../../config/db');
 const { generateTempPassword } = require('../../../Shared/passwordGenerator');
 const { forceDisconnectUser } = require('../../messages/socket/socketHandler');
+const { sendMail }             = require('../../../Shared/mailer');
+const { welcomeEmail }         = require('../../../Shared/emailTemplates');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -114,6 +116,11 @@ async function registerUser(data) {
     const err = new Error('Username is required'); err.statusCode = 400; throw err;
   }
 
+  if (!firstName || !firstName.trim()) {
+    const err = new Error('First name is required.');
+    err.statusCode = 400; throw err;
+  }
+
   if (!email || !email.trim()) {
     const err = new Error('Email is required — it is used to send login credentials to the new user.');
     err.statusCode = 400; throw err;
@@ -126,12 +133,8 @@ async function registerUser(data) {
   }
 
   // Initial password is randomly generated; user is forced to change it on
-  // first login (must_change_password = 1). The plaintext value is returned
-  // ONCE in this function's result, purely so the admin can manually share
-  // it with the new user for now — nothing persists it anywhere, and it's
-  // never retrievable again after this response. Once nodemailer is wired
-  // up, this is where the "send welcome email" call will go instead, and
-  // the plaintext can stop being returned to the frontend at all.
+  // first login (must_change_password = 1). The plaintext is emailed to the
+  // user immediately — it is never returned to the frontend or stored anywhere.
   const temporaryPassword = generateTempPassword();
   const passwordHash = await bcrypt.hash(temporaryPassword, 10);
 
@@ -179,7 +182,28 @@ async function registerUser(data) {
           1   -- must_change_password always 1 on creation
         )
       `);
-    return { ...result.recordset[0], temporaryPassword };
+    const newUser = result.recordset[0];
+
+    // Fire-and-forget welcome email — we don't block the response on delivery.
+    // Failures are logged to the server console so admins can spot issues.
+   if (newUser.email) {
+  sendMail({
+    to: newUser.email, // <--- Here is the missing recipient!
+    ...welcomeEmail({
+      firstName:         newUser.firstName,
+      username:          newUser.username,
+      temporaryPassword,
+    })
+  }).catch(err => {
+    console.error(
+      `[mailer] Failed to send welcome email to ${newUser.email}:`,
+      err.message
+    );
+  });
+}
+
+    // Never return the plaintext password — it has been emailed to the user.
+    return newUser;
   } catch (err) {
     const friendly = translateSqlError(err);
     if (friendly) {

@@ -145,7 +145,7 @@ function ManagerPicker({ value, displayName, onChange }) {
 // UserForm — shared for both Register and Edit
 // ─────────────────────────────────────────────────────────────────────────────
 
-function UserForm({ form, onChange, departments, onSubmit, submitLabel, loading, error, success, isEdit, generatedPassword }) {
+function UserForm({ form, onChange, departments, onSubmit, submitLabel, loading, error, success, isEdit }) {
   const set = (field, value) => onChange({ ...form, [field]: value });
 
   return (
@@ -172,7 +172,7 @@ function UserForm({ form, onChange, departments, onSubmit, submitLabel, loading,
         </Field>
 
         {/* FIRST NAME */}
-        <Field label="First Name">
+        <Field label="First Name" required={!isEdit}>
           <input style={INPUT} value={form.firstName}
             onChange={e => set('firstName', e.target.value)}
             placeholder="First name" />
@@ -249,35 +249,12 @@ function UserForm({ form, onChange, departments, onSubmit, submitLabel, loading,
         </label>
       </div>
 
-      {!isEdit && !generatedPassword && (
+      {!isEdit && (
         <p style={{ fontSize: 12, color: '#888', marginBottom: 14, background: '#fafafa',
           border: '1px solid #e5e5e5', borderRadius: 6, padding: '8px 12px' }}>
-          A random temporary password will be generated for this user — they'll be forced to change it on first login.
+          A temporary password will be generated and emailed to the user automatically.
+          They will be required to change it on first login.
         </p>
-      )}
-
-      {!isEdit && generatedPassword && (
-        <div style={{ marginBottom: 14, background: '#fff8e1', border: '1px solid #f0c419',
-          borderRadius: 6, padding: '10px 12px' }}>
-          <p style={{ margin: 0, fontSize: 12, color: '#7a5c00', fontWeight: 600, marginBottom: 6 }}>
-            Temporary password — share this with the user now, it won't be shown again:
-          </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <code style={{ fontSize: 14, fontWeight: 700, color: '#222', background: '#fff',
-              border: '1px solid #f0c419', borderRadius: 4, padding: '4px 10px', letterSpacing: '0.04em' }}>
-              {generatedPassword}
-            </code>
-            <button type="button"
-              onClick={() => navigator.clipboard?.writeText(generatedPassword)}
-              style={{ padding: '5px 10px', fontSize: 12, border: '1px solid #d0d5dd',
-                borderRadius: 4, background: '#fff', cursor: 'pointer', color: '#444' }}>
-              Copy
-            </button>
-          </div>
-          <p style={{ margin: '6px 0 0', fontSize: 11, color: '#92750a' }}>
-            Emailing this automatically isn't set up yet — for now, share it manually (Slack, in person, etc).
-          </p>
-        </div>
       )}
 
       {error   && <div style={{ color: '#dc2626', fontSize: 13, marginBottom: 12 }}>{error}</div>}
@@ -309,7 +286,6 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
   const [loading,      setLoading]      = useState(false);
   const [error,        setError]        = useState('');
   const [success,      setSuccess]      = useState('');
-  const [generatedPassword, setGeneratedPassword] = useState(''); // shown once after registering, until nodemailer handles delivery
 
   // Reset tab when opened
   useEffect(() => {
@@ -340,7 +316,6 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
     setTab(t);
     setError('');
     setSuccess('');
-    setGeneratedPassword('');
     setSelectedUser(null);
     if (t === 'register') setForm(EMPTY_FORM);
     if (t === 'manage')   loadUsers('');
@@ -349,9 +324,10 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
   // ── Register ───────────────────────────────────────────────────────────────
   const handleRegister = async (e) => {
     e.preventDefault();
-    setError(''); setSuccess(''); setGeneratedPassword('');
+    setError(''); setSuccess('');
     if (!form.username.trim()) { setError('Username is required.'); return; }
-    if (!form.email.trim())    { setError('Email is required — it is used to send login credentials.'); return; }
+    if (!form.firstName.trim()) { setError('First name is required.'); return; }
+    if (!form.email.trim())    { setError('Email is required — credentials will be sent to this address.'); return; }
     setLoading(true);
     try {
       const created = await userApi.register({
@@ -367,11 +343,7 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
         mgrUserId:    form.mgrUserId || null,
         isActive:     form.isActive,
       });
-      setSuccess(`User "${created.username}" registered successfully. They will be prompted to change their password on first login.`);
-      // TODO: once nodemailer is wired up, this gets emailed to the user
-      // directly and this plaintext display goes away. For now, the admin
-      // needs to manually share it since there's no other delivery path.
-      setGeneratedPassword(created.temporaryPassword || '');
+      setSuccess(`User "${created.username}" registered successfully. Login credentials have been emailed to ${created.email || 'the user'}.`);
       setForm(EMPTY_FORM);
     } catch (err) {
       setError(err?.response?.data?.error || err?.message || 'Registration failed.');
@@ -497,7 +469,6 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
               error={error}
               success={success}
               isEdit={false}
-              generatedPassword={generatedPassword}
             />
           )}
 
