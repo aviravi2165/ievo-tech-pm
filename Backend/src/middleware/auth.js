@@ -64,4 +64,13 @@ module.exports = {
   // full group control (add/remove participants, disable, delete) across
   // every group in the system, without read access to message content.
   isSuperAdmin: (user) => user?.userType === 'admin',
+
+  // Guards a route so only admin accounts can call it.
+  // Always use AFTER authenticate so req.user is already set.
+  requireAdmin(req, res, next) {
+    if (req.user?.userType !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    return next();
+  },
 };
