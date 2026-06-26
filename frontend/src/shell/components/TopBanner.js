@@ -1,6 +1,6 @@
 import { useAuth }              from '../../modules/auth/AuthContext';
 import logo                     from '../assets/logo.png';
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import ProfileMenu              from './ProfileMenu';
 import ChangePasswordModal      from './ChangePasswordModal';
 import UserManagementModal      from '../../modules/users/UserManagementModal';
@@ -11,30 +11,9 @@ export default function TopBanner({ currentUser, activeModule }) {
   const [passwordOpen, setPasswordOpen] = useState(false);
 
   // User management (admin only)
-  const [userMgmtOpen,     setUserMgmtOpen]     = useState(false);
-  const [userMgmtTab,      setUserMgmtTab]      = useState('register');
-  const [userMgmtDropdown, setUserMgmtDropdown] = useState(false);
-  const dropdownRef = useRef(null);
+  const [userMgmtOpen, setUserMgmtOpen] = useState(false);
 
   const isAdmin = currentUser?.userType === 'admin';
-
-  // Close user-mgmt dropdown on outside click
-  useEffect(() => {
-    if (!userMgmtDropdown) return;
-    const handler = (e) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
-        setUserMgmtDropdown(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [userMgmtDropdown]);
-
-  const openModal = (tab) => {
-    setUserMgmtTab(tab);
-    setUserMgmtDropdown(false);
-    setUserMgmtOpen(true);
-  };
 
   const displayName = [currentUser?.firstName, currentUser?.lastName]
     .filter(Boolean).join(' ') || currentUser?.username || 'User';
@@ -59,59 +38,21 @@ export default function TopBanner({ currentUser, activeModule }) {
 
         {/* ── User Management button — admin only ───────────────────────────── */}
         {isAdmin && (
-          <div ref={dropdownRef} style={{ position: 'relative' }}>
-            <button
-              type="button"
-              className="erp-usermgmt-btn"
-              onClick={() => setUserMgmtDropdown(v => !v)}
-              title="User Management"
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="2">
-                <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
-                <circle cx="9" cy="7" r="4"/>
-                <line x1="19" y1="8" x2="19" y2="14"/>
-                <line x1="22" y1="11" x2="16" y2="11"/>
-              </svg>
-              <span>User Mgmt</span>
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="2.5" style={{ marginLeft: 2 }}>
-                <polyline points="6 9 12 15 18 9"/>
-              </svg>
-            </button>
-
-            {userMgmtDropdown && (
-              <div className="erp-usermgmt-dropdown">
-                <button
-                  type="button"
-                  className="erp-usermgmt-item"
-                  onClick={() => openModal('register')}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" strokeWidth="2">
-                    <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/>
-                    <circle cx="9" cy="7" r="4"/>
-                    <line x1="19" y1="8" x2="19" y2="14"/>
-                    <line x1="22" y1="11" x2="16" y2="11"/>
-                  </svg>
-                  Register User
-                </button>
-                <button
-                  type="button"
-                  className="erp-usermgmt-item"
-                  onClick={() => openModal('manage')}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" strokeWidth="2">
-                    <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
-                    <circle cx="9" cy="7" r="4"/>
-                    <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
-                  </svg>
-                  Edit Users
-                </button>
-              </div>
-            )}
-          </div>
+          <button
+            type="button"
+            className="erp-usermgmt-btn"
+            onClick={() => setUserMgmtOpen(true)}
+            title="User Management"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2">
+              <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <line x1="19" y1="8" x2="19" y2="14"/>
+              <line x1="22" y1="11" x2="16" y2="11"/>
+            </svg>
+            <span>User Mgmt</span>
+          </button>
         )}
 
         {/* ── Profile ───────────────────────────────────────────────────────── */}
@@ -157,7 +98,7 @@ export default function TopBanner({ currentUser, activeModule }) {
       {/* User Management Modal */}
       <UserManagementModal
         open={userMgmtOpen}
-        defaultTab={userMgmtTab}
+        defaultTab="register"
         onClose={() => setUserMgmtOpen(false)}
       />
     </header>

@@ -2,6 +2,7 @@
 
 const bcrypt = require('bcrypt');
 const { getPool, sql } = require('../../../config/db');
+const { generateTempPassword } = require('../../../Shared/passwordGenerator');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -120,8 +121,15 @@ async function registerUser(data) {
     err.statusCode = 400; throw err;
   }
 
-  // Initial password is always 'password'; user is forced to change on first login.
-  const passwordHash = await bcrypt.hash('password', 10);
+  // Initial password is randomly generated; user is forced to change it on
+  // first login (must_change_password = 1). The plaintext value is returned
+  // ONCE in this function's result, purely so the admin can manually share
+  // it with the new user for now — nothing persists it anywhere, and it's
+  // never retrievable again after this response. Once nodemailer is wired
+  // up, this is where the "send welcome email" call will go instead, and
+  // the plaintext can stop being returned to the frontend at all.
+  const temporaryPassword = generateTempPassword();
+  const passwordHash = await bcrypt.hash(temporaryPassword, 10);
 
   const pool = await getPool();
   try {
@@ -169,7 +177,7 @@ async function registerUser(data) {
           1   -- must_change_password always 1 on creation
         )
       `);
-    return result.recordset[0];
+    return { ...result.recordset[0], temporaryPassword };
   } catch (err) {
     const friendly = translateSqlError(err);
     if (friendly) {
