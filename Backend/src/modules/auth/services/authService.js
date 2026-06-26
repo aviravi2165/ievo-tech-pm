@@ -17,14 +17,14 @@ async function login({ username, password }) {
     .input('username', sql.NVarChar, username.trim().toLowerCase())
     .query(`
       SELECT TOP 1 user_id, username, password_hash, first_name, last_name,
-                   email, user_type, is_active, allow_login, profile_picture,
+                   email, user_type, is_active, profile_picture,
                    dept_id, must_change_password
       FROM auth_users
       WHERE username = @username
     `);
 
   const user = result.recordset[0];
-  if (!user || !user.is_active || !user.allow_login) {
+  if (!user || !user.is_active) {
     const err = new Error('Invalid credentials'); err.statusCode = 401; throw err;
   }
 

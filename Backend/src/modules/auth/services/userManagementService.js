@@ -78,7 +78,6 @@ async function getUsers({ search = '', page = 1, limit = 50 } = {}) {
       u.user_type      AS userType,
       u.employee_code  AS employeeCode,
       u.is_active      AS isActive,
-      u.allow_login    AS allowLogin,
       u.must_change_password AS mustChangePassword,
       u.created_at     AS createdAt
     FROM   auth_users u
@@ -108,7 +107,6 @@ async function registerUser(data) {
     userType     = 'employee',
     employeeCode = null,
     isActive     = true,
-    allowLogin   = true,
   } = data;
 
   if (!username || !username.trim()) {
@@ -151,14 +149,13 @@ async function registerUser(data) {
       .input('userType',      sql.NVarChar,        userType)
       .input('employeeCode',  sql.NVarChar,        employeeCode || null)
       .input('isActive',      sql.Bit,             isActive  ? 1 : 0)
-      .input('allowLogin',    sql.Bit,             allowLogin ? 1 : 0)
       .query(`
         INSERT INTO auth_users (
           username, password_hash,
           first_name, last_name, email, phone_number,
           dept_id, [level], mgr_user_id,
           user_type, employee_code,
-          is_active, allow_login,
+          is_active,
           must_change_password
         )
         OUTPUT
@@ -170,7 +167,6 @@ async function registerUser(data) {
           INSERTED.user_type      AS userType,
           INSERTED.employee_code  AS employeeCode,
           INSERTED.is_active      AS isActive,
-          INSERTED.allow_login    AS allowLogin,
           INSERTED.must_change_password AS mustChangePassword,
           INSERTED.created_at     AS createdAt
         VALUES (
@@ -178,7 +174,7 @@ async function registerUser(data) {
           @firstName, @lastName, @email, @phoneNumber,
           @deptId, @level, @mgrUserId,
           @userType, @employeeCode,
-          @isActive, @allowLogin,
+          @isActive,
           1   -- must_change_password always 1 on creation
         )
       `);
@@ -220,7 +216,6 @@ async function updateUser(userId, data) {
     ['userType',             sql.NVarChar,         null, 'user_type'],
     ['employeeCode',         sql.NVarChar,         null, 'employee_code'],
     ['isActive',             sql.Bit,              v => v ? 1 : 0, 'is_active'],
-    ['allowLogin',           sql.Bit,              v => v ? 1 : 0, 'allow_login'],
     ['mustChangePassword',   sql.Bit,              v => v ? 1 : 0, 'must_change_password'],
   ];
 
@@ -267,7 +262,7 @@ async function updateUser(userId, data) {
         u.[level], u.mgr_user_id AS mgrUserId,
         COALESCE(NULLIF(TRIM(CONCAT(m.first_name,' ',m.last_name)),''), m.email) AS mgrName,
         u.user_type     AS userType, u.employee_code AS employeeCode,
-        u.is_active     AS isActive, u.allow_login AS allowLogin,
+        u.is_active     AS isActive,
         u.must_change_password AS mustChangePassword
       FROM   auth_users u
       LEFT JOIN dept_master d ON d.dept_id = u.dept_id

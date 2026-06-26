@@ -24,7 +24,6 @@ const EMPTY_FORM = {
   mgrUserId:          '',
   mgrName:            '',   // display only
   isActive:           true,
-  allowLogin:         true,
   mustChangePassword: true,
 };
 
@@ -244,11 +243,6 @@ function UserForm({ form, onChange, departments, onSubmit, submitLabel, loading,
           Is Active
         </label>
         <label style={CHECKBOX_ROW}>
-          <input type="checkbox" checked={!!form.allowLogin}
-            onChange={e => set('allowLogin', e.target.checked)} />
-          Allow Login
-        </label>
-        <label style={CHECKBOX_ROW}>
           <input type="checkbox" checked={!!form.mustChangePassword}
             onChange={e => set('mustChangePassword', e.target.checked)} />
           Must Change Password on Next Login
@@ -372,7 +366,6 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
         level:        form.level    ? parseInt(form.level, 10)  : null,
         mgrUserId:    form.mgrUserId || null,
         isActive:     form.isActive,
-        allowLogin:   form.allowLogin,
       });
       setSuccess(`User "${created.username}" registered successfully. They will be prompted to change their password on first login.`);
       // TODO: once nodemailer is wired up, this gets emailed to the user
@@ -401,7 +394,6 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
       mgrUserId:          user.mgrUserId          || '',
       mgrName:            user.mgrName            || '',
       isActive:           Boolean(user.isActive),
-      allowLogin:         Boolean(user.allowLogin),
       mustChangePassword: Boolean(user.mustChangePassword),
     });
     setError(''); setSuccess('');
@@ -424,7 +416,6 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
         level:              form.level   ? parseInt(form.level, 10)   : null,
         mgrUserId:          form.mgrUserId    || null,
         isActive:           form.isActive,
-        allowLogin:         form.allowLogin,
         mustChangePassword: form.mustChangePassword,
       });
       setSuccess('User updated successfully.');
