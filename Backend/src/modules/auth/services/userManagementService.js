@@ -3,6 +3,7 @@
 const bcrypt = require('bcrypt');
 const { getPool, sql } = require('../../../config/db');
 const { generateTempPassword } = require('../../../Shared/passwordGenerator');
+const { forceDisconnectUser } = require('../../messages/socket/socketHandler');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -248,6 +249,15 @@ async function updateUser(userId, data) {
       const e = new Error(friendly); e.statusCode = 409; throw e;
     }
     throw err;
+  }
+
+  // If this update deactivated the account, cut off any live socket
+  // connection right now — the per-request/per-handshake is_active checks
+  // (middleware/auth.js, socketHandler.js's io.use) only catch this on the
+  // user's NEXT action. Someone already mid-session would otherwise keep
+  // using their existing connection until they happened to reconnect.
+  if ('isActive' in data && !data.isActive) {
+    try { forceDisconnectUser(userId); } catch { /* best-effort, never block the response on this */ }
   }
 
   // Return the refreshed row

@@ -2,6 +2,7 @@
 
 const { Server }              = require('socket.io');
 const { verifyToken }         = require('../../../middleware/auth');
+const { isUserActive }        = require('../../auth/services/authService');
 const messageService          = require('../services/messageService');
 // FIX Bug 6: moved require to top-level instead of inside the MARK_READ
 // event handler where it ran on every event (needless cache lookups on
@@ -25,11 +26,20 @@ function initSocket(httpServer) {
     cors: { origin: process.env.CORS_ORIGIN || true, credentials: true },
   });
 
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth?.token;
       if (!token) return next(new Error('Authentication required'));
-      socket.data.user = verifyToken(token);
+      const user = verifyToken(token);
+      // FIX: same gap as the HTTP authenticate middleware — a valid JWT
+      // alone doesn't mean the account is still active right now. Without
+      // this, a deactivated user could still open brand-new socket
+      // connections (e.g. on every page refresh) using their old token
+      // until it naturally expires.
+      if (!(await isUserActive(user.userId))) {
+        return next(new Error('Account has been deactivated'));
+      }
+      socket.data.user = user;
       return next();
     } catch {
       return next(new Error('Invalid token'));
@@ -169,4 +179,19 @@ function closeSocket(callback) {
 
 function getIo() { return io; }
 
-module.exports = { initSocket, broadcastNewMessage, broadcastMarkRead, closeSocket, getIo };
+/**
+ * Immediately disconnects a user's live socket connection(s) — for when an
+ * admin deactivates an account mid-session. Without this, io.use() only
+ * guards NEW handshakes; someone already connected before being deactivated
+ * would keep their existing socket (and the real-time features it powers)
+ * working indefinitely, until they happen to reconnect on their own.
+ */
+function forceDisconnectUser(userId) {
+  if (!io) return;
+  io.in(`user:${userId}`).disconnectSockets(true);
+}
+
+module.exports = {
+  initSocket, broadcastNewMessage, broadcastMarkRead, closeSocket, getIo,
+  forceDisconnectUser,
+};

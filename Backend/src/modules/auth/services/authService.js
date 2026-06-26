@@ -62,6 +62,21 @@ async function login({ username, password }) {
   };
 }
 
+// ── Live active-status check ───────────────────────────────────────────────────
+// Used by the auth middleware on every authenticated request and by the
+// socket handshake — login() alone only blocks is_active=0 users from
+// starting a NEW session; it does nothing for someone whose session was
+// already live (a valid JWT, an open socket) at the moment an admin
+// deactivates them. This is what closes that gap.
+async function isUserActive(userId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('userId', sql.UniqueIdentifier, userId)
+    .query(`SELECT is_active FROM auth_users WHERE user_id = @userId`);
+  const row = result.recordset[0];
+  return Boolean(row && row.is_active);
+}
+
 // ── Get current user ──────────────────────────────────────────────────────────
 
 async function getMe(userId) {
@@ -217,4 +232,4 @@ async function setInitialPassword(userId, newPassword) {
   return true;
 }
 
-module.exports = { login, getMe, searchUsers, changePassword, setInitialPassword };
+module.exports = { login, getMe, searchUsers, changePassword, setInitialPassword, isUserActive };
