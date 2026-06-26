@@ -187,10 +187,11 @@ function UserForm({ form, onChange, departments, onSubmit, submitLabel, loading,
         </Field>
 
         {/* EMAIL */}
-        <Field label="Email">
+        <Field label="Email" required={!isEdit}>
           <input style={INPUT} type="email" value={form.email}
             onChange={e => set('email', e.target.value)}
-            placeholder="email@company.com" />
+            placeholder="email@company.com"
+            required={!isEdit} />
         </Field>
 
         {/* PHONE */}
@@ -356,6 +357,7 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
     e.preventDefault();
     setError(''); setSuccess(''); setGeneratedPassword('');
     if (!form.username.trim()) { setError('Username is required.'); return; }
+    if (!form.email.trim())    { setError('Email is required — it is used to send login credentials.'); return; }
     setLoading(true);
     try {
       const created = await userApi.register({

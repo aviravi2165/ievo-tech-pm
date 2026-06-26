@@ -115,6 +115,11 @@ async function registerUser(data) {
     const err = new Error('Username is required'); err.statusCode = 400; throw err;
   }
 
+  if (!email || !email.trim()) {
+    const err = new Error('Email is required — it is used to send login credentials to the new user.');
+    err.statusCode = 400; throw err;
+  }
+
   const VALID_TYPES = ['employee', 'manager', 'admin'];
   if (!VALID_TYPES.includes(userType)) {
     const err = new Error(`user_type must be one of: ${VALID_TYPES.join(', ')}`);
