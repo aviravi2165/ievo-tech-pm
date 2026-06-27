@@ -358,7 +358,7 @@ useEffect(() => {
 
        <div className="thread-header-info" style={{ flex: 1, minWidth: 0 }}>
   <div className="thread-subject">
-    {conv.subject}
+    {isGroupThread ? (conv.groupName || conv.subject) : conv.subject}
   </div>
 
   <div className="thread-count">
@@ -374,7 +374,12 @@ useEffect(() => {
             }}>
               {typeInfo.label}
             </span>
-            {participantNames && (
+            {isGroupThread && matchedGroup?.description && (
+              <span style={{ color: 'var(--muted)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: 'italic' }}>
+                {matchedGroup.description}
+              </span>
+            )}
+            {!isGroupThread && participantNames && (
               <span style={{ color: 'var(--muted)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {isCcThread ? `With: ${participantNames}` : participantNames}
               </span>

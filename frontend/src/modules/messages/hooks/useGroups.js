@@ -17,8 +17,8 @@ export function useGroups() {
 
   useEffect(() => { fetchGroups(); }, [fetchGroups]);
 
-  const createGroup = useCallback(async (name) => {
-    const group = await groupApi.create(name);
+  const createGroup = useCallback(async (name, description) => {
+    const group = await groupApi.create(name, description);
     await fetchGroups();
     return group;
   }, [fetchGroups]);

@@ -25,6 +25,8 @@ router.post('/:groupId/hide',           groupController.hide);
 
 // returns latest conversation for a group (for "open thread" feature)
 router.get('/:groupId/conversation',    groupController.getGroupConversation);
+// creates (or returns existing) group conversation
+router.post('/:groupId/conversation',   groupController.createGroupConversation);
 
 // Admin (creator) or super admin only — only once disabled (own-tabs hide)
 router.delete('/:groupId',              groupController.remove);

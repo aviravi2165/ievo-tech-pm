@@ -110,6 +110,7 @@ async function listGroupsForUser(userId) {
         SELECT
           g.group_id                               AS groupId,
           g.group_name                             AS groupName,
+          g.description                            AS description,
           g.created_at                             AS createdAt,
           g.created_by                             AS createdBy,
           g.is_active                              AS isActive,
@@ -135,6 +136,7 @@ async function listGroupsForUser(userId) {
       SELECT
         g.group_id    AS groupId,
         g.group_name  AS groupName,
+        g.description AS description,
         g.created_at  AS createdAt,
         g.created_by  AS createdBy,
         g.is_active   AS isActive,
@@ -168,19 +170,21 @@ async function listGroupsForUser(userId) {
 // Create
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function createGroup(userId, groupName) {
+async function createGroup(userId, groupName, description) {
   return withTransaction(async (req) => {
     // INSERT…OUTPUT replaces INSERT…RETURNING
     const groupResult = await req()
-      .input('groupName', sql.NVarChar, groupName)
-      .input('userId',    sql.UniqueIdentifier, userId)
+      .input('groupName',   sql.NVarChar, groupName)
+      .input('userId',      sql.UniqueIdentifier, userId)
+      .input('description', sql.NVarChar, description || null)
       .query(`
-        INSERT INTO comm_groups (group_name, created_by)
+        INSERT INTO comm_groups (group_name, description, created_by)
         OUTPUT INSERTED.group_id  AS groupId,
                INSERTED.group_name AS groupName,
+               INSERTED.description AS description,
                INSERTED.created_by AS createdBy,
                INSERTED.created_at AS createdAt
-        VALUES (@groupName, @userId)
+        VALUES (@groupName, @description, @userId)
       `);
     const group = groupResult.recordset[0];
 
@@ -581,6 +585,69 @@ async function getLatestGroupConversation(groupId, userId) {
   return conv || null;
 }
 
+// Creates an empty group conversation (no first message needed).
+// Used when a user opens a group chat that has no prior conversation.
+async function ensureGroupConversation(groupId, userId) {
+  return withTransaction(async (req) => {
+    // Re-check if one was created concurrently
+    const existing = await req()
+      .input('groupId', sql.Int, groupId)
+      .query(`
+        SELECT TOP 1 conversation_id AS conversationId
+        FROM comm_conversations
+        WHERE group_id = @groupId AND is_deleted = 0
+        ORDER BY last_message_at DESC
+      `);
+    if (existing.recordset[0]) {
+      const convId = existing.recordset[0].conversationId;
+      // Ensure caller is a participant
+      await req()
+        .input('convId', sql.Int, convId)
+        .input('userId', sql.UniqueIdentifier, userId)
+        .query(`
+          IF EXISTS (SELECT 1 FROM comm_participants WHERE conversation_id = @convId AND user_id = @userId)
+            UPDATE comm_participants SET is_deleted = 0 WHERE conversation_id = @convId AND user_id = @userId
+          ELSE
+            INSERT INTO comm_participants (conversation_id, user_id, participant_type) VALUES (@convId, @userId, 'to')
+        `);
+      return { conversationId: convId };
+    }
+
+    // Get group info
+    const grpRes = await req()
+      .input('groupId', sql.Int, groupId)
+      .query(`SELECT group_name FROM comm_groups WHERE group_id = @groupId`);
+    const groupName = grpRes.recordset[0]?.group_name || 'Group Chat';
+
+    // Create the conversation
+    const convRes = await req()
+      .input('subject',  sql.NVarChar, groupName)
+      .input('userId',   sql.UniqueIdentifier, userId)
+      .input('groupId',  sql.Int, groupId)
+      .query(`
+        INSERT INTO comm_conversations (subject, created_by, allow_reply, conv_type, group_id)
+        OUTPUT INSERTED.conversation_id AS conversationId
+        VALUES (@subject, @userId, 1, 'group_thread', @groupId)
+      `);
+    const conversationId = convRes.recordset[0].conversationId;
+
+    // Add all group members as participants
+    const memberIds = await getMemberUserIdsForGroups([groupId]);
+    const allIds = [...new Set([...memberIds, userId].map(String))];
+    for (const memberId of allIds) {
+      await req()
+        .input('convId',   sql.Int,              conversationId)
+        .input('memberId', sql.UniqueIdentifier,  memberId)
+        .query(`
+          IF NOT EXISTS (SELECT 1 FROM comm_participants WHERE conversation_id = @convId AND user_id = @memberId)
+            INSERT INTO comm_participants (conversation_id, user_id, participant_type) VALUES (@convId, @memberId, 'to')
+        `);
+    }
+
+    return { conversationId, subject: groupName, groupName, convType: 'group_thread' };
+  });
+}
+
 module.exports = {
   listGroupsForUser,
   createGroup,
@@ -598,4 +665,5 @@ module.exports = {
   assertCanManageAdmins,
   isGroupAdminOrSuperAdmin,
   getLatestGroupConversation,
+  ensureGroupConversation,
 };
