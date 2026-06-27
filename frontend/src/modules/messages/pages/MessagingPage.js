@@ -10,43 +10,34 @@ import { useSocket }    from '../context/SocketContext';
 
 export default function MessagingPage({ currentUser }) {
   const {
-    // Identity
     currentUserId, isSuperAdmin,
-    // Toast
     toast, toasts,
-    // Groups
     groups, groupsLoading, createGroup,
     disableGroup, enableGroup, deleteGroup, hideGroup,
-    // Inbox
-    conversations, inboxLoading, inboxError, fetchInbox, clearUnreadDot,
-    // Badge
-    unreadCount, decrement,
-    // Active conv
+    conversations, groupConversations, groupConvsLoading,
+    inboxLoading, inboxError, fetchInbox, clearUnreadDot,
+    unreadCount, inboxUnreadCount, groupUnreadCount, decrement,
     setActiveConversationId, activeConvIdRef,
   } = useMessaging();
 
   const { socket } = useSocket();
 
-  const [activeConv,  setActiveConv]  = useState(null);
-  const [tab,         setTab]         = useState('inbox');
-  const [composeOpen, setComposeOpen] = useState(false);
+  const [activeConv,       setActiveConv]       = useState(null);
+  const [tab,              setTab]              = useState('inbox');
+  const [composeOpen,      setComposeOpen]      = useState(false);
   const [composeInitialRecipients, setComposeInitialRecipients] = useState([]);
   const [composeInitialMode,       setComposeInitialMode]       = useState('bcc');
-
-  // Track whether the active conv was opened from the groups tab
-  const [activeConvSource, setActiveConvSource] = useState(null); // 'inbox' | 'groups'
+  const [activeConvSource, setActiveConvSource] = useState(null);
 
   const layoutRef = useRef(null);
 
-  // ── Super-admin thread governance ──────────────────────────────────────────
   const {
     threads: adminThreads, loading: adminThreadsLoading,
     disableThread, enableThread, deleteThread, hideThread,
   } = useThreads(isSuperAdmin);
 
-  // Redirect super admins away from inbox on initial load
   useEffect(() => {
-    if (isSuperAdmin && (tab === 'inbox')) setTab('threads');
+    if (isSuperAdmin && tab === 'inbox') setTab('threads');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSuperAdmin]);
 
@@ -62,34 +53,46 @@ export default function MessagingPage({ currentUser }) {
         String(activeConvIdRef.current) === String(payload.conversationId);
       if (isOpen) return;
 
-      // Determine which tab this conv belongs to so toast navigates correctly
-      const existingConv = conversations.find(c =>
+      // Find the conversation to get group name
+      const allConvs = [...conversations, ...groupConversations];
+      const existing = allConvs.find(c =>
         String(c.conversationId) === String(payload.conversationId)
       );
-      const isGroupConv = existingConv?.convType === 'group_thread' || existingConv?.groupName;
+      const isGroupConv = payload.convType === 'group_thread' ||
+        !!payload.groupId || !!existing?.groupName;
 
-      toast(
-        payload.senderName ? `New message from ${payload.senderName}` : 'New message',
-        'info',
-        () => {
-          const conv = { conversationId: payload.conversationId, subject: payload.subject };
-          if (isGroupConv) {
-            setTab('groups');
-            setActiveConvSource('groups');
-          } else {
-            setTab('inbox');
-            setActiveConvSource('inbox');
-          }
-          setActiveConv(conv);
-          setActiveConversationId(payload.conversationId);
-          decrement(payload.conversationId);
-          clearUnreadDot(payload.conversationId);
+      // For group messages show group name; for inbox show sender name
+      let toastMsg;
+      if (isGroupConv) {
+        const groupName = existing?.groupName || payload.groupName || 'Group';
+        toastMsg = `New message in ${groupName}`;
+      } else {
+        toastMsg = payload.senderName ? `New message from ${payload.senderName}` : 'New message';
+      }
+
+      toast(toastMsg, 'info', () => {
+        const conv = {
+          conversationId: payload.conversationId,
+          subject: payload.subject,
+          groupName: existing?.groupName || payload.groupName,
+        };
+        if (isGroupConv) {
+          setTab('groups');
+          setActiveConvSource('groups');
+        } else {
+          setTab('inbox');
+          setActiveConvSource('inbox');
         }
-      );
+        setActiveConv(conv);
+        setActiveConversationId(payload.conversationId);
+        decrement(payload.conversationId);
+        clearUnreadDot(payload.conversationId);
+      });
     };
     socket.on('NEW_MESSAGE', handler);
     return () => socket.off('NEW_MESSAGE', handler);
-  }, [socket, currentUserId, isSuperAdmin, toast, activeConvIdRef, conversations,
+  }, [socket, currentUserId, isSuperAdmin, toast, activeConvIdRef,
+      conversations, groupConversations,
       setActiveConversationId, decrement, clearUnreadDot]);
 
   // ── Navigation ─────────────────────────────────────────────────────────────
@@ -108,7 +111,6 @@ export default function MessagingPage({ currentUser }) {
     clearUnreadDot(conv.conversationId);
   };
 
-  // Group conversation: always opens in groups tab, back returns to groups tab
   const handleOpenGroupConversation = useCallback((conv) => {
     setTab('groups');
     setActiveConvSource('groups');
@@ -117,6 +119,13 @@ export default function MessagingPage({ currentUser }) {
     clearUnreadDot(conv.conversationId);
     if (conv.unreadCount > 0) decrement(conv.conversationId);
   }, [setActiveConversationId, decrement, clearUnreadDot]);
+
+  const handleBack = () => {
+    setActiveConv(null);
+    setActiveConvSource(null);
+    setActiveConversationId(null);
+    if (activeConvSource === 'groups') setTab('groups');
+  };
 
   // ── Compose ────────────────────────────────────────────────────────────────
   const handleOpenCompose = useCallback(() => {
@@ -131,84 +140,37 @@ export default function MessagingPage({ currentUser }) {
     setComposeInitialMode('bcc');
   }, []);
 
-  const handleSent = () => {
-    toast('Message sent.', 'success');
-  };
+  const handleSent = () => toast('Message sent.', 'success');
 
   // ── Group actions ──────────────────────────────────────────────────────────
-  const handleDisableGroup = useCallback(async (groupId) => {
-    await disableGroup(groupId);
-  }, [disableGroup]);
+  const handleDisableGroup = useCallback(async (groupId) => { await disableGroup(groupId); }, [disableGroup]);
+  const handleEnableGroup  = useCallback(async (groupId) => { await enableGroup(groupId); },  [enableGroup]);
+  const handleDeleteGroup  = useCallback(async (groupId) => { await deleteGroup(groupId); fetchInbox(); }, [deleteGroup, fetchInbox]);
+  const handleHideGroup    = useCallback(async (groupId) => { await hideGroup(groupId);   fetchInbox(); }, [hideGroup,   fetchInbox]);
 
-  const handleEnableGroup = useCallback(async (groupId) => {
-    await enableGroup(groupId);
-  }, [enableGroup]);
+  // ── Thread governance ──────────────────────────────────────────────────────
+  const handleDisableThread = useCallback(async (id) => { await disableThread(id); },               [disableThread]);
+  const handleEnableThread  = useCallback(async (id) => { await enableThread(id); },                [enableThread]);
+  const handleDeleteThread  = useCallback(async (id) => { await deleteThread(id); fetchInbox(); }, [deleteThread, fetchInbox]);
+  const handleHideThread    = useCallback(async (id) => { await hideThread(id);   fetchInbox(); }, [hideThread,   fetchInbox]);
 
-  const handleDeleteGroup = useCallback(async (groupId) => {
-    await deleteGroup(groupId);
-    fetchInbox();
-  }, [deleteGroup, fetchInbox]);
-
-  const handleHideGroup = useCallback(async (groupId) => {
-    await hideGroup(groupId);
-    fetchInbox();
-  }, [hideGroup, fetchInbox]);
-
-  // ── Thread governance (super admin) ───────────────────────────────────────
-  const handleDisableThread = useCallback(async (id) => {
-    await disableThread(id);
-  }, [disableThread]);
-
-  const handleEnableThread = useCallback(async (id) => {
-    await enableThread(id);
-  }, [enableThread]);
-
-  const handleDeleteThread = useCallback(async (id) => {
-    await deleteThread(id);
-    fetchInbox();
-  }, [deleteThread, fetchInbox]);
-
-  const handleHideThread = useCallback(async (id) => {
-    await hideThread(id);
-    fetchInbox();
-  }, [hideThread, fetchInbox]);
-
-  // ── Derived state ──────────────────────────────────────────────────────────
-  const isMailTab        = tab === 'inbox' || tab === 'threads';
-  // Inbox only shows non-group conversations
-  const displayedConvs   = conversations.filter(c => c.convType !== 'group_thread' && !c.groupName);
-  const displayedLoading = inboxLoading;
-  const listError        = inboxError;
-  const showList         = isMailTab && !activeConv && !isSuperAdmin;
-  const showThread       = (isMailTab || tab === 'groups') && !!activeConv && !isSuperAdmin;
-  const showGroups       = (tab === 'groups' || (isSuperAdmin && tab === 'threads')) && !activeConv;
-
-  const handleBack = () => {
-    setActiveConv(null);
-    setActiveConvSource(null);
-    setActiveConversationId(null);
-    // Return to the tab that spawned the conversation
-    if (activeConvSource === 'groups') {
-      setTab('groups');
-    }
-    // If opened from inbox, tab is already 'inbox' — nothing to change
-  };
+  // ── Derived ────────────────────────────────────────────────────────────────
+  const isMailTab  = tab === 'inbox' || tab === 'threads';
+  const showList   = isMailTab && !activeConv && !isSuperAdmin;
+  const showThread = (isMailTab || tab === 'groups') && !!activeConv && !isSuperAdmin;
+  const showGroups = (tab === 'groups' || (isSuperAdmin && tab === 'threads')) && !activeConv;
 
   return (
     <div className="msg-module-screen">
-      <MessageTabBar
-        tab={tab}
-        onTabChange={handleTabChange}
-        isSuperAdmin={isSuperAdmin}
-      />
+      <MessageTabBar tab={tab} onTabChange={handleTabChange} isSuperAdmin={isSuperAdmin} />
 
       <div ref={layoutRef} className="msg-layout msg-layout--stacked">
         {showList && (
           <InboxSidebar
             hideTabs
-            conversations={displayedConvs}
-            loading={displayedLoading}
-            error={listError}
+            conversations={conversations}
+            loading={inboxLoading}
+            error={inboxError}
             activeId={activeConv?.conversationId}
             onSelect={handleSelectConv}
             onCompose={handleOpenCompose}
@@ -231,6 +193,7 @@ export default function MessagingPage({ currentUser }) {
             <GroupManager
               groups={groups}
               loading={groupsLoading}
+              groupConversations={groupConversations}
               threads={isSuperAdmin ? adminThreads : undefined}
               threadsLoading={adminThreadsLoading}
               currentTab={tab}
@@ -261,11 +224,9 @@ export default function MessagingPage({ currentUser }) {
       {toasts.length > 0 && (
         <div className="toast-container">
           {toasts.map(t => (
-            <div
-              key={t.id}
+            <div key={t.id}
               className={`toast ${t.type}${t.onClick ? ' toast-clickable' : ''}`}
-              onClick={t.onClick}
-            >
+              onClick={t.onClick}>
               {t.msg}
             </div>
           ))}

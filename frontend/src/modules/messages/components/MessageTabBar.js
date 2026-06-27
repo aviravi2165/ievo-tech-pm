@@ -1,12 +1,7 @@
 import { useMessaging } from '../context/MessagingContext';
 
-/**
- * Always-visible Inbox / Groups tabs for the message drawer.
- * Sent tab has been removed — inbox shows private and shared chats,
- * groups tab manages all group conversations.
- */
 export default function MessageTabBar({ tab, onTabChange, isSuperAdmin = false }) {
-  const { unreadCount } = useMessaging();
+  const { inboxUnreadCount, groupUnreadCount } = useMessaging();
 
   if (isSuperAdmin) {
     return (
@@ -31,14 +26,17 @@ export default function MessageTabBar({ tab, onTabChange, isSuperAdmin = false }
         className={`msg-nav-btn ${tab === 'inbox' ? 'active' : ''}`}
         onClick={() => onTabChange('inbox')}>
         Inbox
-        {unreadCount > 0 && (
-          <span className="badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
+        {inboxUnreadCount > 0 && (
+          <span className="badge">{inboxUnreadCount > 99 ? '99+' : inboxUnreadCount}</span>
         )}
       </button>
       <button type="button"
         className={`msg-nav-btn ${tab === 'groups' ? 'active' : ''}`}
         onClick={() => onTabChange('groups')}>
         Groups
+        {groupUnreadCount > 0 && (
+          <span className="badge">{groupUnreadCount > 99 ? '99+' : groupUnreadCount}</span>
+        )}
       </button>
     </nav>
   );
