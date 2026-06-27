@@ -428,7 +428,17 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
     padding: '18px 24px 0', borderBottom: '1px solid #eee',
     display: 'flex', alignItems: 'center', gap: 0, flexShrink: 0,
   };
-  const BODY = { flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px 24px' };
+  const BODY = {
+    flex: 1, minHeight: 0, padding: '20px 24px',
+    display: 'flex', flexDirection: 'column',
+    // FIX: the manage tab has its own two independently-scrolling columns
+    // (user list / edit form). Letting THIS container also scroll meant it
+    // was the nearest scrollable ancestor that actually took effect, so
+    // both columns scrolled together as one instead of independently.
+    // The register tab is a single simple column, so it keeps its own
+    // scroll here as before.
+    overflowY: tab === 'manage' ? 'hidden' : 'auto',
+  };
   const TAB_BTN = (active) => ({
     padding: '10px 20px', border: 'none', background: 'none', cursor: 'pointer',
     fontSize: 14, fontWeight: active ? 700 : 400,
@@ -495,10 +505,10 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
 
           {/* ── MANAGE / EDIT TAB ── */}
           {tab === 'manage' && (
-            <div style={{ display: 'flex', gap: 20, height: '100%', minHeight: 0 }}>
+            <div style={{ display: 'flex', gap: 20, flex: 1, minHeight: 0, overflow: 'hidden' }}>
 
               {/* Left: user list */}
-              <div style={{ width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ width: 260, flexShrink: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <input
                   placeholder="Search users…"
                   value={userSearch}
@@ -541,7 +551,7 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
               </div>
 
               {/* Right: edit form or prompt */}
-              <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+              <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
                 {!selectedUser ? (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column',
                     alignItems: 'center', justifyContent: 'center', color: '#aaa' }}>
