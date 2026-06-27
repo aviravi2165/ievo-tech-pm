@@ -13,7 +13,7 @@ const CONV_TYPE_LABEL = {
   group_thread: { label: 'Group Chat', color: 'var(--gold)' },
 };
 
-export default function ChatWindow({ conversation, onBack }) {
+export default function ChatWindow({ conversation, onBack, onDisableGroup, onEnableGroup, onDeleteGroup, onHideGroup }) {
   const { currentUserId, toast, groups = [] } = useMessaging();
   const { messages, conversation: threadConv, loading, error, markAllRead, sendReply, refetch, onNewMessageRef } =
     useThread(conversation?.conversationId);
@@ -33,6 +33,7 @@ export default function ChatWindow({ conversation, onBack }) {
   const [groupActionError, setGroupActionError]  = useState('');
   const [groupRemoving,    setGroupRemoving]     = useState(null);
   const [adminToggling,    setAdminToggling]     = useState(null); // userId being promoted/demoted
+  const [groupActing,      setGroupActing]       = useState(false); // disable/enable/delete/hide in progress
   const markedAllRef = useRef(null);
   const bottomRef    = useRef(null);
   const containerRef  = useRef(null);
@@ -305,6 +306,45 @@ useEffect(() => {
     }
   };
 
+  // ── Group governance (disable/enable/delete/hide) — moved here from
+  // GroupManager's list view, since it belongs alongside the chat itself
+  // rather than a separate management panel. Delete/hide make the
+  // conversation disappear from this user's view, so we navigate back
+  // afterward and let the Groups list refetch.
+  const runGroupAction = async (action, confirmMsg, { closesView } = {}) => {
+    if (!matchedGroup) return;
+    if (confirmMsg && !window.confirm(confirmMsg)) return;
+    setGroupActing(true); setGroupActionError('');
+    try {
+      await action(matchedGroup.groupId);
+      window.dispatchEvent(new Event('groups-updated'));
+      if (closesView) onBack?.();
+    } catch (err) {
+      setGroupActionError(err?.response?.data?.error || 'Action failed. Try again.');
+    } finally {
+      setGroupActing(false);
+    }
+  };
+
+  const handleDisableGroupClick = () => runGroupAction(
+    onDisableGroup,
+    `Disable "${matchedGroup?.groupName}"? No one will be able to send new messages, but everyone keeps read access to past chats.`
+  );
+  const handleEnableGroupClick = () => runGroupAction(
+    onEnableGroup,
+    `Re-enable "${matchedGroup?.groupName}"? Members will be able to send messages again.`
+  );
+  const handleDeleteGroupClick = () => runGroupAction(
+    onDeleteGroup,
+    `Delete "${matchedGroup?.groupName}" from your tabs? Other participants keep seeing it (read-only) until they each remove it too.`,
+    { closesView: true }
+  );
+  const handleHideGroupClick = () => runGroupAction(
+    onHideGroup,
+    `Remove "${matchedGroup?.groupName}" from your tabs? This only affects your own view.`,
+    { closesView: true }
+  );
+
   const handleSend = async (payload) => {
     await sendReply(payload);
     setReplyingTo(null);
@@ -416,6 +456,73 @@ useEffect(() => {
           )}
 
 
+          {/* Group governance — disable/enable/delete/hide. Moved here from
+              the Groups list view so it lives alongside the chat itself. */}
+          {isGroupThread && (matchedGroup?.isCreator || matchedGroup?.isSuperAdmin) && (
+            !isGroupDisabled ? (
+              <button
+                className="icon-btn danger"
+                title="Disable group"
+                disabled={groupActing}
+                onClick={handleDisableGroupClick}
+                style={{ width: 30, height: 30 }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+                </svg>
+              </button>
+            ) : (
+              <>
+                <button
+                  className="icon-btn"
+                  title="Re-enable group"
+                  disabled={groupActing}
+                  onClick={handleEnableGroupClick}
+                  style={{ width: 30, height: 30 }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="2">
+                    <polyline points="1 4 1 10 7 10"/>
+                    <path d="M3.51 15a9 9 0 102.13-9.36L1 10"/>
+                  </svg>
+                </button>
+                <button
+                  className="icon-btn danger"
+                  title="Delete group"
+                  disabled={groupActing}
+                  onClick={handleDeleteGroupClick}
+                  style={{ width: 30, height: 30 }}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="2">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6l-1 14H6L5 6"/>
+                    <path d="M10 11v6M14 11v6"/>
+                    <path d="M9 6V4h6v2"/>
+                  </svg>
+                </button>
+              </>
+            )
+          )}
+          {isGroupThread && !(matchedGroup?.isCreator || matchedGroup?.isSuperAdmin) && isGroupDisabled && (
+            <button
+              className="icon-btn danger"
+              title="Remove from my tabs"
+              disabled={groupActing}
+              onClick={handleHideGroupClick}
+              style={{ width: 30, height: 30 }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6l-1 14H6L5 6"/>
+                <path d="M10 11v6M14 11v6"/>
+                <path d="M9 6V4h6v2"/>
+              </svg>
+            </button>
+          )}
         </div>
       </div>
 
