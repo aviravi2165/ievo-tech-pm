@@ -4,36 +4,35 @@ const {
   handleMe,
   handleUserSearch,
   handleChangePassword,
-  handleSetInitialPassword
+  handleSetInitialPassword,
+  handleForgotPassword,
 } = require('../controllers/authController');
-const { authenticate } = require('../../../middleware/auth');
+const {
+  handleGetDepartments,
+  handleGetUsers,
+  handleRegisterUser,
+  handleUpdateUser,
+} = require('../controllers/userManagementController');
+const { authenticate, requireAdmin } = require('../../../middleware/auth');
 
 const router = Router();
 
-// POST /api/auth/login — public, no JWT required
-router.post('/login', handleLogin);
+// ── Public (no auth) ──────────────────────────────────────────────────────────
+router.post('/login',           handleLogin);
+router.post('/forgot-password', handleForgotPassword);
 
-// GET /api/auth/me — requires valid JWT, used on app load
-router.get('/me', authenticate, handleMe);
+// ── Authenticated (any user) ──────────────────────────────────────────────────
+router.get('/me',                    authenticate, handleMe);
+router.get('/search',                authenticate, handleUserSearch);
+router.post('/change-password',      authenticate, handleChangePassword);
+router.post('/set-initial-password', authenticate, handleSetInitialPassword);
 
-// GET /api/users/search?q=   — search users for RecipientPicker
-// Mounted separately in auth/index.js as /api/users
-router.get('/search', authenticate, handleUserSearch);
-
-router.post(
-  '/change-password',
-  authenticate,
-  handleChangePassword
-);
-
-// POST /api/auth/set-initial-password — forced first-login password change.
-// No currentPassword required: the JWT already proves they just authenticated
-// with the temp password; setInitialPassword() re-checks must_change_password
-// server-side so this can't be reused once that flag is cleared.
-router.post(
-  '/set-initial-password',
-  authenticate,
-  handleSetInitialPassword
-);
+// ── Admin only — User Management ─────────────────────────────────────────────
+// NOTE: static paths (/departments, /list, /register) MUST come before the
+// dynamic /:userId param so Express doesn't swallow them as IDs.
+router.get('/departments',   authenticate, requireAdmin, handleGetDepartments);
+router.get('/list',          authenticate, requireAdmin, handleGetUsers);
+router.post('/register',     authenticate, requireAdmin, handleRegisterUser);
+router.patch('/:userId',     authenticate, requireAdmin, handleUpdateUser);
 
 module.exports = router;

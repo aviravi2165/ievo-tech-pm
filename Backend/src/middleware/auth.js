@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const { isUserActive } = require('../modules/auth/services/authService');
 
 /**
  * Verifies a JWT and returns the normalized user payload.
@@ -37,7 +38,7 @@ function extractBearerToken(req) {
   return null;
 }
 
-function authenticate(req, res, next) {
+async function authenticate(req, res, next) {
   const token = extractBearerToken(req);
   if (!token) {
     return res.status(401).json({ error: 'Authentication required' });
@@ -45,7 +46,6 @@ function authenticate(req, res, next) {
 
   try {
     req.user = verifyToken(token);
-    return next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
       return res.status(401).json({ error: 'Token expired' });
@@ -55,6 +55,22 @@ function authenticate(req, res, next) {
     }
     return res.status(401).json({ error: 'Invalid token' });
   }
+
+  // FIX: login() blocking is_active=0 only stops a NEW session from
+  // starting. A user already holding a valid JWT (issued before they were
+  // deactivated) would keep working for up to JWT_EXPIRES_IN (default 8h)
+  // with zero further checks, since the token's signature alone was never
+  // re-validated against current account state. This closes that gap.
+  try {
+    const active = await isUserActive(req.user.userId);
+    if (!active) {
+      return res.status(401).json({ error: 'Account has been deactivated' });
+    }
+  } catch (err) {
+    return next(err);
+  }
+
+  return next();
 }
 
 module.exports = {
@@ -64,4 +80,13 @@ module.exports = {
   // full group control (add/remove participants, disable, delete) across
   // every group in the system, without read access to message content.
   isSuperAdmin: (user) => user?.userType === 'admin',
+
+  // Guards a route so only admin accounts can call it.
+  // Always use AFTER authenticate so req.user is already set.
+  requireAdmin(req, res, next) {
+    if (req.user?.userType !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    return next();
+  },
 };
