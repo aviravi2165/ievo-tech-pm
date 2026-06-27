@@ -145,7 +145,7 @@ function ManagerPicker({ value, displayName, onChange }) {
 // UserForm — shared for both Register and Edit
 // ─────────────────────────────────────────────────────────────────────────────
 
-function UserForm({ form, onChange, departments, onSubmit, submitLabel, loading, error, success, isEdit }) {
+function UserForm({ form, onChange, departments, onSubmit, submitLabel, loading, error, success, isEdit, onRegisterAnother }) {
   const set = (field, value) => onChange({ ...form, [field]: value });
 
   return (
@@ -261,9 +261,20 @@ function UserForm({ form, onChange, departments, onSubmit, submitLabel, loading,
       {success && <div style={{ color: '#16a34a', fontSize: 13, marginBottom: 12 }}>{success}</div>}
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, paddingTop: 4 }}>
-        <button type="submit" disabled={loading}
-          style={{ padding: '9px 22px', background: '#e31b23', color: '#fff',
-            border: 'none', borderRadius: 6, fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+        {onRegisterAnother && (
+          <button type="button" onClick={onRegisterAnother}
+            style={{ padding: '9px 22px', background: '#fff', color: '#e31b23',
+              border: '2px solid #e31b23', borderRadius: 6, fontWeight: 600,
+              fontSize: 14, cursor: 'pointer' }}>
+            + Register Another User
+          </button>
+        )}
+        <button type="submit" disabled={loading || !!onRegisterAnother}
+          style={{ padding: '9px 22px',
+            background: onRegisterAnother ? '#ccc' : '#e31b23',
+            color: '#fff', border: 'none', borderRadius: 6,
+            fontWeight: 600, fontSize: 14,
+            cursor: onRegisterAnother ? 'not-allowed' : 'pointer' }}>
           {loading ? 'Saving…' : submitLabel}
         </button>
       </div>
@@ -286,10 +297,11 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
   const [loading,      setLoading]      = useState(false);
   const [error,        setError]        = useState('');
   const [success,      setSuccess]      = useState('');
+  const [registeredUser, setRegisteredUser] = useState(null); // set after successful registration
 
   // Reset tab when opened
   useEffect(() => {
-    if (open) { setTab(defaultTab); setError(''); setSuccess(''); }
+    if (open) { setTab(defaultTab); setError(''); setSuccess(''); setRegisteredUser(null); }
   }, [open, defaultTab]);
 
   // Load departments once
@@ -317,6 +329,7 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
     setError('');
     setSuccess('');
     setSelectedUser(null);
+    setRegisteredUser(null);
     if (t === 'register') setForm(EMPTY_FORM);
     if (t === 'manage')   loadUsers('');
   };
@@ -343,8 +356,10 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
         mgrUserId:    form.mgrUserId || null,
         isActive:     form.isActive,
       });
+      setRegisteredUser(created);
       setSuccess(`User "${created.username}" registered successfully. Login credentials have been emailed to ${created.email || 'the user'}.`);
-      setForm(EMPTY_FORM);
+      // Intentionally NOT resetting the form here — user sees filled details
+      // until they explicitly click "Register Another User".
     } catch (err) {
       setError(err?.response?.data?.error || err?.message || 'Registration failed.');
     } finally { setLoading(false); }
@@ -469,6 +484,12 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
               error={error}
               success={success}
               isEdit={false}
+              onRegisterAnother={registeredUser ? () => {
+                setForm(EMPTY_FORM);
+                setError('');
+                setSuccess('');
+                setRegisteredUser(null);
+              } : null}
             />
           )}
 
