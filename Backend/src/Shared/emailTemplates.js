@@ -16,7 +16,7 @@ function welcomeEmail({ firstName, username, temporaryPassword }) {
   const displayName = firstName || username;
   const loginUrl    = process.env.APP_URL || 'http://localhost:5173';
 
-  const subject = 'Welcome to I.EVO ERP — Your Account Details';
+  const subject = 'Welcome to I.EVO Tech PM — Your Account Details';
 
   const html = `
 <!DOCTYPE html>
@@ -36,9 +36,9 @@ function welcomeEmail({ firstName, username, temporaryPassword }) {
           <!-- Header -->
           <tr>
             <td style="background:#c4181f;padding:28px 36px;">
-              <h1 style="margin:0;color:#ffffff;font-size:22px;letter-spacing:.5px;">I.EVO ERP</h1>
+              <h1 style="margin:0;color:#ffffff;font-size:22px;letter-spacing:.5px;">I.EVO Tech PM</h1>
               <p style="margin:4px 0 0;color:rgba(255,255,255,0.8);font-size:13px;">
-                Enterprise Resource Planning
+                Enterprise Unified Platform 
               </p>
             </td>
           </tr>
@@ -50,7 +50,7 @@ function welcomeEmail({ firstName, username, temporaryPassword }) {
                 Hi <strong>${displayName}</strong>,
               </p>
               <p style="margin:0 0 16px;font-size:14px;color:#444;line-height:1.6;">
-                Your I.EVO ERP account has been created. Use the credentials below to
+                Your I.EVO Tech PM account has been created. Use the credentials below to
                 log in for the first time. You will be asked to set a new password
                 immediately after signing in.
               </p>
@@ -93,7 +93,7 @@ function welcomeEmail({ firstName, username, temporaryPassword }) {
               </table>
 
               <p style="margin:0 0 20px;font-size:14px;color:#444;line-height:1.6;">
-                Click the button below to open the ERP portal and sign in.
+                Click the button below to open the I.EVO Tech PM portal and sign in.
               </p>
 
               <table cellpadding="0" cellspacing="0">
@@ -103,7 +103,7 @@ function welcomeEmail({ firstName, username, temporaryPassword }) {
                        style="display:inline-block;padding:12px 28px;color:#ffffff;
                               font-size:14px;font-weight:700;text-decoration:none;
                               letter-spacing:.04em;">
-                      Open I.EVO ERP →
+                      Open I.EVO Tech PM →
                     </a>
                   </td>
                 </tr>
@@ -120,7 +120,7 @@ function welcomeEmail({ firstName, username, temporaryPassword }) {
           <tr>
             <td style="background:#f0f0f0;padding:16px 36px;border-top:1px solid #e0e0e0;">
               <p style="margin:0;font-size:11px;color:#aaa;text-align:center;">
-                This is an automated message from I.EVO ERP. Please do not reply to this email.
+                This is an automated message from I.EVO Tech PM. Please do not reply to this email.
               </p>
             </td>
           </tr>
@@ -133,7 +133,7 @@ function welcomeEmail({ firstName, username, temporaryPassword }) {
 </html>`;
 
   const text = `
-Welcome to I.EVO ERP, ${displayName}!
+Welcome to I.EVO , ${displayName}!
 
 Your account has been created. Use the credentials below to log in.
 You will be asked to set a new password on first login.
