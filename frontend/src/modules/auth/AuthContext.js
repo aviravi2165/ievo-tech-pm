@@ -8,7 +8,7 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [user,    setUser]    = useState(null);
   const [token,   setToken]   = useState(() => localStorage.getItem('erp_token'));
-  const [loading, setLoading] = useState(true); // checking stored token on mount
+  const [loading, setLoading] = useState(true);
 
   // On mount — if a token is in localStorage, verify it with /api/auth/me
   useEffect(() => {
@@ -18,11 +18,9 @@ export function AuthProvider({ children }) {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => {
-        try { console.log('AUTH ME:', r.data); } catch (e) {}
         setUser(r.data);
       })
       .catch(() => {
-        // token invalid or expired — clear it
         localStorage.removeItem('erp_token');
         setToken(null);
       })
@@ -36,40 +34,36 @@ export function AuthProvider({ children }) {
     setUser(data.user);
     return data;
   }, []);
-  
-  const changePassword = useCallback(
-  async ({ currentPassword, newPassword }) => {
+
+  const changePassword = useCallback(async ({ currentPassword, newPassword }) => {
     const { data } = await axios.post(
       `${BASE_URL}/auth/change-password`,
-      {
-        currentPassword,
-        newPassword,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      }
+      { currentPassword, newPassword },
+      { headers: { Authorization: `Bearer ${token}` } }
     );
-
     return data;
-  },
-  [token]
-);
+  }, [token]);
 
-  // Forced first-login flow only — no currentPassword needed, since the
-  // JWT already proves they just authenticated with the temp password.
-  const setInitialPassword = useCallback(
-    async ({ newPassword }) => {
-      const { data } = await axios.post(
-        `${BASE_URL}/auth/set-initial-password`,
-        { newPassword },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      return data;
-    },
-    [token]
-  );
+  // Forced first-login flow — no currentPassword needed
+  const setInitialPassword = useCallback(async ({ newPassword }) => {
+    const { data } = await axios.post(
+      `${BASE_URL}/auth/set-initial-password`,
+      { newPassword },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return data;
+  }, [token]);
+
+  /**
+   * Forgot password — public, no token required.
+   * Sends a reset email to the given address if an active account is found.
+   * Always resolves (even if the email is not registered) to avoid revealing
+   * whether an account exists.
+   */
+  const forgotPassword = useCallback(async (email) => {
+    const { data } = await axios.post(`${BASE_URL}/auth/forgot-password`, { email });
+    return data;
+  }, []);
 
   const logout = useCallback(() => {
     localStorage.removeItem('erp_token');
@@ -78,7 +72,12 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, logout,  changePassword, setInitialPassword, }}>
+    <AuthContext.Provider value={{
+      user, token, loading,
+      login, logout,
+      changePassword, setInitialPassword,
+      forgotPassword,
+    }}>
       {children}
     </AuthContext.Provider>
   );

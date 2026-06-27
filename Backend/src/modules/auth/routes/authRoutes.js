@@ -5,6 +5,7 @@ const {
   handleUserSearch,
   handleChangePassword,
   handleSetInitialPassword,
+  handleForgotPassword,
 } = require('../controllers/authController');
 const {
   handleGetDepartments,
@@ -16,8 +17,9 @@ const { authenticate, requireAdmin } = require('../../../middleware/auth');
 
 const router = Router();
 
-// ── Public ────────────────────────────────────────────────────────────────────
-router.post('/login', handleLogin);
+// ── Public (no auth) ──────────────────────────────────────────────────────────
+router.post('/login',           handleLogin);
+router.post('/forgot-password', handleForgotPassword);
 
 // ── Authenticated (any user) ──────────────────────────────────────────────────
 router.get('/me',                    authenticate, handleMe);
