@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { messageApi } from '../api/messageApi';
 import { groupApi }   from '../api/groupApi';
 import { fileApi }    from '../api/fileApi';
@@ -97,6 +98,7 @@ function RecipientChip({ item, onRemove, onExpand, expanding, mode }) {
 function RecipientInput({ selectedIds, onAdd, groups, mode, placeholder, currentUserId }) {
   const [query, setQuery] = useState('');
   const [open,  setOpen]  = useState(false);
+  const [rect,  setRect]  = useState(null);
   const { results: users, loading } = useUserSearch(query);
   const inputRef = useRef(null);
   const dropRef  = useRef(null);
@@ -118,6 +120,12 @@ function RecipientInput({ selectedIds, onAdd, groups, mode, placeholder, current
       )
     : [];
 
+  const updateRect = useCallback(() => {
+    if (inputRef.current) {
+      setRect(inputRef.current.getBoundingClientRect());
+    }
+  }, []);
+
   useEffect(() => {
     const h = e => {
       if (!dropRef.current?.contains(e.target) && !inputRef.current?.contains(e.target))
@@ -126,6 +134,19 @@ function RecipientInput({ selectedIds, onAdd, groups, mode, placeholder, current
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, []);
+
+  // Update position dynamically when scrolling or resizing
+  useEffect(() => {
+    if (open) {
+      updateRect();
+      window.addEventListener('scroll', updateRect, true); // true catches scroll events from parent containers
+      window.addEventListener('resize', updateRect);
+      return () => {
+        window.removeEventListener('scroll', updateRect, true);
+        window.removeEventListener('resize', updateRect);
+      };
+    }
+  }, [open, updateRect]);
 
   const select = item => {
     onAdd(item);
@@ -144,11 +165,19 @@ function RecipientInput({ selectedIds, onAdd, groups, mode, placeholder, current
         style={{ width: '100%' }}
         placeholder={placeholder}
         value={query}
-        onChange={e => { setQuery(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
+        onChange={e => { setQuery(e.target.value); setOpen(true); updateRect(); }}
+        onFocus={() => { setOpen(true); updateRect(); }}
       />
-      {hasDrop && (
-        <div ref={dropRef} className="dropdown" style={{ zIndex: 700, maxHeight: 260, overflowY: 'auto' }}>
+      {hasDrop && rect && createPortal(
+        <div ref={dropRef} className="dropdown" style={{ 
+          position: 'fixed',
+          top: rect.bottom + 4,
+          left: rect.left,
+          width: Math.max(rect.width, 240), // Provide a sensible min-width
+          zIndex: 9999, // Safely above the modal's z-index
+          maxHeight: 260, 
+          overflowY: 'auto' 
+        }}>
           {loading && (
             <div className="dropdown-item" style={{ color: 'var(--muted)' }}>Searching…</div>
           )}
@@ -218,7 +247,8 @@ function RecipientInput({ selectedIds, onAdd, groups, mode, placeholder, current
               ))}
             </>
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
