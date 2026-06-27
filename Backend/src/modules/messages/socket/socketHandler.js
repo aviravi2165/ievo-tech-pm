@@ -18,6 +18,12 @@ function toNewMessagePayload(payload) {
     senderName:     payload.senderName,
     senderUserId:   payload.senderUserId,
     subject:        payload.subject,
+    // Full message data so clients can append without an HTTP refetch
+    bodyHtml:       payload.bodyHtml   || null,
+    createdAt:      payload.createdAt  || new Date().toISOString(),
+    attachments:    payload.attachments || [],
+    parentMessage:  payload.parentMessage || null,
+    readReceipts:   [],
   };
 }
 

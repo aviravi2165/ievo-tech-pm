@@ -1,10 +1,9 @@
 import { useMessaging } from '../context/MessagingContext';
 
 /**
- * Always-visible Inbox / Sent / Groups tabs for the message drawer.
- *
- * Previously received unreadCount as a prop from MessagingPage.
- * Now reads it from MessagingContext directly — no prop needed.
+ * Always-visible Inbox / Groups tabs for the message drawer.
+ * Sent tab has been removed — inbox shows private and shared chats,
+ * groups tab manages all group conversations.
  */
 export default function MessageTabBar({ tab, onTabChange, isSuperAdmin = false }) {
   const { unreadCount } = useMessaging();
@@ -35,11 +34,6 @@ export default function MessageTabBar({ tab, onTabChange, isSuperAdmin = false }
         {unreadCount > 0 && (
           <span className="badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
         )}
-      </button>
-      <button type="button"
-        className={`msg-nav-btn ${tab === 'sent' ? 'active' : ''}`}
-        onClick={() => onTabChange('sent')}>
-        Sent
       </button>
       <button type="button"
         className={`msg-nav-btn ${tab === 'groups' ? 'active' : ''}`}

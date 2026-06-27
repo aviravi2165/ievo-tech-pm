@@ -236,11 +236,6 @@ const MODES = [
     label: 'Shared',
     hint:  'One shared thread. Everyone can see replies and each other. Groups auto-expand into individual members. You can remove any participant after sending.',
   },
-  {
-    key:   'group_thread',
-    label: 'Group Chat',
-    hint:  'Posts into a group\'s shared conversation. All group members participate. Use this for team discussions.',
-  },
 ];
 
 // ── Main ComposeModal ─────────────────────────────────────────────────────────

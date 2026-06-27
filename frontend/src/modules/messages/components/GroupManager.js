@@ -43,12 +43,12 @@ export default function GroupManager({
   onDeleteThread,
   onHideThread,
   onOpenConversation,
-  onComposeToGroup,
 }) {
   const [creating,       setCreating]       = useState(false);
-  const [groupSearch,    setGroupSearch]    = useState('');   // Bug 1 fix: groups search
+  const [groupSearch,    setGroupSearch]    = useState('');
   const [threadSearch,   setThreadSearch]   = useState('');
   const [newName,        setNewName]        = useState('');
+  const [newDescription, setNewDescription] = useState('');
   const [createError,    setCreateError]    = useState('');
   const [saving,         setSaving]         = useState(false);
   const [managingGroup,  setManagingGroup]  = useState(null);
@@ -71,8 +71,8 @@ export default function GroupManager({
     if (!newName.trim()) { setCreateError('Group name is required.'); return; }
     setSaving(true); setCreateError('');
     try {
-      await onCreate(newName.trim());
-      setNewName(''); setCreating(false);
+      await onCreate(newName.trim(), newDescription.trim() || undefined);
+      setNewName(''); setNewDescription(''); setCreating(false);
     } catch {
       setCreateError('Failed to create group. Try again.');
     } finally { setSaving(false); }
@@ -259,18 +259,23 @@ setSelectedUsers([]);
     setOpeningGroupId(group.groupId);
     setActionError(prev => ({ ...prev, [group.groupId]: '' }));
     try {
-      const conv = await groupApi.getGroupConversation(group.groupId);
+      let conv;
+      try {
+        conv = await groupApi.getGroupConversation(group.groupId);
+      } catch (err) {
+        if (err?.response?.status === 404) {
+          // No conversation yet — create one via POST
+          conv = await groupApi.createGroupConversation(group.groupId);
+        } else {
+          throw err;
+        }
+      }
       onOpenConversation?.(conv);
     } catch (err) {
-      const is404 = err?.response?.status === 404;
-      if (is404) {
-        onComposeToGroup?.(group);
-      } else {
-        setActionError(prev => ({
-          ...prev,
-          [group.groupId]: 'Could not open thread. Try again.',
-        }));
-      }
+      setActionError(prev => ({
+        ...prev,
+        [group.groupId]: 'Could not open group chat. Try again.',
+      }));
     } finally {
       setOpeningGroupId(null);
     }
@@ -778,6 +783,15 @@ setSelectedUsers([]);
             onKeyDown={e => e.key === 'Enter' && handleCreate()}
             autoFocus
           />
+          <label className="field-label">Description <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional)</span></label>
+          <input
+            className="field-input"
+            style={{ marginBottom: 10 }}
+            placeholder="What is this group for?"
+            value={newDescription}
+            onChange={e => setNewDescription(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleCreate()}
+          />
           {createError && (
             <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 8 }}>
               {createError}
@@ -786,7 +800,7 @@ setSelectedUsers([]);
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button
               className="btn btn-ghost"
-              onClick={() => { setCreating(false); setNewName(''); setCreateError(''); }}
+              onClick={() => { setCreating(false); setNewName(''); setNewDescription(''); setCreateError(''); }}
             >
               Cancel
             </button>
@@ -848,6 +862,11 @@ setSelectedUsers([]);
                   }}>Disabled</span>
                 )}
               </div>
+              {g.description && (
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {g.description}
+                </div>
+              )}
               <div className="group-count">
                 {g.memberCount ?? 0} member{g.memberCount !== 1 ? 's' : ''}
               </div>

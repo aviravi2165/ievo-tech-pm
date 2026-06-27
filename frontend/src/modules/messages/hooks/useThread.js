@@ -51,12 +51,34 @@ export function useThread(conversationId) {
     if (!socket || !conversationId) return;
 
     const onNew = (payload) => {
-      if (payload.conversationId !== conversationId) return;
-      fetchThread().then(() => {
-        // After fetch, mark the new message read immediately since user is already in chat
-        // markAllRead will handle deduplication via markedReadRef
+      if (String(payload.conversationId) !== String(conversationId)) return;
+
+      // If the payload has the full message body, append directly — no HTTP round-trip
+      if (payload.bodyHtml != null) {
+        const newMsg = {
+          messageId:     payload.messageId,
+          conversationId: payload.conversationId,
+          senderId:      payload.senderUserId,
+          senderName:    payload.senderName,
+          bodyHtml:      payload.bodyHtml,
+          createdAt:     payload.createdAt || new Date().toISOString(),
+          attachments:   payload.attachments || [],
+          parentMessage: payload.parentMessage || null,
+          readReceipts:  payload.readReceipts || [],
+        };
+        setMessages(prev => {
+          // Deduplicate — socket may fire for own messages too
+          if (prev.find(m => m.messageId === newMsg.messageId)) return prev;
+          return [...prev, newMsg];
+        });
+        // Notify ChatWindow to scroll / mark read
         if (onNewMessageRef.current) onNewMessageRef.current(payload);
-      });
+      } else {
+        // Fallback: payload missing bodyHtml (e.g. older server) — refetch
+        fetchThread().then(() => {
+          if (onNewMessageRef.current) onNewMessageRef.current(payload);
+        });
+      }
     };
 
     // Live read receipt — update the specific message in place
@@ -137,9 +159,11 @@ export function useThread(conversationId) {
 
   const sendReply = useCallback(async (payload) => {
     const result = await messageApi.reply(conversationId, payload);
-    await fetchThread();
+    // The server broadcasts NEW_MESSAGE back to the sender's conv: room,
+    // which our onNew handler will catch and append — no manual refetch needed.
+    // We still return the result in case the caller needs it.
     return result;
-  }, [conversationId, fetchThread]);
+  }, [conversationId]);
 
   return {
     messages, conversation, loading, error,

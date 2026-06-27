@@ -648,11 +648,18 @@ async function replyToConversation(conversationId, senderUserId, payload) {
       .query(`SELECT user_id FROM comm_participants WHERE conversation_id = @convId AND is_deleted = 0`);
     const participantIds = participantRes.recordset.map(r => r.user_id);
 
+    // Fetch created_at for the new message so socket payload is complete
+    const msgRes = await req()
+      .input('messageId', sql.Int, messageId)
+      .query(`SELECT created_at AS createdAt FROM comm_messages WHERE message_id = @messageId`);
+
     return {
       conversationId, messageId,
       subject:     metaRes.recordset[0]?.subject,
       senderName:  displayName(senderRes.recordset[0]),
       senderUserId, participantIds,
+      bodyHtml:    sanitizedBody,
+      createdAt:   msgRes.recordset[0]?.createdAt || new Date().toISOString(),
     };
   });
 }

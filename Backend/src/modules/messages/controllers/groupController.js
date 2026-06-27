@@ -19,11 +19,12 @@ async function list(req, res) {
 
 async function create(req, res) {
   try {
-    const groupName = (req.body.groupName || '').trim();
+    const groupName    = (req.body.groupName    || '').trim();
+    const description  = (req.body.description  || '').trim() || null;
     if (!groupName) {
       return res.status(400).json({ error: 'groupName is required' });
     }
-    const group = await groupService.createGroup(req.user.userId, groupName);
+    const group = await groupService.createGroup(req.user.userId, groupName, description);
     return res.status(201).json(group);
   } catch (err) {
     return handleError(res, err);
@@ -205,6 +206,24 @@ async function getGroupConversation(req, res) {
   }
 }
 
+async function createGroupConversation(req, res) {
+  try {
+    const groupId = parseInt(req.params.groupId, 10);
+    if (Number.isNaN(groupId)) {
+      return res.status(400).json({ error: 'Invalid group id' });
+    }
+    await groupService.assertGroupMember(groupId, req.user.userId);
+    // Return existing conversation if one exists, otherwise create one
+    let conv = await groupService.getLatestGroupConversation(groupId, req.user.userId);
+    if (!conv) {
+      conv = await groupService.ensureGroupConversation(groupId, req.user.userId);
+    }
+    return res.json(conv);
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
 module.exports = {
   list,
   create,
@@ -217,4 +236,5 @@ module.exports = {
   remove,
   hide,
   getGroupConversation,
+  createGroupConversation,
 };
