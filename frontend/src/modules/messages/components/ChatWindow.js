@@ -154,17 +154,13 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
   }, [conversation?.conversationId, loading, messages, currentUserId]);
 
   useEffect(() => {
-    if (
-      firstLoadRef.current &&
-      messages.length > 0
-    ) {
+    if (firstLoadRef.current && messages.length > 0) {
+      // Use container.scrollTop instead of scrollIntoView — scrollIntoView
+      // scrolls the entire viewport which causes the jarring jump from top.
       setTimeout(() => {
-        bottomRef.current?.scrollIntoView({
-          behavior: 'auto',
-          block: 'end',
-        });
+        const c = containerRef.current;
+        if (c) c.scrollTop = c.scrollHeight;
       }, 50);
-
       firstLoadRef.current = false;
     }
   }, [messages.length]);
@@ -176,7 +172,9 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
     const iSentIt = String(lastMessage?.senderId) === String(currentUserId);
 
     if (iSentIt) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      // Scroll within the container only — not the whole viewport
+      const c = containerRef.current;
+      if (c) c.scrollTo({ top: c.scrollHeight, behavior: 'smooth' });
       return;
     }
 
@@ -189,7 +187,7 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
       container.clientHeight;
 
     if (distanceFromBottom < 120) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
     }
   }, [messages.length, currentUserId]);
 
@@ -214,10 +212,14 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
         String(payload.senderUserId) === String(uid);
       if (isMine) return;
 
-      const container = containerRef.current;
-      const distanceFromBottom = container
-        ? container.scrollHeight - container.scrollTop - container.clientHeight
-        : 0;
+      // Use the pre-captured distance (snapshot taken BEFORE fetchThread resolved
+      // and auto-scroll may have fired). Falls back to live measurement if not present.
+      const distanceFromBottom = payload._distanceFromBottom != null
+        ? payload._distanceFromBottom
+        : (() => {
+            const c = containerRef.current;
+            return c ? c.scrollHeight - c.scrollTop - c.clientHeight : 0;
+          })();
 
       if (distanceFromBottom > 120) {
         setShowNewPill(true);
@@ -228,7 +230,8 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
   }, [onNewMessageRef]);
 
   const handleJumpToBottom = () => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    const c = containerRef.current;
+    if (c) c.scrollTo({ top: c.scrollHeight, behavior: 'smooth' });
     setShowNewPill(false);
     setNewPillCount(0);
   };
