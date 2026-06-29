@@ -8,9 +8,9 @@ import { groupApi }   from '../api/groupApi';
 import api            from '../api/axiosInstance';
 
 const CONV_TYPE_LABEL = {
-  bcc:          { label: 'Private',    color: 'var(--muted)' },
-  cc:           { label: 'Shared',     color: '#4A9EFF' },
-  group_thread: { label: 'Group Chat', color: 'var(--gold)' },
+  bcc:          { label: 'Private',    bg: 'var(--accent-glow)',   color: 'var(--accent)',  border: 'rgba(224,28,36,0.3)' },
+  cc:           { label: 'Shared',     bg: 'rgba(26,115,232,0.1)', color: '#1a73e8',        border: 'rgba(26,115,232,0.35)' },
+  group_thread: { label: 'Group Chat', bg: 'rgba(249,171,0,0.1)',  color: 'var(--gold)',    border: 'rgba(249,171,0,0.35)' },
 };
 
 export default function ChatWindow({ conversation, onBack, onDisableGroup, onEnableGroup, onDeleteGroup, onHideGroup }) {
@@ -20,6 +20,7 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
 
   const [replyingTo,       setReplyingTo]       = useState(null);
   const [showParticipants, setShowParticipants]  = useState(false);
+  const [descExpanded,     setDescExpanded]      = useState(false);
   const [removing,         setRemoving]          = useState(null); // userId being removed
   const [removeError,      setRemoveError]       = useState('');
   const [highlightedId,    setHighlightedId]     = useState(null);
@@ -397,33 +398,57 @@ useEffect(() => {
         )}
 
        <div className="thread-header-info" style={{ flex: 1, minWidth: 0 }}>
-  <div className="thread-subject">
-    {isGroupThread ? (conv.groupName || conv.subject) : conv.subject}
-  </div>
+          {/* Subject line */}
+          <div className="thread-subject">
+            {isGroupThread ? (conv.groupName || conv.subject) : conv.subject}
+          </div>
 
-  <div className="thread-count">
-    {messages.length} message{messages.length !== 1 ? 's' : ''}
-  </div>
-          <div className="thread-meta" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            {/* Conv type badge */}
+          {/* Meta row: type badge + participants/description */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
+            {/* Type badge — filled, same across all types */}
             <span style={{
-              fontSize: 10, fontWeight: 700, color: typeInfo.color,
-              textTransform: 'uppercase', letterSpacing: '.06em',
-              border: `1px solid ${typeInfo.color}`,
-              borderRadius: 8, padding: '1px 7px', opacity: .85,
+              fontSize: 10, fontWeight: 700, letterSpacing: '.06em',
+              textTransform: 'uppercase', flexShrink: 0,
+              background: typeInfo.bg, color: typeInfo.color,
+              border: `1px solid ${typeInfo.border}`,
+              borderRadius: 6, padding: '2px 7px',
             }}>
               {typeInfo.label}
             </span>
-            {isGroupThread && matchedGroup?.description && (
-              <span style={{ color: 'var(--muted)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: 'italic' }}>
-                {matchedGroup.description}
-              </span>
-            )}
+
+            {/* Participants (non-group) */}
             {!isGroupThread && participantNames && (
-              <span style={{ color: 'var(--muted)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ color: 'var(--text-muted)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {isCcThread ? `With: ${participantNames}` : participantNames}
               </span>
             )}
+
+            {/* Group description — expandable */}
+            {isGroupThread && matchedGroup?.description && (
+              <span
+                onClick={() => setDescExpanded(v => !v)}
+                style={{
+                  color: 'var(--text-muted)', fontSize: 12,
+                  overflow: descExpanded ? 'visible' : 'hidden',
+                  textOverflow: descExpanded ? 'clip' : 'ellipsis',
+                  whiteSpace: descExpanded ? 'normal' : 'nowrap',
+                  cursor: 'pointer',
+                  maxWidth: descExpanded ? '100%' : undefined,
+                  fontStyle: 'italic',
+                }}
+                title={descExpanded ? 'Click to collapse' : 'Click to expand'}
+              >
+                {matchedGroup.description}
+                {!descExpanded && (
+                  <span style={{ color: 'var(--accent)', marginLeft: 4, fontStyle: 'normal', fontSize: 11 }}>…more</span>
+                )}
+              </span>
+            )}
+          </div>
+
+          {/* Message count — lighter, below */}
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, fontWeight: 400 }}>
+            {messages.length} message{messages.length !== 1 ? 's' : ''}
           </div>
         </div>
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { groupApi } from '../api/groupApi';
 import { messageApi } from '../api/messageApi';
 import RecipientPicker from './RecipientPicker';
@@ -30,7 +30,8 @@ import RecipientPicker from './RecipientPicker';
 export default function GroupManager({
   groups = [],
   loading,
-  threads, // optional: ALL system threads (super admin Threads tab)
+  groupConversations = [],   // ← enriched conv data (unread count, latestAt, latestSender)
+  threads,
   threadsLoading,
   currentTab,
   onCreate,
@@ -66,6 +67,18 @@ export default function GroupManager({
   const [actingGroupId,  setActingGroupId]  = useState(null);
   const [threadActionError, setThreadActionError] = useState({});
   const [actingThreadId,    setActingThreadId]    = useState(null);
+
+  // Map groupId → conversation row (for unread dot, time, preview)
+  const groupConvMap = useMemo(() => {
+    const map = {};
+    groupConversations.forEach(c => {
+      if (c.groupId) map[String(c.groupId)] = c;
+    });
+    return map;
+  }, [groupConversations]);
+
+  // Determine if current user is super admin (any group will have isSuperAdmin set)
+  const isSuperAdmin = groups.some(g => g.isSuperAdmin);
 
   const handleCreate = async () => {
     if (!newName.trim()) { setCreateError('Group name is required.'); return; }
@@ -623,7 +636,7 @@ setSelectedUsers([]);
 
   // ── Groups list ────────────────────────────────────────────────────────────
   return (
-    <div className="groups-panel">
+    <aside className="msg-sidebar">
       {/* Threads (admin view) */}
       {threads && currentTab === 'threads' && (
         <div style={{ marginBottom: 18 }}>
@@ -749,29 +762,35 @@ setSelectedUsers([]);
       )}
       {currentTab !== 'threads' && (
       <>
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
-        <h3 style={{ margin: 0 }}>Groups</h3>
-        <button
-          className="btn btn-primary"
-          style={{ marginLeft: 'auto', padding: '7px 16px', fontSize: 12 }}
-          onClick={() => setCreating(true)}
-        >
-          + New Group
-        </button>
+      {/* ── Header — matches InboxSidebar exactly ── */}
+      <div className="msg-sidebar-header">
+        <h2>I.EVO</h2>
+        <p>Groups · Design | Demonstrate | Deliver</p>
       </div>
 
-      <div className="msg-search-wrap" style={{ padding: '0 0 14px' }}>
+      {!isSuperAdmin && (
+        <button className="msg-compose-btn" onClick={() => { setCreating(true); }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          New Group
+        </button>
+      )}
+
+      <div className="msg-search-wrap">
         <input
+          type="text"
           placeholder="Search groups by name…"
           value={groupSearch}
           onChange={e => setGroupSearch(e.target.value)}
         />
       </div>
 
-      {creating && (
+      {!isSuperAdmin && creating && (
         <div style={{
-          background: 'var(--charcoal)', border: '1px solid var(--divider)',
-          borderRadius: 'var(--radius-lg)', padding: 16, marginBottom: 16,
+          margin: '0 12px 8px',
+          background: 'var(--bg-panel)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-lg)', padding: 14,
         }}>
           <label className="field-label">Group Name</label>
           <input
@@ -783,7 +802,10 @@ setSelectedUsers([]);
             onKeyDown={e => e.key === 'Enter' && handleCreate()}
             autoFocus
           />
-          <label className="field-label">Description <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional)</span></label>
+          <label className="field-label">
+            Description{' '}
+            <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span>
+          </label>
           <input
             className="field-input"
             style={{ marginBottom: 10 }}
@@ -793,15 +815,10 @@ setSelectedUsers([]);
             onKeyDown={e => e.key === 'Enter' && handleCreate()}
           />
           {createError && (
-            <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 8 }}>
-              {createError}
-            </div>
+            <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 8 }}>{createError}</div>
           )}
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button
-              className="btn btn-ghost"
-              onClick={() => { setCreating(false); setNewName(''); setNewDescription(''); setCreateError(''); }}
-            >
+            <button className="btn btn-ghost" onClick={() => { setCreating(false); setNewName(''); setNewDescription(''); setCreateError(''); }}>
               Cancel
             </button>
             <button className="btn btn-primary" onClick={handleCreate} disabled={saving}>
@@ -811,162 +828,208 @@ setSelectedUsers([]);
         </div>
       )}
 
-      {loading && <div className="loader-wrap"><div className="spinner" /></div>}
+      <div className="msg-conv-list">
+        {loading && <div className="loader-wrap"><div className="spinner" /></div>}
 
-      {!loading && groups.length === 0 && (
-        <div className="msg-empty" style={{ padding: '40px 0' }}>
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="1.5">
-            <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
-            <circle cx="9" cy="7" r="4"/>
-            <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
-          </svg>
-          <p>No groups yet. Create one to quickly message a team.</p>
-        </div>
-      )}
+        {!loading && groups.length === 0 && (
+          <div style={{ padding: '24px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+            No groups yet. Create one above.
+          </div>
+        )}
 
-      {groups
-        .filter(g =>
-          !groupSearch.trim() ||
-          (g.groupName || '').toLowerCase().includes(groupSearch.toLowerCase())
-        )
-        .map(g => {
-        const canManage = Boolean(g.isCreator || g.isSuperAdmin);
-        const isDisabled = Boolean(g.isDisabled);
-        const isActing = actingGroupId === g.groupId;
+        {[...groups]
+          .filter(g =>
+            !groupSearch.trim() ||
+            (g.groupName || '').toLowerCase().includes(groupSearch.toLowerCase())
+          )
+          .sort((a, b) => {
+            // Disabled groups always sink to the bottom
+            const aOff = Boolean(a.isDisabled);
+            const bOff = Boolean(b.isDisabled);
+            if (aOff !== bOff) return aOff ? 1 : -1;
+            // Active groups: sort by latest conversation activity descending
+            const ta = groupConvMap[String(a.groupId)]?.latestAt || a.createdAt || '';
+            const tb = groupConvMap[String(b.groupId)]?.latestAt || b.createdAt || '';
+            return tb < ta ? -1 : tb > ta ? 1 : 0;
+          })
+          .map(g => {
+          const canManage  = Boolean(g.isCreator || g.isSuperAdmin);
+          const isDisabled = Boolean(g.isDisabled);
+          const isActing   = actingGroupId === g.groupId;
+          const conv       = groupConvMap[String(g.groupId)];
+          const unread     = conv?.unreadCount || 0;
+          const hasUnread  = unread > 0;
+          const latestAt   = conv?.latestAt || conv?.createdAt || g.createdAt;
+          const memberLabel = `${g.memberCount ?? 0} member${g.memberCount !== 1 ? 's' : ''}`;
 
-        return (
-          <div key={g.groupId} className="group-card">
-            <div className="group-icon">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="2">
-                <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
-                <circle cx="9" cy="7" r="4"/>
-                <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
-              </svg>
-            </div>
+          const timeLabel = (() => {
+            if (!latestAt) return '';
+            const d = new Date(latestAt);
+            const diffDays = Math.floor((Date.now() - d) / 86400000);
+            if (diffDays === 0) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            if (diffDays === 1) return 'Yesterday';
+            if (diffDays < 7)  return d.toLocaleDateString([], { weekday: 'short' });
+            return d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+          })();
 
-            <div className="group-info">
-              <div className="group-name" style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>{g.groupName}</span>
-                {g.isSuperAdmin && (
-                  <span style={{
-                    fontSize: 10, color: 'var(--gold)', border: '1px solid var(--gold)',
-                    borderRadius: 8, padding: '1px 6px', textTransform: 'uppercase', letterSpacing: '.04em',
-                  }}>Super Admin View</span>
-                )}
-                {isDisabled && (
-                  <span style={{
-                    fontSize: 10, color: 'var(--muted)', border: '1px solid var(--divider)',
-                    borderRadius: 8, padding: '1px 6px', textTransform: 'uppercase', letterSpacing: '.04em',
-                  }}>Disabled</span>
-                )}
-              </div>
-              {g.description && (
-                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {g.description}
+          // ── Super admin: governance card ──────────────────────────────────
+          if (g.isSuperAdmin) {
+            return (
+              <div key={g.groupId} className="group-card" style={{ margin: '0 0 2px' }}>
+                <div className="group-icon">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+                    <circle cx="9" cy="7" r="4"/>
+                    <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
+                  </svg>
                 </div>
-              )}
-              <div className="group-count">
-                {g.memberCount ?? 0} member{g.memberCount !== 1 ? 's' : ''}
-              </div>
-              {actionError[g.groupId] && (
-                <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 3 }}>
-                  {actionError[g.groupId]}
-                </div>
-              )}
-            </div>
-
-            <div className="group-actions">
-              {/* Open thread — hidden entirely for the super admin's governance-only view */}
-              {!g.isSuperAdmin && (
-                <button
-                  className="icon-btn"
-                  title="Open group chat"
-                  disabled={openingGroupId === g.groupId}
-                  onClick={() => handleOpenThread(g)}
-                >
-                  {openingGroupId === g.groupId ? (
-                    <div className="spinner" style={{ width: 12, height: 12, borderWidth: 2 }} />
-                  ) : (
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                      stroke="currentColor" strokeWidth="2">
-                      <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
-                    </svg>
+                <div className="group-info" style={{ minWidth: 0 }}>
+                  <div className="group-name" style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
+                      {g.groupName}
+                    </span>
+                    <span style={{
+                      fontSize: 10, color: 'var(--gold)', border: '1px solid var(--gold)',
+                      borderRadius: 8, padding: '1px 6px', textTransform: 'uppercase', letterSpacing: '.04em', flexShrink: 0,
+                    }}>Super Admin View</span>
+                    {isDisabled && (
+                      <span style={{
+                        fontSize: 10, color: 'var(--text-muted)', border: '1px solid var(--border)',
+                        borderRadius: 8, padding: '1px 6px', textTransform: 'uppercase', letterSpacing: '.04em', flexShrink: 0,
+                      }}>Disabled</span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, overflow: 'hidden', marginTop: 1 }}>
+                    <span className="group-count" style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>{memberLabel}</span>
+                    {g.description && (
+                      <>
+                        <span className="group-count" style={{ flexShrink: 0 }}>·</span>
+                        <span className="group-count" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: 'italic' }}>
+                          {g.description}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  {actionError[g.groupId] && (
+                    <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 3 }}>{actionError[g.groupId]}</div>
                   )}
-                </button>
-              )}
+                </div>
+                {/* Time + actions */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
+                  {timeLabel && (
+                    <span style={{ fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{timeLabel}</span>
+                  )}
+                  <div className="group-actions" style={{ marginTop: 0 }}>
+                    <button className="icon-btn" title="Manage members" onClick={() => openManage(g)}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+                        <circle cx="9" cy="7" r="4"/>
+                        <line x1="19" y1="8" x2="19" y2="14"/>
+                        <line x1="22" y1="11" x2="16" y2="11"/>
+                      </svg>
+                    </button>
+                    {!isDisabled ? (
+                      <button className="icon-btn danger" title="Disable group" disabled={isActing} onClick={() => handleDisable(g)}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+                        </svg>
+                      </button>
+                    ) : (
+                      <>
+                        <button className="icon-btn" title="Re-enable group" disabled={isActing} onClick={() => handleEnable(g)}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/>
+                          </svg>
+                        </button>
+                        <button className="icon-btn danger" title="Delete group" disabled={isActing} onClick={() => handleDelete(g)}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
+                            <path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/>
+                          </svg>
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          }
 
-              {/* Manage / view members */}
-              <button
-                className="icon-btn"
-                title={canManage ? 'Manage members' : 'View members'}
-                onClick={() => openManage(g)}
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="2">
+          // ── Regular user: group-card style matching inbox ─────────────────
+          return (
+            <div
+              key={g.groupId}
+              className={`group-card${conv?._flash ? ' conv-flash' : ''}`}
+              style={{ cursor: 'pointer', borderColor: hasUnread ? 'var(--accent)' : undefined }}
+              onClick={() => handleOpenThread(g)}
+            >
+              {/* Icon */}
+              <div className="group-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
                   <circle cx="9" cy="7" r="4"/>
-                  <line x1="19" y1="8" x2="19" y2="14"/>
-                  <line x1="22" y1="11" x2="16" y2="11"/>
+                  <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
                 </svg>
-              </button>
+              </div>
 
-              {/* Quick action button in the list row: */}
-              {canManage ? (
-                !isDisabled ? (
-                  <button
-                    className="icon-btn danger"
-                    title="Disable group"
-                    disabled={isActing}
-                    onClick={() => handleDisable(g)}
-                  >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                      stroke="currentColor" strokeWidth="2">
-                      <circle cx="12" cy="12" r="10"/>
-                      <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
-                    </svg>
-                  </button>
-                ) : (
-                  <button
-                    className="icon-btn danger"
-                    title="Delete group"
-                    disabled={isActing}
-                    onClick={() => handleDelete(g)}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-                      stroke="currentColor" strokeWidth="2">
-                      <polyline points="3 6 5 6 21 6"/>
-                      <path d="M19 6l-1 14H6L5 6"/>
-                      <path d="M10 11v6M14 11v6"/>
-                      <path d="M9 6V4h6v2"/>
-                    </svg>
-                  </button>
-                )
-              ) : (
-                isDisabled && (
-                  <button
-                    className="icon-btn danger"
-                    title="Remove from my tabs"
-                    disabled={isActing}
-                    onClick={() => handleHide(g)}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-                      stroke="currentColor" strokeWidth="2">
-                      <polyline points="3 6 5 6 21 6"/>
-                      <path d="M19 6l-1 14H6L5 6"/>
-                      <path d="M10 11v6M14 11v6"/>
-                      <path d="M9 6V4h6v2"/>
-                    </svg>
-                  </button>
-                )
-              )}
+              {/* Info — flex:1 min-width:0 so it shrinks and lets time stay */}
+              <div className="group-info" style={{ minWidth: 0 }}>
+                <div className="group-name" style={{ fontWeight: hasUnread ? 700 : 600, display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
+                    {g.groupName}
+                  </span>
+                  {isDisabled && (
+                    <span style={{
+                      fontSize: 9, color: 'var(--text-muted)', border: '1px solid var(--border)',
+                      borderRadius: 6, padding: '1px 5px', textTransform: 'uppercase', letterSpacing: '.04em', flexShrink: 0,
+                    }}>Off</span>
+                  )}
+                </div>
+
+                {/* Member count · description — description truncates, count never clipped */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, overflow: 'hidden', marginTop: 1 }}>
+                  <span className="group-count" style={{ flexShrink: 0, whiteSpace: 'nowrap', fontWeight: hasUnread ? 600 : 400 }}>
+                    {memberLabel}
+                  </span>
+                  {g.description && (
+                    <>
+                      <span className="group-count" style={{ flexShrink: 0 }}>·</span>
+                      <span className="group-count" style={{
+                        flex: 1, minWidth: 0,
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        fontStyle: 'italic',
+                      }}>
+                        {g.description}
+                      </span>
+                    </>
+                  )}
+                </div>
+
+                {actionError[g.groupId] && (
+                  <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 2 }}>
+                    {actionError[g.groupId]}
+                  </div>
+                )}
+              </div>
+
+              {/* Right column: time + unread dot */}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0, marginLeft: 8 }}>
+                {timeLabel && (
+                  <span style={{
+                    fontSize: 11.5, color: hasUnread ? 'var(--accent)' : 'var(--text-muted)',
+                    fontWeight: hasUnread ? 600 : 400, whiteSpace: 'nowrap',
+                  }}>
+                    {timeLabel}
+                  </span>
+                )}
+                {hasUnread && <span className="conv-unread-dot" />}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
       </>
       )}
-    </div>
+    </aside>
   );
 }

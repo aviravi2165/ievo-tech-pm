@@ -639,7 +639,7 @@ async function replyToConversation(conversationId, senderUserId, payload) {
     // Postgres' MVCC, so it's an easy thing to miss in this migration.
     const metaRes   = await req()
       .input('convId', sql.Int, conversationId)
-      .query(`SELECT subject FROM comm_conversations WHERE conversation_id = @convId`);
+      .query(`SELECT subject, group_id AS groupId, conv_type AS convType FROM comm_conversations WHERE conversation_id = @convId`);
     const senderRes = await req()
       .input('userId', sql.UniqueIdentifier, senderUserId)
       .query(`SELECT first_name, last_name, email FROM auth_users WHERE user_id = @userId`);
@@ -648,11 +648,32 @@ async function replyToConversation(conversationId, senderUserId, payload) {
       .query(`SELECT user_id FROM comm_participants WHERE conversation_id = @convId AND is_deleted = 0`);
     const participantIds = participantRes.recordset.map(r => r.user_id);
 
+    // Fetch sent_at of the new message so socket payload is complete
+    const msgRes = await req()
+      .input('messageId', sql.Int, messageId)
+      .query(`SELECT sent_at AS createdAt FROM comm_messages WHERE message_id = @messageId`);
+
+    const meta = metaRes.recordset[0] || {};
+
+    // If it's a group thread, look up the group name too
+    let groupName = null;
+    if (meta.groupId) {
+      const grpRes = await req()
+        .input('gid', sql.Int, meta.groupId)
+        .query(`SELECT group_name FROM comm_groups WHERE group_id = @gid`);
+      groupName = grpRes.recordset[0]?.group_name || null;
+    }
+
     return {
       conversationId, messageId,
-      subject:     metaRes.recordset[0]?.subject,
+      subject:     meta.subject,
       senderName:  displayName(senderRes.recordset[0]),
       senderUserId, participantIds,
+      groupId:   meta.groupId   || null,
+      groupName: groupName      || null,
+      convType:  meta.convType  || null,
+      bodyHtml:  sanitizedBody,
+      createdAt: msgRes.recordset[0]?.createdAt || new Date().toISOString(),
     };
   });
 }

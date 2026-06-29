@@ -184,12 +184,15 @@ export default function MessagingPage({ currentUser }) {
             <ChatWindow
               conversation={activeConv}
               onBack={handleBack}
+              onDisableGroup={handleDisableGroup}
+              onEnableGroup={handleEnableGroup}
+              onDeleteGroup={handleDeleteGroup}
+              onHideGroup={handleHideGroup}
             />
           </main>
         )}
 
         {showGroups && (
-          <main className="msg-main msg-main--full">
             <GroupManager
               groups={groups}
               loading={groupsLoading}
@@ -208,7 +211,6 @@ export default function MessagingPage({ currentUser }) {
               onHideThread={handleHideThread}
               onOpenConversation={handleOpenGroupConversation}
             />
-          </main>
         )}
       </div>
 
