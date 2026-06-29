@@ -660,7 +660,7 @@ export default function GroupManager({
             <p>Threads · Design | Demonstrate | Deliver</p>
           </div>
 
-          <div className="msg-search-wrap">
+          <div className="msg-search-wrap" style={isSuperAdmin ? { margin: '16px 12px 8px 12px' } : undefined}>
             <input
               placeholder="Search threads by subject…"
               value={threadSearch}
@@ -707,7 +707,6 @@ export default function GroupManager({
                         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
                           {t.subject || '(no subject)'}
                         </span>
-                        {isDisabled && <span style={DISABLED_CHIP}>Disabled</span>}
                       </div>
                       <div className="group-count">
                         {t.participantCount ?? 0} participant{(t.participantCount ?? 0) !== 1 ? 's' : ''}
@@ -719,13 +718,17 @@ export default function GroupManager({
                       )}
                     </div>
 
-                    {timeLabel && (
-                      <div style={{ flexShrink: 0, marginLeft: 8 }}>
+                    {/* Right column: status chip (fixed-width, right-aligned) + time —
+                        stacked the same way for every row regardless of date text length,
+                        instead of an inline chip whose position shifted with the title. */}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0, marginLeft: 8, minWidth: 56 }}>
+                      {isDisabled && <span style={DISABLED_CHIP}>Disabled</span>}
+                      {timeLabel && (
                         <span style={{ fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                           {timeLabel}
                         </span>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                 );
               })
@@ -750,7 +753,7 @@ export default function GroupManager({
           </button>
         )}
 
-        <div className="msg-search-wrap">
+        <div className="msg-search-wrap" style={isSuperAdmin ? { margin: '16px 12px 8px 12px' } : undefined}>
           <input
             type="text"
             placeholder="Search groups by name…"
@@ -869,7 +872,6 @@ export default function GroupManager({
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
                         {g.groupName}
                       </span>
-                      {isDisabled && <span style={DISABLED_CHIP}>Off</span>}
                     </div>
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, overflow: 'hidden', marginTop: 1 }}>
@@ -897,8 +899,12 @@ export default function GroupManager({
                     )}
                   </div>
 
-                  {/* Right column: time + unread dot */}
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0, marginLeft: 8 }}>
+                  {/* Right column: status chip + time + unread dot — fixed
+                      minWidth so every row's right-side content lines up
+                      the same way regardless of "Off" presence or how wide
+                      the date text is (e.g. "Yesterday" vs "Mon"). */}
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0, marginLeft: 8, minWidth: 56 }}>
+                    {isDisabled && <span style={DISABLED_CHIP}>Off</span>}
                     {timeLabel && (
                       <span style={{
                         fontSize: 11.5, whiteSpace: 'nowrap',
