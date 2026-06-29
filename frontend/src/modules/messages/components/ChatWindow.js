@@ -21,6 +21,7 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
   const [replyingTo,       setReplyingTo]       = useState(null);
   const [showParticipants, setShowParticipants]  = useState(false);
   const [descExpanded,     setDescExpanded]      = useState(false);
+  const [isDescTruncated,  setIsDescTruncated]   = useState(false);
   const [removing,         setRemoving]          = useState(null); // userId being removed
   const [removeError,      setRemoveError]       = useState('');
   const [highlightedId,    setHighlightedId]     = useState(null);
@@ -40,6 +41,7 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
   const containerRef  = useRef(null);
   const messageNodesRef = useRef({}); // messageId -> DOM node
   const dividerComputedForRef = useRef(null); // conversationId we've already computed the divider for
+  const descRef = useRef(null);
 
   const registerMessageRef = (messageId, node) => {
     if (node) messageNodesRef.current[messageId] = node;
@@ -106,75 +108,91 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
     return (conv.participants?.length ?? 0) > 2;
   }, [conv.participantCount, conv.participants?.length]);
 
+  // Check if the group description exceeds its container width
+  useEffect(() => {
+    const checkTruncation = () => {
+      if (descRef.current && !descExpanded) {
+        setIsDescTruncated(descRef.current.scrollWidth > descRef.current.clientWidth);
+      }
+    };
+    const timeoutId = setTimeout(checkTruncation, 0);
+    window.addEventListener('resize', checkTruncation);
+    return () => {
+      clearTimeout(timeoutId);
+      window.removeEventListener('resize', checkTruncation);
+    };
+  }, [matchedGroup?.description, descExpanded]);
+
   // Scroll to bottom on new messages
-const firstLoadRef = useRef(true);
+  const firstLoadRef = useRef(true);
 
-useEffect(() => {
-  firstLoadRef.current = true;
-  dividerComputedForRef.current = null;
-  setDividerId(null);
-  setShowNewPill(false);
-  setNewPillCount(0);
-}, [conversation?.conversationId]);
+  useEffect(() => {
+    firstLoadRef.current = true;
+    dividerComputedForRef.current = null;
+    setDividerId(null);
+    setShowNewPill(false);
+    setNewPillCount(0);
+  }, [conversation?.conversationId]);
 
-// Compute the "unread starts here" divider ONCE per conversation open, from
-// the very first load — before markAllRead has had a chance to mark
-// anything read. This snapshot is what was genuinely unread when the
-// thread was opened, and stays frozen for the rest of this viewing session
-// (it intentionally does not move as messages get marked read while you
-// scroll, and won't reappear until you close and reopen the thread fresh).
-useEffect(() => {
-  const cid = conversation?.conversationId;
-  if (!cid || loading || !messages.length) return;
-  if (dividerComputedForRef.current === cid) return;
-  dividerComputedForRef.current = cid;
+  // Compute the "unread starts here" divider ONCE per conversation open, from
+  // the very first load — before markAllRead has had a chance to mark
+  // anything read. This snapshot is what was genuinely unread when the
+  // thread was opened, and stays frozen for the rest of this viewing session
+  // (it intentionally does not move as messages get marked read while you
+  // scroll, and won't reappear until you close and reopen the thread fresh).
+  useEffect(() => {
+    const cid = conversation?.conversationId;
+    if (!cid || loading || !messages.length) return;
+    if (dividerComputedForRef.current === cid) return;
+    dividerComputedForRef.current = cid;
 
-  const firstUnread = messages.find(m =>
-    String(m.senderId) !== String(currentUserId) &&
-    !m.readReceipts?.some(r => String(r.userId) === String(currentUserId))
-  );
-  setDividerId(firstUnread ? firstUnread.messageId : null);
-}, [conversation?.conversationId, loading, messages, currentUserId]);
+    const firstUnread = messages.find(m =>
+      String(m.senderId) !== String(currentUserId) &&
+      !m.readReceipts?.some(r => String(r.userId) === String(currentUserId))
+    );
+    setDividerId(firstUnread ? firstUnread.messageId : null);
+  }, [conversation?.conversationId, loading, messages, currentUserId]);
 
-useEffect(() => {
-  if (
-    firstLoadRef.current &&
-    messages.length > 0
-  ) {
-    setTimeout(() => {
-      bottomRef.current?.scrollIntoView({
-        behavior: 'auto',
-        block: 'end',
-      });
-    }, 50);
+  useEffect(() => {
+    if (
+      firstLoadRef.current &&
+      messages.length > 0
+    ) {
+      setTimeout(() => {
+        bottomRef.current?.scrollIntoView({
+          behavior: 'auto',
+          block: 'end',
+        });
+      }, 50);
 
-    firstLoadRef.current = false;
-  }
-}, [messages.length]);
+      firstLoadRef.current = false;
+    }
+  }, [messages.length]);
 
-useEffect(() => {
-  if (!messages.length) return;
+  useEffect(() => {
+    if (!messages.length) return;
 
-  const lastMessage = messages[messages.length - 1];
-  const iSentIt = String(lastMessage?.senderId) === String(currentUserId);
+    const lastMessage = messages[messages.length - 1];
+    const iSentIt = String(lastMessage?.senderId) === String(currentUserId);
 
-  if (iSentIt) {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    return;
-  }
+    if (iSentIt) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      return;
+    }
 
-  const container = containerRef.current;
-  if (!container) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-  const distanceFromBottom =
-    container.scrollHeight -
-    container.scrollTop -
-    container.clientHeight;
+    const distanceFromBottom =
+      container.scrollHeight -
+      container.scrollTop -
+      container.clientHeight;
 
-  if (distanceFromBottom < 120) {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }
-}, [messages.length, currentUserId]);
+    if (distanceFromBottom < 120) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages.length, currentUserId]);
+
   // Wire: when a new message arrives while chat is open, mark it read and
   // show the "new message" pill — but only if the user has scrolled away
   // from the bottom. If they're already at the bottom, the existing
@@ -216,18 +234,6 @@ useEffect(() => {
   };
 
   // Mark all unread once on open
-  // FIX Bug 3 (part 2): removed `messages.length` from the dependency array.
-  // Previously this effect re-ran on every single new message arrival (because
-  // messages.length changed), which caused markAllRead to iterate all messages
-  // again on each arrival. markedReadRef deduplication prevented double DB
-  // writes but the full scan still fired. Since markAllRead now uses a ref
-  // snapshot internally (not state) and pre-checks markedReadRef before
-  // iterating, calling it once per conversation open (when conversationId
-  // changes or currentUserId is first set) is enough — newly arriving
-  // messages are handled individually by the NEW_MESSAGE socket handler which
-  // calls fetchThread(), and the fresh messages from that refetch will be
-  // picked up on the next markAllRead call when the conversation re-opens.
-  // Reset markedAllRef whenever conversation changes so re-opening same conv works
   useEffect(() => {
     markedAllRef.current = null;
   }, [conversation?.conversationId]);
@@ -307,11 +313,7 @@ useEffect(() => {
     }
   };
 
-  // ── Group governance (disable/enable/delete/hide) — moved here from
-  // GroupManager's list view, since it belongs alongside the chat itself
-  // rather than a separate management panel. Delete/hide make the
-  // conversation disappear from this user's view, so we navigate back
-  // afterward and let the Groups list refetch.
+  // ── Group governance (disable/enable/delete/hide)
   const runGroupAction = async (action, confirmMsg, { closesView } = {}) => {
     if (!matchedGroup) return;
     if (confirmMsg && !window.confirm(confirmMsg)) return;
@@ -426,21 +428,36 @@ useEffect(() => {
             {/* Group description — expandable */}
             {isGroupThread && matchedGroup?.description && (
               <span
-                onClick={() => setDescExpanded(v => !v)}
+                onClick={() => {
+                  if (isDescTruncated) setDescExpanded(v => !v);
+                }}
                 style={{
                   color: 'var(--text-muted)', fontSize: 12,
-                  overflow: descExpanded ? 'visible' : 'hidden',
-                  textOverflow: descExpanded ? 'clip' : 'ellipsis',
-                  whiteSpace: descExpanded ? 'normal' : 'nowrap',
-                  cursor: 'pointer',
+                  cursor: isDescTruncated ? 'pointer' : 'default',
                   maxWidth: descExpanded ? '100%' : undefined,
                   fontStyle: 'italic',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  overflow: 'hidden',
                 }}
-                title={descExpanded ? 'Click to collapse' : 'Click to expand'}
+                title={isDescTruncated ? (descExpanded ? 'Click to collapse' : 'Click to expand') : ''}
               >
-                {matchedGroup.description}
-                {!descExpanded && (
-                  <span style={{ color: 'var(--accent)', marginLeft: 4, fontStyle: 'normal', fontSize: 11 }}>…more</span>
+                <span
+                  ref={descRef}
+                  style={{
+                    overflow: descExpanded ? 'visible' : 'hidden',
+                    textOverflow: descExpanded ? 'clip' : 'ellipsis',
+                    whiteSpace: descExpanded ? 'normal' : 'nowrap',
+                  }}
+                >
+                  {matchedGroup.description}
+                </span>
+                
+                {/* Only render if truncated, and color changed to grey (text-muted) */}
+                {isDescTruncated && !descExpanded && (
+                  <span style={{ color: 'var(--text-muted)', marginLeft: 4, fontStyle: 'normal', fontSize: 11, flexShrink: 0 }}>
+                    …more
+                  </span>
                 )}
               </span>
             )}
@@ -481,8 +498,7 @@ useEffect(() => {
           )}
 
 
-          {/* Group governance — disable/enable/delete/hide. Moved here from
-              the Groups list view so it lives alongside the chat itself. */}
+          {/* Group governance — disable/enable/delete/hide. */}
           {isGroupThread && (matchedGroup?.isCreator || matchedGroup?.isSuperAdmin) && (
             !isGroupDisabled ? (
               <button

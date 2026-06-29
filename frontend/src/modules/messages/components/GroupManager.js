@@ -6,8 +6,15 @@ import RecipientPicker from './RecipientPicker';
 // Mirrors InboxSidebar's fmtTime — same relative-time labels so all tabs feel identical
 function fmtTime(dateStr) {
   if (!dateStr) return '';
-  const d        = new Date(dateStr);
-  const diffDays = Math.floor((Date.now() - d) / 86400000);
+  const d = new Date(dateStr);
+  const now = new Date();
+  
+  // Normalize both dates to midnight to compare calendar days, not elapsed time
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const targetDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  
+  const diffDays = Math.floor((today - targetDate) / 86400000);
+  
   if (diffDays === 0) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   if (diffDays === 1) return 'Yesterday';
   if (diffDays < 7)   return d.toLocaleDateString([], { weekday: 'short' });
@@ -904,7 +911,7 @@ export default function GroupManager({
                       the same way regardless of "Off" presence or how wide
                       the date text is (e.g. "Yesterday" vs "Mon"). */}
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0, marginLeft: 8, minWidth: 56 }}>
-                    {isDisabled && <span style={DISABLED_CHIP}>Off</span>}
+                    {isDisabled && <span style={DISABLED_CHIP}>Disabled</span>}
                     {timeLabel && (
                       <span style={{
                         fontSize: 11.5, whiteSpace: 'nowrap',
