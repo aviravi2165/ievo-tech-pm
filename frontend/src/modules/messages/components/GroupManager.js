@@ -3,29 +3,40 @@ import { groupApi } from '../api/groupApi';
 import { messageApi } from '../api/messageApi';
 import RecipientPicker from './RecipientPicker';
 
+// Mirrors InboxSidebar's fmtTime — same relative-time labels so all tabs feel identical
+function fmtTime(dateStr) {
+  if (!dateStr) return '';
+  const d        = new Date(dateStr);
+  const diffDays = Math.floor((Date.now() - d) / 86400000);
+  if (diffDays === 0) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7)   return d.toLocaleDateString([], { weekday: 'short' });
+  return d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+}
+
 /**
  * GroupManager — group control model:
  *
  * - Only the group's creator-admin OR the org super admin can add/remove
- *   participants, disable, re-enable, or delete a group. Regular
- *   participants can only VIEW the member list and the chat — no exit,
- *   no leave, no self-removal.
+ * participants, disable, re-enable, or delete a group. Regular
+ * participants can only VIEW the member list and the chat — no exit,
+ * no leave, no self-removal.
  *
  * - "Disable" freezes the chat for everyone (including the admin): no
- *   new messages can be sent, but every participant keeps full read
- *   access to history. The group still shows in everyone's tabs.
+ * new messages can be sent, but every participant keeps full read
+ * access to history. The group still shows in everyone's tabs.
  *
  * - "Delete" only becomes available AFTER a group is disabled. It hides
- *   the group from the acting admin/super-admin's own tabs only — other
- *   participants are unaffected.
+ * the group from the acting admin/super-admin's own tabs only — other
+ * participants are unaffected.
  *
  * - Once a group is disabled, every participant (not just the admin)
- *   gets a "Remove from my tabs" option, which hides it from their own
- *   view only, without touching the group for anyone else.
+ * gets a "Remove from my tabs" option, which hides it from their own
+ * view only, without touching the group for anyone else.
  *
  * - The super admin sees every group's controls but never opens the
- *   chat itself (isMember is always false for them) — pure governance,
- *   no message visibility.
+ * chat itself (isMember is always false for them) — pure governance,
+ * no message visibility.
  */
 export default function GroupManager({
   groups = [],
@@ -60,13 +71,16 @@ export default function GroupManager({
   const [addSaving,      setAddSaving]      = useState(false);
   const [adminToggling,  setAdminToggling]  = useState(null);
   const [managingThread, setManagingThread] = useState(null);
-  const [threadMembers, setThreadMembers]   = useState([]);
-  const [threadLoading, setThreadLoading]   = useState(false);
+  const [threadMembers,  setThreadMembers]  = useState([]);
+  const [threadLoading,  setThreadLoading]  = useState(false);
   const [openingGroupId, setOpeningGroupId] = useState(null);
   const [actionError,    setActionError]    = useState({});
   const [actingGroupId,  setActingGroupId]  = useState(null);
   const [threadActionError, setThreadActionError] = useState({});
-  const [actingThreadId,    setActingThreadId]    = useState(null);
+  const [actingThreadId, setActingThreadId] = useState(null);
+  const [threadSelectedUsers, setThreadSelectedUsers] = useState([]);
+  const [threadAddSaving, setThreadAddSaving] = useState(false);
+  const [threadAddError, setThreadAddError] = useState('');
 
   // Map groupId → conversation row (for unread dot, time, preview)
   const groupConvMap = useMemo(() => {
@@ -102,17 +116,15 @@ export default function GroupManager({
   };
 
   const handleRemoveMember = async (userId) => {
-  try {
-    await groupApi.removeMember(managingGroup.groupId, userId);
-
-    setMembers(prev => prev.filter(m => m.userId !== userId));
-
-    // Refresh groups everywhere in the app
-    window.dispatchEvent(new Event('groups-updated'));
-  } catch (err) {
-    setAddError(err?.response?.data?.error || 'Failed to remove member.');
-  }
-};
+    try {
+      await groupApi.removeMember(managingGroup.groupId, userId);
+      setMembers(prev => prev.filter(m => m.userId !== userId));
+      // Refresh groups everywhere in the app
+      window.dispatchEvent(new Event('groups-updated'));
+    } catch (err) {
+      setAddError(err?.response?.data?.error || 'Failed to remove member.');
+    }
+  };
 
   const handleToggleMemberAdmin = async (userId, makeAdmin) => {
     if (!managingGroup) return;
@@ -152,15 +164,13 @@ export default function GroupManager({
     }
   };
 
-  const [threadSelectedUsers, setThreadSelectedUsers] = useState([]);
-  const [threadAddSaving, setThreadAddSaving] = useState(false);
-  const [threadAddError, setThreadAddError] = useState('');
-
   const handleAddThreadMembers = async () => {
     if (!threadSelectedUsers.length) { setThreadAddError('Select at least one user.'); return; }
     const userIds = threadSelectedUsers.filter(u => u.type === 'user').map(u => u.id);
     if (!userIds.length) { setThreadAddError('Only users can be added (not groups).'); return; }
-    setThreadAddSaving(true); setThreadAddError('');
+    
+    setThreadAddSaving(true); 
+    setThreadAddError('');
     try {
       await messageApi.addParticipants(managingThread.conversationId, userIds);
       const data = await messageApi.getThread(managingThread.conversationId);
@@ -175,20 +185,16 @@ export default function GroupManager({
     if (!selectedUsers.length) { setAddError('Select at least one user.'); return; }
     const userIds = selectedUsers.filter(u => u.type === 'user').map(u => u.id);
     if (!userIds.length) { setAddError('Only users can be added (not groups).'); return; }
-    setAddSaving(true); setAddError('');
+    
+    setAddSaving(true); 
+    setAddError('');
     try {
- const updated = await groupApi.addMembers(managingGroup.groupId, userIds);
-setMembers(updated || []);
-
-window.dispatchEvent(new Event('groups-updated'));
-
-setSelectedUsers([]);
-
-  // notify rest of app to refresh group/thread lists
-  window.dispatchEvent(new Event('groups-updated'));
-
-  setSelectedUsers([]);
-} catch (err) {
+      const updated = await groupApi.addMembers(managingGroup.groupId, userIds);
+      setMembers(updated || []);
+      // notify rest of app to refresh group/thread lists
+      window.dispatchEvent(new Event('groups-updated'));
+      setSelectedUsers([]);
+    } catch (err) {
       setAddError(err?.response?.data?.error || 'Failed to add members.');
     } finally { setAddSaving(false); }
   };
@@ -454,7 +460,7 @@ setSelectedUsers([]);
           )}
         </div>
 
-            {canManage ? (
+        {canManage ? (
           <>
             {/* Disable / Enable / Delete controls */}
             <div style={{
@@ -562,69 +568,69 @@ setSelectedUsers([]);
           Members ({members.length})
         </div>
 
-      {membersLoading && <div className="loader-wrap"><div className="spinner" /></div>}
+        {membersLoading && <div className="loader-wrap"><div className="spinner" /></div>}
 
-            <div style={{ maxHeight: 400, overflowY: 'auto', paddingRight: 4 }}>
-            {!membersLoading && members.map(m => (
-          <div key={m.userId} style={{
-            display: 'flex', alignItems: 'center', gap: 12,
-            padding: '10px 16px',
-            background: 'var(--charcoal)',
-            border: '1px solid var(--divider)',
-            borderRadius: 'var(--radius)',
-            marginBottom: 8,
-          }}>
-            <div style={{
-              width: 32, height: 32, borderRadius: '50%',
-              background: 'var(--mid)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 13, fontWeight: 600, color: 'var(--gold)',
-              fontFamily: 'var(--font-display)',
+        <div style={{ maxHeight: 400, overflowY: 'auto', paddingRight: 4 }}>
+          {!membersLoading && members.map(m => (
+            <div key={m.userId} style={{
+              display: 'flex', alignItems: 'center', gap: 12,
+              padding: '10px 16px',
+              background: 'var(--charcoal)',
+              border: '1px solid var(--divider)',
+              borderRadius: 'var(--radius)',
+              marginBottom: 8,
             }}>
-              {`${m.firstName?.[0] || ''}${m.lastName?.[0] || ''}`.toUpperCase() || '?'}
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, color: 'var(--light)' }}>
-                {m.firstName} {m.lastName}
-                {m.isAdmin && (
-                  <span style={{ marginLeft: 8, color: 'var(--gold)', fontSize: 11 }}>
-                    Admin
-                  </span>
-                )}
+              <div style={{
+                width: 32, height: 32, borderRadius: '50%',
+                background: 'var(--mid)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 13, fontWeight: 600, color: 'var(--gold)',
+                fontFamily: 'var(--font-display)',
+              }}>
+                {`${m.firstName?.[0] || ''}${m.lastName?.[0] || ''}`.toUpperCase() || '?'}
               </div>
-              <div style={{ fontSize: 11, color: 'var(--muted)' }}>{m.email || ''}</div>
-            </div>
-            {/* Admin toggle + Remove button — admin/super-admin only, never on the creator, never while disabled */}
-            {canManage && !isDisabled && !m.isCreator && (
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <button
-                  className="btn btn-ghost"
-                  title={m.isAdmin ? `Remove ${m.firstName || ''} as admin` : `Make ${m.firstName || ''} an admin`}
-                  onClick={() => handleToggleMemberAdmin(m.userId, !m.isAdmin)}
-                  disabled={adminToggling === m.userId}
-                  style={{ fontSize: 12, padding: '6px 8px' }}
-                >
-                  {adminToggling === m.userId ? '…' : (m.isAdmin ? 'Remove Admin' : 'Make Admin')}
-                </button>
-
-                <button
-                  className="icon-btn danger"
-                  title="Remove from group"
-                  onClick={() => handleRemoveMember(m.userId)}
-                  disabled={addSaving}
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" strokeWidth="2.5">
-                    <line x1="18" y1="6" x2="6" y2="18"/>
-                    <line x1="6" y1="6" x2="18" y2="18"/>
-                  </svg>
-                </button>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, color: 'var(--light)' }}>
+                  {m.firstName} {m.lastName}
+                  {m.isAdmin && (
+                    <span style={{ marginLeft: 8, color: 'var(--gold)', fontSize: 11 }}>
+                      Admin
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--muted)' }}>{m.email || ''}</div>
               </div>
-            )}
-          </div>
-        ))}
+              {/* Admin toggle + Remove button — admin/super-admin only, never on the creator, never while disabled */}
+              {canManage && !isDisabled && !m.isCreator && (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <button
+                    className="btn btn-ghost"
+                    title={m.isAdmin ? `Remove ${m.firstName || ''} as admin` : `Make ${m.firstName || ''} an admin`}
+                    onClick={() => handleToggleMemberAdmin(m.userId, !m.isAdmin)}
+                    disabled={adminToggling === m.userId}
+                    style={{ fontSize: 12, padding: '6px 8px' }}
+                  >
+                    {adminToggling === m.userId ? '…' : (m.isAdmin ? 'Remove Admin' : 'Make Admin')}
+                  </button>
 
+                  <button
+                    className="icon-btn danger"
+                    title="Remove from group"
+                    onClick={() => handleRemoveMember(m.userId)}
+                    disabled={addSaving}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2.5">
+                      <line x1="18" y1="6" x2="6" y2="18"/>
+                      <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
+        
         {!membersLoading && members.length === 0 && (
           <p style={{ color: 'var(--muted)', fontSize: 13 }}>
             No members yet. Add some above.
@@ -634,16 +640,27 @@ setSelectedUsers([]);
     );
   }
 
+  // ── Shared chip style for "Disabled" indicator on rows ───────────────────
+  const DISABLED_CHIP = {
+    fontSize: 9, color: 'var(--text-muted)', border: '1px solid var(--border)',
+    borderRadius: 6, padding: '1px 5px', textTransform: 'uppercase',
+    letterSpacing: '.04em', flexShrink: 0, marginLeft: 4,
+  };
+
   // ── Groups list ────────────────────────────────────────────────────────────
   return (
     <aside className="msg-sidebar">
-      {/* Threads (admin view) */}
-      {threads && currentTab === 'threads' && (
-        <div style={{ marginBottom: 18 }}>
-          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
-            <h3 style={{ margin: 0 }}>Threads</h3>
+
+      {/* ── THREADS TAB (super admin) ─────────────────────────────────────── */}
+      {threads && currentTab === 'threads' ? (
+        <>
+          {/* Same brand header as Groups and Inbox tabs */}
+          <div className="msg-sidebar-header">
+            <h2>I.EVO</h2>
+            <p>Threads · Design | Demonstrate | Deliver</p>
           </div>
-          <div className="msg-search-wrap" style={{ padding: '0 0 10px' }}>
+
+          <div className="msg-search-wrap">
             <input
               placeholder="Search threads by subject…"
               value={threadSearch}
@@ -651,383 +668,253 @@ setSelectedUsers([]);
             />
           </div>
 
-          {threadsLoading && <div className="loader-wrap"><div className="spinner" /></div>}
+          <div className="msg-conv-list" style={{ padding: '8px 12px' }}>
+            {threadsLoading && <div className="loader-wrap"><div className="spinner" /></div>}
 
-          {!threadsLoading && threads.length === 0 && (
-            <div className="msg-empty" style={{ padding: '40px 0' }}>
-              <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="1.5">
-                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
-              </svg>
-              <p>No threads yet.</p>
+            {!threadsLoading && threads.filter(t => t.convType === 'cc').length === 0 && (
+              <div style={{ padding: '24px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+                No shared threads yet.
+              </div>
+            )}
+
+            {(threads || [])
+              .filter(t => {
+                if (t.convType !== 'cc') return false;
+                if (!threadSearch.trim()) return true;
+                return (t.subject || '').toLowerCase().includes(threadSearch.toLowerCase());
+              })
+              .map(t => {
+                const isDisabled = Boolean(t.isDisabled);
+                const timeLabel  = fmtTime(t.createdAt);
+                return (
+                  /* Clean row — identical structure and padding to Inbox rows.
+                     No inline action buttons. Click the row to open the manage panel. */
+                  <div
+                    key={t.conversationId}
+                    className="group-card"
+                    style={{ margin: '0 0 8px', cursor: 'pointer' }}
+                    onClick={() => openManageThread(t)}
+                  >
+                    <div className="group-icon">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+                      </svg>
+                    </div>
+
+                    <div className="group-info" style={{ minWidth: 0 }}>
+                      <div className="group-name" style={{ display: 'flex', alignItems: 'center' }}>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
+                          {t.subject || '(no subject)'}
+                        </span>
+                        {isDisabled && <span style={DISABLED_CHIP}>Disabled</span>}
+                      </div>
+                      <div className="group-count">
+                        {t.participantCount ?? 0} participant{(t.participantCount ?? 0) !== 1 ? 's' : ''}
+                      </div>
+                      {threadActionError[t.conversationId] && (
+                        <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 2 }}>
+                          {threadActionError[t.conversationId]}
+                        </div>
+                      )}
+                    </div>
+
+                    {timeLabel && (
+                      <div style={{ flexShrink: 0, marginLeft: 8 }}>
+                        <span style={{ fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                          {timeLabel}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            }
+          </div>
+        </>
+
+      ) : (
+      /* ── GROUPS TAB ─────────────────────────────────────────────────────── */
+      <>
+        <div className="msg-sidebar-header">
+          <h2>I.EVO</h2>
+          <p>Groups · Design | Demonstrate | Deliver</p>
+        </div>
+
+        {!isSuperAdmin && (
+          <button className="msg-compose-btn" onClick={() => setCreating(true)}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            New Group
+          </button>
+        )}
+
+        <div className="msg-search-wrap">
+          <input
+            type="text"
+            placeholder="Search groups by name…"
+            value={groupSearch}
+            onChange={e => setGroupSearch(e.target.value)}
+          />
+        </div>
+
+        {!isSuperAdmin && creating && (
+          <div style={{
+            margin: '0 12px 8px',
+            background: 'var(--bg-panel)', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-lg)', padding: 14,
+          }}>
+            <label className="field-label">Group Name</label>
+            <input
+              className="field-input"
+              style={{ marginBottom: 10 }}
+              placeholder="e.g. Operations Team"
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleCreate()}
+              autoFocus
+            />
+            <label className="field-label">
+              Description{' '}
+              <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span>
+            </label>
+            <input
+              className="field-input"
+              style={{ marginBottom: 10 }}
+              placeholder="What is this group for?"
+              value={newDescription}
+              onChange={e => setNewDescription(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleCreate()}
+            />
+            {createError && (
+              <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 8 }}>{createError}</div>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn btn-ghost" onClick={() => { setCreating(false); setNewName(''); setNewDescription(''); setCreateError(''); }}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" onClick={handleCreate} disabled={saving}>
+                {saving ? 'Creating…' : 'Create'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="msg-conv-list" style={{ padding: '8px 12px' }}>
+          {loading && <div className="loader-wrap"><div className="spinner" /></div>}
+
+          {!loading && groups.length === 0 && (
+            <div style={{ padding: '24px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+              No groups yet.{!isSuperAdmin && ' Create one above.'}
             </div>
           )}
 
-          {(threads || [])
-            .filter(t => {
-              // Threads tab is for SHARED (cc) threads only — group chats
-              // are managed in the Groups tab, and private 1:1 (bcc) chats
-              // don't need any admin governance at all.
-              if (t.convType !== 'cc') return false;
-              if (!threadSearch.trim()) return true;
-              return (t.subject || '').toLowerCase().includes(threadSearch.toLowerCase());
+          {[...groups]
+            .filter(g =>
+              !groupSearch.trim() ||
+              (g.groupName || '').toLowerCase().includes(groupSearch.toLowerCase())
+            )
+            .sort((a, b) => {
+              // Disabled groups sink to the bottom
+              const aOff = Boolean(a.isDisabled);
+              const bOff = Boolean(b.isDisabled);
+              if (aOff !== bOff) return aOff ? 1 : -1;
+              const ta = groupConvMap[String(a.groupId)]?.latestAt || a.createdAt || '';
+              const tb = groupConvMap[String(b.groupId)]?.latestAt || b.createdAt || '';
+              return tb < ta ? -1 : tb > ta ? 1 : 0;
             })
-            .map(t => {
-              const isThreadDisabled = Boolean(t.isDisabled);
-              const isThreadActing = actingThreadId === t.conversationId;
+            .map(g => {
+              const isDisabled = Boolean(g.isDisabled);
+              const conv       = groupConvMap[String(g.groupId)];
+              const unread     = conv?.unreadCount || 0;
+              const hasUnread  = unread > 0;
+              const latestAt   = conv?.latestAt || conv?.createdAt || g.createdAt;
+              const timeLabel  = fmtTime(latestAt);
+              const memberLabel = `${g.memberCount ?? 0} member${g.memberCount !== 1 ? 's' : ''}`;
+
+              /* All group rows — super admin and regular — use the same clean
+                 structure as InboxSidebar. No inline buttons, no badges.
+                 Super admin click → openManage (manage panel)
+                 Regular user click → handleOpenThread (open chat) */
+              const handleRowClick = g.isSuperAdmin
+                ? () => openManage(g)
+                : () => handleOpenThread(g);
+
               return (
-                <div key={t.conversationId} className="group-card">
+                <div
+                  key={g.groupId}
+                  className={`group-card${conv?._flash ? ' conv-flash' : ''}`}
+                  style={{
+                    margin: '0 0 8px',
+                    cursor: g.isSuperAdmin || g.isMember ? 'pointer' : 'default',
+                    borderColor: hasUnread ? 'var(--accent)' : undefined,
+                  }}
+                  onClick={handleRowClick}
+                >
                   <div className="group-icon">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
                       stroke="currentColor" strokeWidth="2">
-                      <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+                      <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+                      <circle cx="9" cy="7" r="4"/>
+                      <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
                     </svg>
                   </div>
 
-                  <div className="group-info">
-                    <div className="group-name" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      {t.subject || '(no subject)'}
-                      <span style={{
-                        fontSize: 10, color: 'var(--gold)', border: '1px solid var(--gold)',
-                        borderRadius: 8, padding: '1px 6px', textTransform: 'uppercase', letterSpacing: '.04em',
-                      }}>Super Admin View</span>
-                      {isThreadDisabled && (
-                        <span style={{
-                          fontSize: 10, color: 'var(--muted)', border: '1px solid var(--divider)',
-                          borderRadius: 8, padding: '1px 6px', textTransform: 'uppercase', letterSpacing: '.04em',
-                        }}>Disabled</span>
+                  <div className="group-info" style={{ minWidth: 0 }}>
+                    <div className="group-name" style={{
+                      fontWeight: hasUnread ? 700 : 600,
+                      display: 'flex', alignItems: 'center',
+                    }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
+                        {g.groupName}
+                      </span>
+                      {isDisabled && <span style={DISABLED_CHIP}>Off</span>}
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, overflow: 'hidden', marginTop: 1 }}>
+                      <span className="group-count" style={{ flexShrink: 0, whiteSpace: 'nowrap', fontWeight: hasUnread ? 600 : 400 }}>
+                        {memberLabel}
+                      </span>
+                      {g.description && (
+                        <>
+                          <span className="group-count" style={{ flexShrink: 0 }}>·</span>
+                          <span className="group-count" style={{
+                            flex: 1, minWidth: 0,
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            fontStyle: 'italic',
+                          }}>
+                            {g.description}
+                          </span>
+                        </>
                       )}
                     </div>
-                    <div className="group-count">
-                      {t.participantCount ?? 0} participant{(t.participantCount ?? 0) !== 1 ? 's' : ''}
-                    </div>
-                    {threadActionError[t.conversationId] && (
-                      <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 3 }}>
-                        {threadActionError[t.conversationId]}
+
+                    {actionError[g.groupId] && (
+                      <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 2 }}>
+                        {actionError[g.groupId]}
                       </div>
                     )}
                   </div>
 
-                  <div className="group-actions">
-                    {/* Manage / view participants */}
-                    <button
-                      className="icon-btn"
-                      title="Manage thread"
-                      onClick={() => openManageThread(t)}
-                    >
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                        stroke="currentColor" strokeWidth="2">
-                        <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
-                        <circle cx="9" cy="7" r="4"/>
-                        <line x1="19" y1="8" x2="19" y2="14"/>
-                        <line x1="22" y1="11" x2="16" y2="11"/>
-                      </svg>
-                    </button>
-
-                    {/* Quick action button in the list row, same as groups */}
-                    {!isThreadDisabled ? (
-                      <button
-                        className="icon-btn danger"
-                        title="Disable thread"
-                        disabled={isThreadActing}
-                        onClick={() => handleDisableThread(t)}
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                          stroke="currentColor" strokeWidth="2">
-                          <circle cx="12" cy="12" r="10"/>
-                          <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
-                        </svg>
-                      </button>
-                    ) : (
-                      <button
-                        className="icon-btn danger"
-                        title="Delete thread"
-                        disabled={isThreadActing}
-                        onClick={() => handleDeleteThread(t)}
-                      >
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-                          stroke="currentColor" strokeWidth="2">
-                          <polyline points="3 6 5 6 21 6"/>
-                          <path d="M19 6l-1 14H6L5 6"/>
-                          <path d="M10 11v6M14 11v6"/>
-                          <path d="M9 6V4h6v2"/>
-                        </svg>
-                      </button>
+                  {/* Right column: time + unread dot */}
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0, marginLeft: 8 }}>
+                    {timeLabel && (
+                      <span style={{
+                        fontSize: 11.5, whiteSpace: 'nowrap',
+                        color: hasUnread ? 'var(--accent)' : 'var(--text-muted)',
+                        fontWeight: hasUnread ? 600 : 400,
+                      }}>
+                        {timeLabel}
+                      </span>
                     )}
+                    {hasUnread && <span className="conv-unread-dot" />}
                   </div>
                 </div>
               );
-            })}
-        </div>
-      )}
-      {currentTab !== 'threads' && (
-      <>
-      {/* ── Header — matches InboxSidebar exactly ── */}
-      <div className="msg-sidebar-header">
-        <h2>I.EVO</h2>
-        <p>Groups · Design | Demonstrate | Deliver</p>
-      </div>
-
-      {!isSuperAdmin && (
-        <button className="msg-compose-btn" onClick={() => { setCreating(true); }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
-          New Group
-        </button>
-      )}
-
-      <div className="msg-search-wrap">
-        <input
-          type="text"
-          placeholder="Search groups by name…"
-          value={groupSearch}
-          onChange={e => setGroupSearch(e.target.value)}
-        />
-      </div>
-
-      {!isSuperAdmin && creating && (
-        <div style={{
-          margin: '0 12px 8px',
-          background: 'var(--bg-panel)', border: '1px solid var(--border)',
-          borderRadius: 'var(--radius-lg)', padding: 14,
-        }}>
-          <label className="field-label">Group Name</label>
-          <input
-            className="field-input"
-            style={{ marginBottom: 10 }}
-            placeholder="e.g. Operations Team"
-            value={newName}
-            onChange={e => setNewName(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleCreate()}
-            autoFocus
-          />
-          <label className="field-label">
-            Description{' '}
-            <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span>
-          </label>
-          <input
-            className="field-input"
-            style={{ marginBottom: 10 }}
-            placeholder="What is this group for?"
-            value={newDescription}
-            onChange={e => setNewDescription(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleCreate()}
-          />
-          {createError && (
-            <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 8 }}>{createError}</div>
-          )}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button className="btn btn-ghost" onClick={() => { setCreating(false); setNewName(''); setNewDescription(''); setCreateError(''); }}>
-              Cancel
-            </button>
-            <button className="btn btn-primary" onClick={handleCreate} disabled={saving}>
-              {saving ? 'Creating…' : 'Create'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      <div className="msg-conv-list">
-        {loading && <div className="loader-wrap"><div className="spinner" /></div>}
-
-        {!loading && groups.length === 0 && (
-          <div style={{ padding: '24px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-            No groups yet. Create one above.
-          </div>
-        )}
-
-        {[...groups]
-          .filter(g =>
-            !groupSearch.trim() ||
-            (g.groupName || '').toLowerCase().includes(groupSearch.toLowerCase())
-          )
-          .sort((a, b) => {
-            // Disabled groups always sink to the bottom
-            const aOff = Boolean(a.isDisabled);
-            const bOff = Boolean(b.isDisabled);
-            if (aOff !== bOff) return aOff ? 1 : -1;
-            // Active groups: sort by latest conversation activity descending
-            const ta = groupConvMap[String(a.groupId)]?.latestAt || a.createdAt || '';
-            const tb = groupConvMap[String(b.groupId)]?.latestAt || b.createdAt || '';
-            return tb < ta ? -1 : tb > ta ? 1 : 0;
-          })
-          .map(g => {
-          const canManage  = Boolean(g.isCreator || g.isSuperAdmin);
-          const isDisabled = Boolean(g.isDisabled);
-          const isActing   = actingGroupId === g.groupId;
-          const conv       = groupConvMap[String(g.groupId)];
-          const unread     = conv?.unreadCount || 0;
-          const hasUnread  = unread > 0;
-          const latestAt   = conv?.latestAt || conv?.createdAt || g.createdAt;
-          const memberLabel = `${g.memberCount ?? 0} member${g.memberCount !== 1 ? 's' : ''}`;
-
-          const timeLabel = (() => {
-            if (!latestAt) return '';
-            const d = new Date(latestAt);
-            const diffDays = Math.floor((Date.now() - d) / 86400000);
-            if (diffDays === 0) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            if (diffDays === 1) return 'Yesterday';
-            if (diffDays < 7)  return d.toLocaleDateString([], { weekday: 'short' });
-            return d.toLocaleDateString([], { day: 'numeric', month: 'short' });
-          })();
-
-          // ── Super admin: governance card ──────────────────────────────────
-          if (g.isSuperAdmin) {
-            return (
-              <div key={g.groupId} className="group-card" style={{ margin: '0 0 2px' }}>
-                <div className="group-icon">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
-                    <circle cx="9" cy="7" r="4"/>
-                    <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
-                  </svg>
-                </div>
-                <div className="group-info" style={{ minWidth: 0 }}>
-                  <div className="group-name" style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
-                      {g.groupName}
-                    </span>
-                    <span style={{
-                      fontSize: 10, color: 'var(--gold)', border: '1px solid var(--gold)',
-                      borderRadius: 8, padding: '1px 6px', textTransform: 'uppercase', letterSpacing: '.04em', flexShrink: 0,
-                    }}>Super Admin View</span>
-                    {isDisabled && (
-                      <span style={{
-                        fontSize: 10, color: 'var(--text-muted)', border: '1px solid var(--border)',
-                        borderRadius: 8, padding: '1px 6px', textTransform: 'uppercase', letterSpacing: '.04em', flexShrink: 0,
-                      }}>Disabled</span>
-                    )}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, overflow: 'hidden', marginTop: 1 }}>
-                    <span className="group-count" style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>{memberLabel}</span>
-                    {g.description && (
-                      <>
-                        <span className="group-count" style={{ flexShrink: 0 }}>·</span>
-                        <span className="group-count" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: 'italic' }}>
-                          {g.description}
-                        </span>
-                      </>
-                    )}
-                  </div>
-                  {actionError[g.groupId] && (
-                    <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 3 }}>{actionError[g.groupId]}</div>
-                  )}
-                </div>
-                {/* Time + actions */}
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
-                  {timeLabel && (
-                    <span style={{ fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{timeLabel}</span>
-                  )}
-                  <div className="group-actions" style={{ marginTop: 0 }}>
-                    <button className="icon-btn" title="Manage members" onClick={() => openManage(g)}>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
-                        <circle cx="9" cy="7" r="4"/>
-                        <line x1="19" y1="8" x2="19" y2="14"/>
-                        <line x1="22" y1="11" x2="16" y2="11"/>
-                      </svg>
-                    </button>
-                    {!isDisabled ? (
-                      <button className="icon-btn danger" title="Disable group" disabled={isActing} onClick={() => handleDisable(g)}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
-                        </svg>
-                      </button>
-                    ) : (
-                      <>
-                        <button className="icon-btn" title="Re-enable group" disabled={isActing} onClick={() => handleEnable(g)}>
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/>
-                          </svg>
-                        </button>
-                        <button className="icon-btn danger" title="Delete group" disabled={isActing} onClick={() => handleDelete(g)}>
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
-                            <path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/>
-                          </svg>
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
+            })
           }
-
-          // ── Regular user: group-card style matching inbox ─────────────────
-          return (
-            <div
-              key={g.groupId}
-              className={`group-card${conv?._flash ? ' conv-flash' : ''}`}
-              style={{ cursor: 'pointer', borderColor: hasUnread ? 'var(--accent)' : undefined }}
-              onClick={() => handleOpenThread(g)}
-            >
-              {/* Icon */}
-              <div className="group-icon">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
-                  <circle cx="9" cy="7" r="4"/>
-                  <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
-                </svg>
-              </div>
-
-              {/* Info — flex:1 min-width:0 so it shrinks and lets time stay */}
-              <div className="group-info" style={{ minWidth: 0 }}>
-                <div className="group-name" style={{ fontWeight: hasUnread ? 700 : 600, display: 'flex', alignItems: 'center', gap: 5 }}>
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
-                    {g.groupName}
-                  </span>
-                  {isDisabled && (
-                    <span style={{
-                      fontSize: 9, color: 'var(--text-muted)', border: '1px solid var(--border)',
-                      borderRadius: 6, padding: '1px 5px', textTransform: 'uppercase', letterSpacing: '.04em', flexShrink: 0,
-                    }}>Off</span>
-                  )}
-                </div>
-
-                {/* Member count · description — description truncates, count never clipped */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, overflow: 'hidden', marginTop: 1 }}>
-                  <span className="group-count" style={{ flexShrink: 0, whiteSpace: 'nowrap', fontWeight: hasUnread ? 600 : 400 }}>
-                    {memberLabel}
-                  </span>
-                  {g.description && (
-                    <>
-                      <span className="group-count" style={{ flexShrink: 0 }}>·</span>
-                      <span className="group-count" style={{
-                        flex: 1, minWidth: 0,
-                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                        fontStyle: 'italic',
-                      }}>
-                        {g.description}
-                      </span>
-                    </>
-                  )}
-                </div>
-
-                {actionError[g.groupId] && (
-                  <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 2 }}>
-                    {actionError[g.groupId]}
-                  </div>
-                )}
-              </div>
-
-              {/* Right column: time + unread dot */}
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0, marginLeft: 8 }}>
-                {timeLabel && (
-                  <span style={{
-                    fontSize: 11.5, color: hasUnread ? 'var(--accent)' : 'var(--text-muted)',
-                    fontWeight: hasUnread ? 600 : 400, whiteSpace: 'nowrap',
-                  }}>
-                    {timeLabel}
-                  </span>
-                )}
-                {hasUnread && <span className="conv-unread-dot" />}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+        </div>
       </>
       )}
     </aside>
