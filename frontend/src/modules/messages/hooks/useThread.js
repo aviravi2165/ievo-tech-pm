@@ -51,11 +51,25 @@ export function useThread(conversationId) {
     if (!socket || !conversationId) return;
 
     const onNew = (payload) => {
-      if (payload.conversationId !== conversationId) return;
-      fetchThread().then(() => {
-        // After fetch, mark the new message read immediately since user is already in chat
-        // markAllRead will handle deduplication via markedReadRef
-        if (onNewMessageRef.current) onNewMessageRef.current(payload);
+      // Bug fix: use string coercion — socket sends conversationId as number,
+      // state may hold it as string; strict !== fails for groups specifically.
+      if (String(payload.conversationId) !== String(conversationId)) return;
+
+      // Capture scroll distance BEFORE fetchThread resolves and React re-renders —
+      // after re-render the auto-scroll effect may have already moved the container,
+      // making the container appear "at bottom" even if the user was scrolled away.
+      // We do this by passing a scrolled-away snapshot in the enriched payload.
+      const threadEl = document.querySelector('.gmail-thread-view');
+      const distBefore = threadEl
+        ? threadEl.scrollHeight - threadEl.scrollTop - threadEl.clientHeight
+        : 0;
+
+      // Bug fix: fetchThread() may return undefined if conversationId is falsy;
+      // use Promise.resolve() to safely chain .then() in all cases.
+      Promise.resolve(fetchThread()).then(() => {
+        if (onNewMessageRef.current) {
+          onNewMessageRef.current({ ...payload, _distanceFromBottom: distBefore });
+        }
       });
     };
 
