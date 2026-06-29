@@ -2,15 +2,14 @@
  * MessagingContext.js
  *
  * Single source of truth for all messaging state.
- * Purely socket-driven after the initial page load — no timers, no polling.
+ * Purely socket-driven — no timers, no polling.
  *
- *   INITIAL LOAD        — fetchInbox() once on mount.
- *   BADGE (unreadCount) — derived from conversations[].unreadCount. Zero extra calls.
- *   NEW_MESSAGE         — updates inbox row in-place. If the conversationId is
- *                         not yet in the list (brand-new thread, including ones
- *                         the current user just sent), fetchInbox() is called
- *                         once to pull the new row. Socket-triggered, not a timer.
- *   MARK_READ           — clears the unread dot for the relevant conversation.
+ * KEY DESIGN:
+ *   - Inbox (bcc/cc) and Group (group_thread) conversations are tracked
+ *     separately with separate unread counts so their tab badges are independent.
+ *   - Both contribute to a combined total badge shown outside the module.
+ *   - NEW_MESSAGE from a group thread increments groupUnreadCount only.
+ *   - NEW_MESSAGE from bcc/cc increments inboxUnreadCount only.
  */
 
 import {
@@ -68,63 +67,66 @@ export function MessagingProvider({ children }) {
     _setActiveConvId(id ?? null);
   }, []);
 
-  // ── Inbox list ─────────────────────────────────────────────────────────────
-  const [conversations, setConversations] = useState([]);
-  const [inboxLoading,  setInboxLoading]  = useState(true);
-  const [inboxError,    setInboxError]    = useState(null);
-  const knownIdsRef = useRef(new Set());
+  // ── Inbox conversations (bcc / cc only) ───────────────────────────────────
+  const [conversations,    setConversations]    = useState([]);
+  const [inboxLoading,     setInboxLoading]     = useState(true);
+  const [inboxError,       setInboxError]       = useState(null);
+  const knownInboxIdsRef = useRef(new Set());
+
+  // ── Group conversations (group_thread only) ───────────────────────────────
+  const [groupConversations,   setGroupConversations]   = useState([]);
+  const [groupConvsLoading,    setGroupConvsLoading]    = useState(true);
+  const knownGroupIdsRef = useRef(new Set());
 
   const fetchInbox = useCallback(async () => {
     try {
       setInboxLoading(true);
       const data = await messageApi.getInbox();
-      const list = data.conversations || data || [];
+      const all  = data.conversations || data || [];
+
+      // Split into inbox (bcc/cc) and group (group_thread)
+      const inbox  = all.filter(c => c.convType !== 'group_thread' && !c.groupName);
+      const groups = all.filter(c => c.convType === 'group_thread' || !!c.groupName);
+
       const active = activeConvIdRef.current;
+
       setConversations(
-        active
-          ? list.map(c =>
-              String(c.conversationId) === String(active)
-                ? { ...c, unreadCount: 0 }
-                : c
-            )
-          : list
+        active ? inbox.map(c =>
+          String(c.conversationId) === String(active) ? { ...c, unreadCount: 0 } : c
+        ) : inbox
       );
-      knownIdsRef.current = new Set(list.map(c => c.conversationId));
+      setGroupConversations(
+        active ? groups.map(c =>
+          String(c.conversationId) === String(active) ? { ...c, unreadCount: 0 } : c
+        ) : groups
+      );
+
+      knownInboxIdsRef.current = new Set(inbox.map(c => c.conversationId));
+      knownGroupIdsRef.current = new Set(groups.map(c => c.conversationId));
       setInboxError(null);
     } catch (err) {
       setInboxError(err.message);
     } finally {
       setInboxLoading(false);
+      setGroupConvsLoading(false);
     }
   }, []);
 
   useEffect(() => { fetchInbox(); }, [fetchInbox]);
 
-  // ── Sent tab ───────────────────────────────────────────────────────────────
-  const [sentConvs,   setSentConvs]   = useState([]);
-  const [sentLoading, setSentLoading] = useState(false);
-  const [sentError,   setSentError]   = useState(null);
+  // ── Separate unread counts ─────────────────────────────────────────────────
+  const inboxUnreadCount = conversations.filter(c => c.unreadCount > 0).length;
+  const groupUnreadCount = groupConversations.filter(c => c.unreadCount > 0).length;
+  // Combined for the external badge (MessagePanel)
+  const unreadCount = inboxUnreadCount + groupUnreadCount;
 
-  const fetchSent = useCallback(() => {
-    setSentLoading(true);
-    setSentError(null);
-    messageApi.getSent()
-      .then(data => setSentConvs(data.conversations || data || []))
-      .catch(err  => setSentError(err.message || 'Failed to load sent mail'))
-      .finally(() => setSentLoading(false));
-  }, []);
-
-  // ── unreadCount ────────────────────────────────────────────────────────────
-  const unreadCount = conversations.filter(c => c.unreadCount > 0).length;
-
-  // ── clearUnreadDot / decrement ─────────────────────────────────────────────
+  // ── clearUnreadDot ─────────────────────────────────────────────────────────
   const clearUnreadDot = useCallback((conversationId) => {
     setConversations(prev =>
-      prev.map(c =>
-        String(c.conversationId) === String(conversationId)
-          ? { ...c, unreadCount: 0 }
-          : c
-      )
+      prev.map(c => String(c.conversationId) === String(conversationId) ? { ...c, unreadCount: 0 } : c)
+    );
+    setGroupConversations(prev =>
+      prev.map(c => String(c.conversationId) === String(conversationId) ? { ...c, unreadCount: 0 } : c)
     );
   }, []);
 
@@ -136,7 +138,9 @@ export function MessagingProvider({ children }) {
   const archiveConversation = useCallback(async (conversationId) => {
     await messageApi.archive(conversationId);
     setConversations(prev => prev.filter(c => c.conversationId !== conversationId));
-    knownIdsRef.current.delete(conversationId);
+    setGroupConversations(prev => prev.filter(c => c.conversationId !== conversationId));
+    knownInboxIdsRef.current.delete(conversationId);
+    knownGroupIdsRef.current.delete(conversationId);
   }, []);
 
   // ── Socket: NEW_MESSAGE ────────────────────────────────────────────────────
@@ -144,127 +148,86 @@ export function MessagingProvider({ children }) {
     if (!socket) return;
 
     const handler = (payload) => {
-      const isMine =
-        payload.senderUserId && currentUserId &&
+      const isMine  = payload.senderUserId && currentUserId &&
         String(payload.senderUserId) === String(currentUserId);
-
-      const isOpen =
-        activeConvIdRef.current != null &&
+      const isOpen  = activeConvIdRef.current != null &&
         String(activeConvIdRef.current) === String(payload.conversationId);
+      const isGroup = payload.convType === 'group_thread' || !!payload.groupName || !!payload.groupId;
 
-      // Brand-new conversation not yet in the list — fetch once to get the
-      // full row. This covers BOTH messages from others AND messages the
-      // current user just sent (isMine=true for a new BCC conversation).
-      // Previously the !isMine guard here caused the inbox to never update
-      // when the current user sent a message to a brand-new thread.
-      if (!knownIdsRef.current.has(payload.conversationId)) {
+      // Brand-new conversation not yet in any list — refetch
+      const isKnown = knownInboxIdsRef.current.has(payload.conversationId) ||
+                      knownGroupIdsRef.current.has(payload.conversationId);
+      if (!isKnown) {
         fetchInbox();
-        // Also refresh sent tab since the user just sent a new conversation
-        if (isMine) fetchSent();
         return;
       }
 
-      // Existing conversation — update the row in-place
+      // Own message in existing conv — move to top only
       if (isMine) {
-        // For own messages in existing convs, just refresh sent tab
-        fetchSent();
+        const bubbleToTop = (setter) => setter(prev => {
+          const match = prev.find(c => String(c.conversationId) === String(payload.conversationId));
+          if (!match) return prev;
+          return [
+            { ...match, latestAt: new Date().toISOString() },
+            ...prev.filter(c => String(c.conversationId) !== String(payload.conversationId)),
+          ];
+        });
+        if (isGroup) bubbleToTop(setGroupConversations);
+        else         bubbleToTop(setConversations);
         return;
       }
 
-      setConversations(prev => {
-        const exists = prev.find(c =>
-          String(c.conversationId) === String(payload.conversationId)
-        );
+      // Message from someone else — update the right list
+      const updateList = (setter) => setter(prev => {
+        const exists = prev.find(c => String(c.conversationId) === String(payload.conversationId));
         if (!exists) return prev;
-
         const updated = {
           ...exists,
           latestSender: payload.senderName,
           latestAt:     new Date().toISOString(),
-          unreadCount:
-            isOpen
-              ? (exists.unreadCount || 0)
-              : (exists.unreadCount || 0) + 1,
+          unreadCount:  isOpen ? (exists.unreadCount || 0) : (exists.unreadCount || 0) + 1,
           _flash: !isOpen,
         };
-
         if (updated._flash) {
           setTimeout(() => {
-            setConversations(p =>
-              p.map(c =>
-                String(c.conversationId) === String(payload.conversationId)
-                  ? { ...c, _flash: false }
-                  : c
-              )
-            );
+            setter(p => p.map(c =>
+              String(c.conversationId) === String(payload.conversationId)
+                ? { ...c, _flash: false } : c
+            ));
           }, 1600);
         }
-
         return [updated, ...prev.filter(c =>
           String(c.conversationId) !== String(payload.conversationId)
         )];
       });
+
+      if (isGroup) updateList(setGroupConversations);
+      else         updateList(setConversations);
     };
 
     socket.on('NEW_MESSAGE', handler);
     return () => socket.off('NEW_MESSAGE', handler);
-  }, [socket, currentUserId, fetchInbox, fetchSent]);
+  }, [socket, currentUserId, fetchInbox]);
 
   // ── Socket: MARK_READ ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!socket) return;
     const handler = ({ conversationId, userId }) => {
       if (!conversationId || !userId) return;
-      // When the current user marks messages read, clear the dot
-      if (String(userId) === String(currentUserId)) {
-        clearUnreadDot(conversationId);
-      }
+      if (String(userId) === String(currentUserId)) clearUnreadDot(conversationId);
     };
     socket.on('MARK_READ', handler);
     return () => socket.off('MARK_READ', handler);
   }, [socket, currentUserId, clearUnreadDot]);
 
   const value = {
-    // Identity
-    currentUserId,
-    isSuperAdmin,
-
-    // Toast
-    toast,
-    toasts,
-
-    // Groups
-    groups,
-    groupsLoading,
-    createGroup,
-    disableGroup,
-    enableGroup,
-    deleteGroup,
-    hideGroup,
-    refetchGroups,
-
-    // Badge
-    unreadCount,
-    decrement,
-
-    // Inbox
-    conversations,
-    inboxLoading,
-    inboxError,
-    fetchInbox,
-    clearUnreadDot,
-    archiveConversation,
-
-    // Sent
-    sentConvs,
-    sentLoading,
-    sentError,
-    fetchSent,
-
-    // Active conversation
-    activeConversationId,
-    setActiveConversationId,
-    activeConvIdRef,
+    currentUserId, isSuperAdmin,
+    toast, toasts,
+    groups, groupsLoading, createGroup, disableGroup, enableGroup, deleteGroup, hideGroup, refetchGroups,
+    unreadCount, inboxUnreadCount, groupUnreadCount, decrement,
+    conversations, groupConversations, groupConvsLoading,
+    inboxLoading, inboxError, fetchInbox, clearUnreadDot, archiveConversation,
+    activeConversationId, setActiveConversationId, activeConvIdRef,
   };
 
   return (

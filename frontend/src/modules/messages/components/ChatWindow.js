@@ -8,18 +8,20 @@ import { groupApi }   from '../api/groupApi';
 import api            from '../api/axiosInstance';
 
 const CONV_TYPE_LABEL = {
-  bcc:          { label: 'Private',    color: 'var(--muted)' },
-  cc:           { label: 'Shared',     color: '#4A9EFF' },
-  group_thread: { label: 'Group Chat', color: 'var(--gold)' },
+  bcc:          { label: 'Private',    bg: 'var(--accent-glow)',   color: 'var(--accent)',  border: 'rgba(224,28,36,0.3)' },
+  cc:           { label: 'Shared',     bg: 'rgba(26,115,232,0.1)', color: '#1a73e8',        border: 'rgba(26,115,232,0.35)' },
+  group_thread: { label: 'Group Chat', bg: 'rgba(249,171,0,0.1)',  color: 'var(--gold)',    border: 'rgba(249,171,0,0.35)' },
 };
 
-export default function ChatWindow({ conversation, onBack }) {
+export default function ChatWindow({ conversation, onBack, onDisableGroup, onEnableGroup, onDeleteGroup, onHideGroup }) {
   const { currentUserId, toast, groups = [] } = useMessaging();
   const { messages, conversation: threadConv, loading, error, markAllRead, sendReply, refetch, onNewMessageRef } =
     useThread(conversation?.conversationId);
 
   const [replyingTo,       setReplyingTo]       = useState(null);
   const [showParticipants, setShowParticipants]  = useState(false);
+  const [descExpanded,     setDescExpanded]      = useState(false);
+  const [isDescTruncated,  setIsDescTruncated]   = useState(false);
   const [removing,         setRemoving]          = useState(null); // userId being removed
   const [removeError,      setRemoveError]       = useState('');
   const [highlightedId,    setHighlightedId]     = useState(null);
@@ -33,11 +35,13 @@ export default function ChatWindow({ conversation, onBack }) {
   const [groupActionError, setGroupActionError]  = useState('');
   const [groupRemoving,    setGroupRemoving]     = useState(null);
   const [adminToggling,    setAdminToggling]     = useState(null); // userId being promoted/demoted
+  const [groupActing,      setGroupActing]       = useState(false); // disable/enable/delete/hide in progress
   const markedAllRef = useRef(null);
   const bottomRef    = useRef(null);
   const containerRef  = useRef(null);
   const messageNodesRef = useRef({}); // messageId -> DOM node
   const dividerComputedForRef = useRef(null); // conversationId we've already computed the divider for
+  const descRef = useRef(null);
 
   const registerMessageRef = (messageId, node) => {
     if (node) messageNodesRef.current[messageId] = node;
@@ -104,75 +108,91 @@ export default function ChatWindow({ conversation, onBack }) {
     return (conv.participants?.length ?? 0) > 2;
   }, [conv.participantCount, conv.participants?.length]);
 
+  // Check if the group description exceeds its container width
+  useEffect(() => {
+    const checkTruncation = () => {
+      if (descRef.current && !descExpanded) {
+        setIsDescTruncated(descRef.current.scrollWidth > descRef.current.clientWidth);
+      }
+    };
+    const timeoutId = setTimeout(checkTruncation, 0);
+    window.addEventListener('resize', checkTruncation);
+    return () => {
+      clearTimeout(timeoutId);
+      window.removeEventListener('resize', checkTruncation);
+    };
+  }, [matchedGroup?.description, descExpanded]);
+
   // Scroll to bottom on new messages
-const firstLoadRef = useRef(true);
+  const firstLoadRef = useRef(true);
 
-useEffect(() => {
-  firstLoadRef.current = true;
-  dividerComputedForRef.current = null;
-  setDividerId(null);
-  setShowNewPill(false);
-  setNewPillCount(0);
-}, [conversation?.conversationId]);
+  useEffect(() => {
+    firstLoadRef.current = true;
+    dividerComputedForRef.current = null;
+    setDividerId(null);
+    setShowNewPill(false);
+    setNewPillCount(0);
+  }, [conversation?.conversationId]);
 
-// Compute the "unread starts here" divider ONCE per conversation open, from
-// the very first load — before markAllRead has had a chance to mark
-// anything read. This snapshot is what was genuinely unread when the
-// thread was opened, and stays frozen for the rest of this viewing session
-// (it intentionally does not move as messages get marked read while you
-// scroll, and won't reappear until you close and reopen the thread fresh).
-useEffect(() => {
-  const cid = conversation?.conversationId;
-  if (!cid || loading || !messages.length) return;
-  if (dividerComputedForRef.current === cid) return;
-  dividerComputedForRef.current = cid;
+  // Compute the "unread starts here" divider ONCE per conversation open, from
+  // the very first load — before markAllRead has had a chance to mark
+  // anything read. This snapshot is what was genuinely unread when the
+  // thread was opened, and stays frozen for the rest of this viewing session
+  // (it intentionally does not move as messages get marked read while you
+  // scroll, and won't reappear until you close and reopen the thread fresh).
+  useEffect(() => {
+    const cid = conversation?.conversationId;
+    if (!cid || loading || !messages.length) return;
+    if (dividerComputedForRef.current === cid) return;
+    dividerComputedForRef.current = cid;
 
-  const firstUnread = messages.find(m =>
-    String(m.senderId) !== String(currentUserId) &&
-    !m.readReceipts?.some(r => String(r.userId) === String(currentUserId))
-  );
-  setDividerId(firstUnread ? firstUnread.messageId : null);
-}, [conversation?.conversationId, loading, messages, currentUserId]);
+    const firstUnread = messages.find(m =>
+      String(m.senderId) !== String(currentUserId) &&
+      !m.readReceipts?.some(r => String(r.userId) === String(currentUserId))
+    );
+    setDividerId(firstUnread ? firstUnread.messageId : null);
+  }, [conversation?.conversationId, loading, messages, currentUserId]);
 
-useEffect(() => {
-  if (
-    firstLoadRef.current &&
-    messages.length > 0
-  ) {
-    setTimeout(() => {
-      bottomRef.current?.scrollIntoView({
-        behavior: 'auto',
-        block: 'end',
-      });
-    }, 50);
+  useEffect(() => {
+    if (
+      firstLoadRef.current &&
+      messages.length > 0
+    ) {
+      setTimeout(() => {
+        bottomRef.current?.scrollIntoView({
+          behavior: 'auto',
+          block: 'end',
+        });
+      }, 50);
 
-    firstLoadRef.current = false;
-  }
-}, [messages.length]);
+      firstLoadRef.current = false;
+    }
+  }, [messages.length]);
 
-useEffect(() => {
-  if (!messages.length) return;
+  useEffect(() => {
+    if (!messages.length) return;
 
-  const lastMessage = messages[messages.length - 1];
-  const iSentIt = String(lastMessage?.senderId) === String(currentUserId);
+    const lastMessage = messages[messages.length - 1];
+    const iSentIt = String(lastMessage?.senderId) === String(currentUserId);
 
-  if (iSentIt) {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    return;
-  }
+    if (iSentIt) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      return;
+    }
 
-  const container = containerRef.current;
-  if (!container) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-  const distanceFromBottom =
-    container.scrollHeight -
-    container.scrollTop -
-    container.clientHeight;
+    const distanceFromBottom =
+      container.scrollHeight -
+      container.scrollTop -
+      container.clientHeight;
 
-  if (distanceFromBottom < 120) {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }
-}, [messages.length, currentUserId]);
+    if (distanceFromBottom < 120) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages.length, currentUserId]);
+
   // Wire: when a new message arrives while chat is open, mark it read and
   // show the "new message" pill — but only if the user has scrolled away
   // from the bottom. If they're already at the bottom, the existing
@@ -214,18 +234,6 @@ useEffect(() => {
   };
 
   // Mark all unread once on open
-  // FIX Bug 3 (part 2): removed `messages.length` from the dependency array.
-  // Previously this effect re-ran on every single new message arrival (because
-  // messages.length changed), which caused markAllRead to iterate all messages
-  // again on each arrival. markedReadRef deduplication prevented double DB
-  // writes but the full scan still fired. Since markAllRead now uses a ref
-  // snapshot internally (not state) and pre-checks markedReadRef before
-  // iterating, calling it once per conversation open (when conversationId
-  // changes or currentUserId is first set) is enough — newly arriving
-  // messages are handled individually by the NEW_MESSAGE socket handler which
-  // calls fetchThread(), and the fresh messages from that refetch will be
-  // picked up on the next markAllRead call when the conversation re-opens.
-  // Reset markedAllRef whenever conversation changes so re-opening same conv works
   useEffect(() => {
     markedAllRef.current = null;
   }, [conversation?.conversationId]);
@@ -305,6 +313,41 @@ useEffect(() => {
     }
   };
 
+  // ── Group governance (disable/enable/delete/hide)
+  const runGroupAction = async (action, confirmMsg, { closesView } = {}) => {
+    if (!matchedGroup) return;
+    if (confirmMsg && !window.confirm(confirmMsg)) return;
+    setGroupActing(true); setGroupActionError('');
+    try {
+      await action(matchedGroup.groupId);
+      window.dispatchEvent(new Event('groups-updated'));
+      if (closesView) onBack?.();
+    } catch (err) {
+      setGroupActionError(err?.response?.data?.error || 'Action failed. Try again.');
+    } finally {
+      setGroupActing(false);
+    }
+  };
+
+  const handleDisableGroupClick = () => runGroupAction(
+    onDisableGroup,
+    `Disable "${matchedGroup?.groupName}"? No one will be able to send new messages, but everyone keeps read access to past chats.`
+  );
+  const handleEnableGroupClick = () => runGroupAction(
+    onEnableGroup,
+    `Re-enable "${matchedGroup?.groupName}"? Members will be able to send messages again.`
+  );
+  const handleDeleteGroupClick = () => runGroupAction(
+    onDeleteGroup,
+    `Delete "${matchedGroup?.groupName}" from your tabs? Other participants keep seeing it (read-only) until they each remove it too.`,
+    { closesView: true }
+  );
+  const handleHideGroupClick = () => runGroupAction(
+    onHideGroup,
+    `Remove "${matchedGroup?.groupName}" from your tabs? This only affects your own view.`,
+    { closesView: true }
+  );
+
   const handleSend = async (payload) => {
     await sendReply(payload);
     setReplyingTo(null);
@@ -357,33 +400,72 @@ useEffect(() => {
         )}
 
        <div className="thread-header-info" style={{ flex: 1, minWidth: 0 }}>
-  <div className="thread-subject">
-    {isGroupThread ? (conv.groupName || conv.subject) : conv.subject}
-  </div>
+          {/* Subject line */}
+          <div className="thread-subject">
+            {isGroupThread ? (conv.groupName || conv.subject) : conv.subject}
+          </div>
 
-  <div className="thread-count">
-    {messages.length} message{messages.length !== 1 ? 's' : ''}
-  </div>
-          <div className="thread-meta" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            {/* Conv type badge */}
+          {/* Meta row: type badge + participants/description */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
+            {/* Type badge — filled, same across all types */}
             <span style={{
-              fontSize: 10, fontWeight: 700, color: typeInfo.color,
-              textTransform: 'uppercase', letterSpacing: '.06em',
-              border: `1px solid ${typeInfo.color}`,
-              borderRadius: 8, padding: '1px 7px', opacity: .85,
+              fontSize: 10, fontWeight: 700, letterSpacing: '.06em',
+              textTransform: 'uppercase', flexShrink: 0,
+              background: typeInfo.bg, color: typeInfo.color,
+              border: `1px solid ${typeInfo.border}`,
+              borderRadius: 6, padding: '2px 7px',
             }}>
               {typeInfo.label}
             </span>
-            {isGroupThread && matchedGroup?.description && (
-              <span style={{ color: 'var(--muted)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: 'italic' }}>
-                {matchedGroup.description}
-              </span>
-            )}
+
+            {/* Participants (non-group) */}
             {!isGroupThread && participantNames && (
-              <span style={{ color: 'var(--muted)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ color: 'var(--text-muted)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {isCcThread ? `With: ${participantNames}` : participantNames}
               </span>
             )}
+
+            {/* Group description — expandable */}
+            {isGroupThread && matchedGroup?.description && (
+              <span
+                onClick={() => {
+                  if (isDescTruncated) setDescExpanded(v => !v);
+                }}
+                style={{
+                  color: 'var(--text-muted)', fontSize: 12,
+                  cursor: isDescTruncated ? 'pointer' : 'default',
+                  maxWidth: descExpanded ? '100%' : undefined,
+                  fontStyle: 'italic',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  overflow: 'hidden',
+                }}
+                title={isDescTruncated ? (descExpanded ? 'Click to collapse' : 'Click to expand') : ''}
+              >
+                <span
+                  ref={descRef}
+                  style={{
+                    overflow: descExpanded ? 'visible' : 'hidden',
+                    textOverflow: descExpanded ? 'clip' : 'ellipsis',
+                    whiteSpace: descExpanded ? 'normal' : 'nowrap',
+                  }}
+                >
+                  {matchedGroup.description}
+                </span>
+                
+                {/* Only render if truncated, and color changed to grey (text-muted) */}
+                {isDescTruncated && !descExpanded && (
+                  <span style={{ color: 'var(--text-muted)', marginLeft: 4, fontStyle: 'normal', fontSize: 11, flexShrink: 0 }}>
+                    …more
+                  </span>
+                )}
+              </span>
+            )}
+          </div>
+
+          {/* Message count — lighter, below */}
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, fontWeight: 400 }}>
+            {messages.length} message{messages.length !== 1 ? 's' : ''}
           </div>
         </div>
 
@@ -416,6 +498,72 @@ useEffect(() => {
           )}
 
 
+          {/* Group governance — disable/enable/delete/hide. */}
+          {isGroupThread && (matchedGroup?.isCreator || matchedGroup?.isSuperAdmin) && (
+            !isGroupDisabled ? (
+              <button
+                className="icon-btn danger"
+                title="Disable group"
+                disabled={groupActing}
+                onClick={handleDisableGroupClick}
+                style={{ width: 30, height: 30 }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+                </svg>
+              </button>
+            ) : (
+              <>
+                <button
+                  className="icon-btn"
+                  title="Re-enable group"
+                  disabled={groupActing}
+                  onClick={handleEnableGroupClick}
+                  style={{ width: 30, height: 30 }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="2">
+                    <polyline points="1 4 1 10 7 10"/>
+                    <path d="M3.51 15a9 9 0 102.13-9.36L1 10"/>
+                  </svg>
+                </button>
+                <button
+                  className="icon-btn danger"
+                  title="Delete group"
+                  disabled={groupActing}
+                  onClick={handleDeleteGroupClick}
+                  style={{ width: 30, height: 30 }}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="2">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6l-1 14H6L5 6"/>
+                    <path d="M10 11v6M14 11v6"/>
+                    <path d="M9 6V4h6v2"/>
+                  </svg>
+                </button>
+              </>
+            )
+          )}
+          {isGroupThread && !(matchedGroup?.isCreator || matchedGroup?.isSuperAdmin) && isGroupDisabled && (
+            <button
+              className="icon-btn danger"
+              title="Remove from my tabs"
+              disabled={groupActing}
+              onClick={handleHideGroupClick}
+              style={{ width: 30, height: 30 }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6l-1 14H6L5 6"/>
+                <path d="M10 11v6M14 11v6"/>
+                <path d="M9 6V4h6v2"/>
+              </svg>
+            </button>
+          )}
         </div>
       </div>
 

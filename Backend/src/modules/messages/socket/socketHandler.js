@@ -18,6 +18,16 @@ function toNewMessagePayload(payload) {
     senderName:     payload.senderName,
     senderUserId:   payload.senderUserId,
     subject:        payload.subject,
+    // Group routing
+    groupId:        payload.groupId   || null,
+    groupName:      payload.groupName || null,
+    convType:       payload.convType  || null,
+    // Full message body so clients can append without an HTTP refetch
+    bodyHtml:       payload.bodyHtml  || null,
+    createdAt:      payload.createdAt || new Date().toISOString(),
+    attachments:    payload.attachments   || [],
+    parentMessage:  payload.parentMessage || null,
+    readReceipts:   [],
   };
 }
 
