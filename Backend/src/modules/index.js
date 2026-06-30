@@ -4,8 +4,9 @@
  */
 const auth        = require('./auth');
 const messages    = require('./messages');
+const projectManagement = require('./project-management');
 
-const MODULES = [auth, messages,];
+const MODULES = [auth, messages, projectManagement];
 
 function registerAllModules(app) {
   for (const mod of MODULES) {
