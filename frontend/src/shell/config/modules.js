@@ -1,3 +1,4 @@
+import ProjectManagementModule from '../../modules/project-management/ProjectManagementModule';
 
 /**
  * ERP module registry. Add new modules here when integrating.
@@ -18,8 +19,8 @@ export const ERP_MODULES = [
     label: 'Project Management',
     shortLabel: 'Projects',
     description: 'Projects, tasks & milestones',
-    status: 'coming-soon',
-    component: null,
+    status: 'active',
+    component: ProjectManagementModule,
   },
   {
     id: 'inventory',

@@ -234,3 +234,234 @@ CREATE TABLE [ievo-tech-pm].dbo.comm_conversation_hidden (
 	CONSTRAINT FK__comm_conv__conve__151B244E FOREIGN KEY (conversation_id) REFERENCES [ievo-tech-pm].dbo.comm_conversations(conversation_id) ON DELETE CASCADE,
 	CONSTRAINT FK__comm_conv__user___160F4887 FOREIGN KEY (user_id) REFERENCES [ievo-tech-pm].dbo.auth_users(user_id) ON DELETE CASCADE
 );
+
+-- ============================================================
+-- I.EVO ERP — Project Management Module — MSSQL Schema Additions
+-- Run this AFTER your existing schema.mssql.sql (dept_master,
+-- auth_users, comm_* tables must already exist).
+--
+-- This script ONLY adds the new pm_* tables — nothing here
+-- touches dept_master / auth_users / comm_* tables.
+--
+-- Usage: run against your existing ievo_erp database, e.g.
+--   sqlcmd -S localhost -d ievo_erp -i schema.pm.mssql.sql
+-- (Adjust the database name if yours differs — no database-
+-- qualified names are used below so this runs in whatever
+-- database context you connect with.)
+-- ============================================================
+
+-- ────────────────────────────────────────────────────────────
+-- pm_projects
+-- ────────────────────────────────────────────────────────────
+IF OBJECT_ID('dbo.pm_projects', 'U') IS NULL
+CREATE TABLE dbo.pm_projects (
+    project_id    int IDENTITY(1,1) NOT NULL,
+    name          varchar(200)  COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    description   nvarchar(MAX) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+    planned_start date NULL,
+    planned_end   date NULL,
+    status        varchar(30)   COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT 'Planning' NOT NULL,
+    owner_id      uniqueidentifier NOT NULL,
+    dept_id       int NULL,
+    is_deleted    bit DEFAULT 0 NOT NULL,
+    created_by    uniqueidentifier NOT NULL,
+    created_at    datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    modified_at   datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_pm_projects PRIMARY KEY (project_id),
+    CONSTRAINT FK_pm_projects_owner   FOREIGN KEY (owner_id)   REFERENCES dbo.auth_users(user_id),
+    CONSTRAINT FK_pm_projects_dept    FOREIGN KEY (dept_id)    REFERENCES dbo.dept_master(dept_id),
+    CONSTRAINT FK_pm_projects_created FOREIGN KEY (created_by) REFERENCES dbo.auth_users(user_id)
+);
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_projects_status')
+ALTER TABLE dbo.pm_projects WITH NOCHECK ADD CONSTRAINT CK_pm_projects_status
+    CHECK (status IN ('Planning','Active','On Hold','Completed','Cancelled'));
+
+-- ────────────────────────────────────────────────────────────
+-- pm_members
+-- ────────────────────────────────────────────────────────────
+IF OBJECT_ID('dbo.pm_members', 'U') IS NULL
+CREATE TABLE dbo.pm_members (
+    project_id int NOT NULL,
+    user_id    uniqueidentifier NOT NULL,
+    role       varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT 'Member' NOT NULL,
+    added_at   datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_pm_members PRIMARY KEY (project_id, user_id),
+    CONSTRAINT FK_pm_members_project FOREIGN KEY (project_id) REFERENCES dbo.pm_projects(project_id) ON DELETE CASCADE,
+    CONSTRAINT FK_pm_members_user    FOREIGN KEY (user_id)    REFERENCES dbo.auth_users(user_id)
+);
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_members_role')
+ALTER TABLE dbo.pm_members WITH NOCHECK ADD CONSTRAINT CK_pm_members_role
+    CHECK (role IN ('Manager','Member','Viewer'));
+
+-- ────────────────────────────────────────────────────────────
+-- pm_phases
+-- ────────────────────────────────────────────────────────────
+IF OBJECT_ID('dbo.pm_phases', 'U') IS NULL
+CREATE TABLE dbo.pm_phases (
+    phase_id        int IDENTITY(1,1) NOT NULL,
+    project_id      int NOT NULL,
+    name            varchar(200)  COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    description     nvarchar(MAX) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+    display_order   int DEFAULT 0 NOT NULL,
+    planned_start   date NULL,
+    planned_end     date NULL,
+    dept_id         int NULL,
+    status          varchar(30) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT 'To Do' NOT NULL,
+    status_override bit DEFAULT 0 NOT NULL,
+    is_deleted      bit DEFAULT 0 NOT NULL,
+    created_at      datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_pm_phases PRIMARY KEY (phase_id),
+    CONSTRAINT FK_pm_phases_project FOREIGN KEY (project_id) REFERENCES dbo.pm_projects(project_id) ON DELETE CASCADE,
+    CONSTRAINT FK_pm_phases_dept    FOREIGN KEY (dept_id)    REFERENCES dbo.dept_master(dept_id)
+);
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_phases_status')
+ALTER TABLE dbo.pm_phases WITH NOCHECK ADD CONSTRAINT CK_pm_phases_status
+    CHECK (status IN ('Blocked','To Do','In Progress','Completed'));
+
+-- Phase-level membership (optional — inherits project role if no row exists)
+IF OBJECT_ID('dbo.pm_phase_members', 'U') IS NULL
+CREATE TABLE dbo.pm_phase_members (
+    phase_id int NOT NULL,
+    user_id  uniqueidentifier NOT NULL,
+    role     varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT 'Member' NOT NULL,
+    added_at datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_pm_phase_members PRIMARY KEY (phase_id, user_id),
+    CONSTRAINT FK_pm_phase_members_phase FOREIGN KEY (phase_id) REFERENCES dbo.pm_phases(phase_id) ON DELETE CASCADE,
+    CONSTRAINT FK_pm_phase_members_user  FOREIGN KEY (user_id)  REFERENCES dbo.auth_users(user_id)
+);
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_phase_members_role')
+ALTER TABLE dbo.pm_phase_members WITH NOCHECK ADD CONSTRAINT CK_pm_phase_members_role
+    CHECK (role IN ('Manager','Member','Viewer'));
+
+-- ────────────────────────────────────────────────────────────
+-- pm_phase_deps  (self-referencing FKs both ON DELETE CASCADE
+-- would cause "multiple cascade paths" — second FK uses NO ACTION)
+-- ────────────────────────────────────────────────────────────
+IF OBJECT_ID('dbo.pm_phase_deps', 'U') IS NULL
+CREATE TABLE dbo.pm_phase_deps (
+    phase_id            int NOT NULL,
+    depends_on_phase_id int NOT NULL,
+    created_at          datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_pm_phase_deps PRIMARY KEY (phase_id, depends_on_phase_id),
+    CONSTRAINT FK_pm_phase_deps_phase     FOREIGN KEY (phase_id)            REFERENCES dbo.pm_phases(phase_id) ON DELETE CASCADE,
+    CONSTRAINT FK_pm_phase_deps_dependson FOREIGN KEY (depends_on_phase_id) REFERENCES dbo.pm_phases(phase_id) ON DELETE NO ACTION
+);
+
+-- ────────────────────────────────────────────────────────────
+-- pm_activities
+-- ────────────────────────────────────────────────────────────
+IF OBJECT_ID('dbo.pm_activities', 'U') IS NULL
+CREATE TABLE dbo.pm_activities (
+    activity_id     int IDENTITY(1,1) NOT NULL,
+    phase_id        int NOT NULL,
+    name            varchar(200)  COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    description     nvarchar(MAX) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+    display_order   int DEFAULT 0 NOT NULL,
+    planned_start   date NULL,
+    planned_end     date NULL,
+    owner_id        uniqueidentifier NULL,
+    dept_id         int NULL,
+    status          varchar(30) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT 'To Do' NOT NULL,
+    status_override bit DEFAULT 0 NOT NULL,
+    is_deleted      bit DEFAULT 0 NOT NULL,
+    created_at      datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_pm_activities PRIMARY KEY (activity_id),
+    CONSTRAINT FK_pm_activities_phase FOREIGN KEY (phase_id) REFERENCES dbo.pm_phases(phase_id) ON DELETE CASCADE,
+    CONSTRAINT FK_pm_activities_owner FOREIGN KEY (owner_id) REFERENCES dbo.auth_users(user_id),
+    CONSTRAINT FK_pm_activities_dept  FOREIGN KEY (dept_id)  REFERENCES dbo.dept_master(dept_id)
+);
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_activities_status')
+ALTER TABLE dbo.pm_activities WITH NOCHECK ADD CONSTRAINT CK_pm_activities_status
+    CHECK (status IN ('Blocked','To Do','In Progress','Completed'));
+
+IF OBJECT_ID('dbo.pm_activity_deps', 'U') IS NULL
+CREATE TABLE dbo.pm_activity_deps (
+    activity_id            int NOT NULL,
+    depends_on_activity_id int NOT NULL,
+    created_at             datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_pm_activity_deps PRIMARY KEY (activity_id, depends_on_activity_id),
+    CONSTRAINT FK_pm_activity_deps_activity   FOREIGN KEY (activity_id)            REFERENCES dbo.pm_activities(activity_id) ON DELETE CASCADE,
+    CONSTRAINT FK_pm_activity_deps_dependson  FOREIGN KEY (depends_on_activity_id) REFERENCES dbo.pm_activities(activity_id) ON DELETE NO ACTION
+);
+
+-- ────────────────────────────────────────────────────────────
+-- pm_tasks
+-- ────────────────────────────────────────────────────────────
+IF OBJECT_ID('dbo.pm_tasks', 'U') IS NULL
+CREATE TABLE dbo.pm_tasks (
+    task_id         int IDENTITY(1,1) NOT NULL,
+    activity_id     int NOT NULL,
+    name            varchar(200)  COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    description     nvarchar(MAX) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+    priority        varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT 'Medium' NOT NULL,
+    status          varchar(30) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT 'To Do' NOT NULL,
+    due_date        date NULL,
+    estimated_hours decimal(5,1) NULL,
+    is_deleted      bit DEFAULT 0 NOT NULL,
+    created_by      uniqueidentifier NULL,
+    created_at      datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_pm_tasks PRIMARY KEY (task_id),
+    CONSTRAINT FK_pm_tasks_activity FOREIGN KEY (activity_id) REFERENCES dbo.pm_activities(activity_id) ON DELETE CASCADE,
+    CONSTRAINT FK_pm_tasks_created  FOREIGN KEY (created_by)  REFERENCES dbo.auth_users(user_id)
+);
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_tasks_priority')
+ALTER TABLE dbo.pm_tasks WITH NOCHECK ADD CONSTRAINT CK_pm_tasks_priority
+    CHECK (priority IN ('Low','Medium','High','Critical'));
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_tasks_status')
+ALTER TABLE dbo.pm_tasks WITH NOCHECK ADD CONSTRAINT CK_pm_tasks_status
+    CHECK (status IN ('To Do','In Progress','In Review','Done','Blocked'));
+
+IF OBJECT_ID('dbo.pm_task_assignees', 'U') IS NULL
+CREATE TABLE dbo.pm_task_assignees (
+    task_id     int NOT NULL,
+    user_id     uniqueidentifier NOT NULL,
+    assigned_at datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_pm_task_assignees PRIMARY KEY (task_id, user_id),
+    CONSTRAINT FK_pm_task_assignees_task FOREIGN KEY (task_id) REFERENCES dbo.pm_tasks(task_id) ON DELETE CASCADE,
+    CONSTRAINT FK_pm_task_assignees_user FOREIGN KEY (user_id) REFERENCES dbo.auth_users(user_id)
+);
+
+IF OBJECT_ID('dbo.pm_task_deps', 'U') IS NULL
+CREATE TABLE dbo.pm_task_deps (
+    task_id            int NOT NULL,
+    depends_on_task_id int NOT NULL,
+    created_at         datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_pm_task_deps PRIMARY KEY (task_id, depends_on_task_id),
+    CONSTRAINT FK_pm_task_deps_task       FOREIGN KEY (task_id)            REFERENCES dbo.pm_tasks(task_id) ON DELETE CASCADE,
+    CONSTRAINT FK_pm_task_deps_dependson  FOREIGN KEY (depends_on_task_id) REFERENCES dbo.pm_tasks(task_id) ON DELETE NO ACTION
+);
+
+-- ────────────────────────────────────────────────────────────
+-- pm_audit_log
+-- ────────────────────────────────────────────────────────────
+IF OBJECT_ID('dbo.pm_audit_log', 'U') IS NULL
+CREATE TABLE dbo.pm_audit_log (
+    id            int IDENTITY(1,1) NOT NULL,
+    entity_type   varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    entity_id     int NOT NULL,
+    project_id    int NULL,
+    user_id       uniqueidentifier NULL,
+    action        varchar(60) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    field_changed varchar(100) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+    old_value     nvarchar(MAX) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+    new_value     nvarchar(MAX) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+    changed_at    datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_pm_audit_log PRIMARY KEY (id),
+    CONSTRAINT FK_pm_audit_log_project FOREIGN KEY (project_id) REFERENCES dbo.pm_projects(project_id),
+    CONSTRAINT FK_pm_audit_log_user    FOREIGN KEY (user_id)    REFERENCES dbo.auth_users(user_id)
+);
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_audit_log_entity_type')
+ALTER TABLE dbo.pm_audit_log WITH NOCHECK ADD CONSTRAINT CK_pm_audit_log_entity_type
+    CHECK (entity_type IN ('project','phase','activity','task'));
+
+-- ────────────────────────────────────────────────────────────
+-- Indexes (mirrors the PostgreSQL schema's index section)
+-- ────────────────────────────────────────────────────────────
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_pm_phases_project')
+CREATE INDEX IX_pm_phases_project ON dbo.pm_phases(project_id) WHERE is_deleted = 0;
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_pm_activities_phase')
+CREATE INDEX IX_pm_activities_phase ON dbo.pm_activities(phase_id) WHERE is_deleted = 0;
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_pm_tasks_activity')
+CREATE INDEX IX_pm_tasks_activity ON dbo.pm_tasks(activity_id) WHERE is_deleted = 0;
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_pm_audit_log_project')
+CREATE INDEX IX_pm_audit_log_project ON dbo.pm_audit_log(project_id, changed_at DESC);
