@@ -444,7 +444,7 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
       .replace(/<\/?p[^>]*>/gi, '');
     const tmp = document.createElement('div');
     tmp.innerHTML = withNewlines;
-    setEditBody(tmp.textContent || '');
+    setEditBody((tmp.textContent || '').replace(/\u200B/g, ''));
     setEditError('');
   };
   const handleEditCancel = () => { setEditingMessageId(null); setEditBody(''); setEditError(''); };

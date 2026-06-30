@@ -5,11 +5,11 @@ import { MAX_FILE_SIZE_BYTES } from '../api/allowedFileTypes';
 /**
  * Composer
  * Props:
- *   allowReply   — bool (false = read-only / broadcast)
- *   replyingTo   — message object being replied to (or null)
- *   onCancelReply()
- *   onSend({ bodyHtml, attachmentIds, parentMessageId })
- *   disabled     — bool
+ * allowReply   — bool
+ * replyingTo   — message object
+ * onCancelReply()
+ * onSend({ bodyHtml, attachmentIds, parentMessageId })
+ * disabled     — bool
  */
 export default function Composer({ allowReply = true, replyingTo, onCancelReply, onSend, disabled, participants = [] }) {
   const editorRef = useRef(null);
@@ -143,7 +143,14 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
   };
 
   const handleSend = async () => {
-    const html = editorRef.current?.innerHTML?.trim();
+    const rawHtml = editorRef.current?.innerHTML?.trim() || '';
+    const html = rawHtml
+      .replace(/(<br\s*\/?>\s*)+$/i, '')
+      .replace(/&nbsp;/g, '')
+      .replace(/\u00A0/g, '')
+      .replace(/\u200B/g, '')
+      .trim();
+
     const hasText        = html && html !== '<br>';
     const hasAttachments = attachments.some(a => a.attachmentId);
     if (!hasText && !hasAttachments) { setError('Add a message or attach a file before sending.'); return; }
@@ -170,7 +177,6 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
 
   return (
     <div className="composer" ref={composerRef}>
-      {/* Reply context */}
       {replyingTo && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
           <div className="msg-reply-strip" style={{ flex: 1 }}>
@@ -184,7 +190,6 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
         </div>
       )}
 
-      {/* Formatting toolbar */}
       <div className="composer-toolbar">
         <button className="fmt-btn" title="Bold" onMouseDown={e => { e.preventDefault(); execCmd('bold'); }}>B</button>
         <button className="fmt-btn" title="Italic" style={{ fontStyle: 'italic' }} onMouseDown={e => { e.preventDefault(); execCmd('italic'); }}>I</button>
@@ -219,7 +224,6 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
         />
       </div>
 
-      {/* Editor */}
       <div
         ref={editorRef}
         className="composer-area"
@@ -256,50 +260,29 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
             handleSend();
             return;
           }
-          // BUG FIX: plain Enter AND Shift+Enter both need to insert a line
-          // break here — previously only plain Enter (!e.shiftKey) was
-          // handled manually; Shift+Enter fell through to the browser's
-          // default contentEditable behavior, which inserts a new <div>
-          // wrapping the next line. DOMPurify's ALLOWED_TAGS doesn't include
-          // 'div', so that line break was silently stripped on send. Both
-          // keys now take the same manual <br> insertion path.
           if (e.key === 'Enter') {
             const sel = window.getSelection();
             let node = sel?.anchorNode;
-            while (node) {
-              if (node.nodeType === 1 && ['LI', 'UL', 'OL'].includes(node.nodeName)) return;
-              node = node.parentNode;
+            let inList = false;
+            let tempNode = node;
+            while (tempNode && tempNode !== editorRef.current) {
+              if (tempNode.nodeName === 'LI' || tempNode.nodeName === 'UL' || tempNode.nodeName === 'OL') {
+                inList = true;
+                break;
+              }
+              tempNode = tempNode.parentNode;
             }
-            e.preventDefault();
-            // BUG FIX: document.execCommand('insertLineBreak') is deprecated
-            // and inconsistent across browsers — it can silently no-op or
-            // produce a node DOMPurify later strips, so multi-line messages
-            // arrived back as a single merged line after sending. Insert a
-            // real <br> element manually via the Range API instead — this
-            // always produces a genuine <br> DOM node, which both DOMPurify
-            // (br is allowlisted) and the message renderer respect.
-            if (sel && sel.rangeCount > 0) {
+            if (!inList) {
+              e.preventDefault();
+              if (!sel || sel.rangeCount === 0) return;
               const range = sel.getRangeAt(0);
               range.deleteContents();
               const br = document.createElement('br');
               range.insertNode(br);
-
-              // BUG FIX: a single trailing <br> as the very last node in a
-              // contentEditable doesn't visually create a new line in most
-              // browsers until there's something after it — so the first
-              // Enter press appeared to do nothing, and it took a second
-              // press to see the cursor actually move down. Insert an
-              // invisible zero-width-space filler right after so the new
-              // line renders immediately, with the caret placed BEFORE the
-              // filler so typed text lands on the new line naturally and
-              // absorbs/pushes past the filler. Filler characters are
-              // stripped from the HTML before sending (see handleSend).
-              if (!br.nextSibling) {
-                const filler = document.createTextNode('\u200B');
-                br.after(filler);
-              }
-
+              const nbs = document.createTextNode('\u00A0');
               range.setStartAfter(br);
+              range.insertNode(nbs);
+              range.setStartAfter(nbs);
               range.collapse(true);
               sel.removeAllRanges();
               sel.addRange(range);
@@ -308,7 +291,6 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
         }}
       />
 
-      {/* @mention dropdown */}
       {mentionQuery !== null && mentionMatches.length > 0 && (
         <div style={{
           position: 'fixed',
@@ -346,7 +328,6 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
         </div>
       )}
 
-      {/* Pending attachments */}
       {attachments.length > 0 && (
         <div className="composer-attachments">
           {attachments.map(att => (
