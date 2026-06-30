@@ -256,7 +256,14 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
             handleSend();
             return;
           }
-          if (e.key === 'Enter' && !e.shiftKey) {
+          // BUG FIX: plain Enter AND Shift+Enter both need to insert a line
+          // break here — previously only plain Enter (!e.shiftKey) was
+          // handled manually; Shift+Enter fell through to the browser's
+          // default contentEditable behavior, which inserts a new <div>
+          // wrapping the next line. DOMPurify's ALLOWED_TAGS doesn't include
+          // 'div', so that line break was silently stripped on send. Both
+          // keys now take the same manual <br> insertion path.
+          if (e.key === 'Enter') {
             const sel = window.getSelection();
             let node = sel?.anchorNode;
             while (node) {
@@ -264,7 +271,39 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
               node = node.parentNode;
             }
             e.preventDefault();
-            document.execCommand('insertLineBreak');
+            // BUG FIX: document.execCommand('insertLineBreak') is deprecated
+            // and inconsistent across browsers — it can silently no-op or
+            // produce a node DOMPurify later strips, so multi-line messages
+            // arrived back as a single merged line after sending. Insert a
+            // real <br> element manually via the Range API instead — this
+            // always produces a genuine <br> DOM node, which both DOMPurify
+            // (br is allowlisted) and the message renderer respect.
+            if (sel && sel.rangeCount > 0) {
+              const range = sel.getRangeAt(0);
+              range.deleteContents();
+              const br = document.createElement('br');
+              range.insertNode(br);
+
+              // BUG FIX: a single trailing <br> as the very last node in a
+              // contentEditable doesn't visually create a new line in most
+              // browsers until there's something after it — so the first
+              // Enter press appeared to do nothing, and it took a second
+              // press to see the cursor actually move down. Insert an
+              // invisible zero-width-space filler right after so the new
+              // line renders immediately, with the caret placed BEFORE the
+              // filler so typed text lands on the new line naturally and
+              // absorbs/pushes past the filler. Filler characters are
+              // stripped from the HTML before sending (see handleSend).
+              if (!br.nextSibling) {
+                const filler = document.createTextNode('\u200B');
+                br.after(filler);
+              }
+
+              range.setStartAfter(br);
+              range.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(range);
+            }
           }
         }}
       />

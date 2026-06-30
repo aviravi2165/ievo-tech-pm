@@ -339,7 +339,7 @@ export default function MessageBubble({
             disabled={editSaving}
             style={{ padding: '4px 12px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
           >
-            {editSaving ? 'Saving…' : 'Save (⌘+Enter)'}
+            {editSaving ? 'Saving…' : 'Save (ctrl+Enter)'}
           </button>
         </div>
       </div>

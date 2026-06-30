@@ -170,9 +170,24 @@ export function useThread(conversationId) {
     return result;
   }, []);
 
+  // Append a message directly from a REST response (e.g. the system message
+  // returned by groupApi.update() right after a name/description change),
+  // instead of waiting for the NEW_MESSAGE socket round-trip. Guards against
+  // duplicates the same way the socket handler does, so when the real
+  // NEW_MESSAGE event does arrive a moment later for the same messageId,
+  // it's a silent no-op.
+  const appendMessage = useCallback((messageData) => {
+    if (!messageData?.messageId) return;
+    setMessages(prev => {
+      if (prev.find(m => m.messageId === messageData.messageId)) return prev;
+      return [...prev, messageData];
+    });
+  }, []);
+
   return {
     messages, conversation, loading, error,
     markRead, markAllRead, sendReply, editMessage: editMessageLocal,
+    appendMessage,
     refetch: fetchThread,
     onNewMessageRef,
   };
