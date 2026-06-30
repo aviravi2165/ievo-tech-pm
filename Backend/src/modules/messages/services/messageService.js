@@ -36,6 +36,7 @@ function mapThreadMessage(row) {
     bodyHtml:        row.body_html,
     sentAt:          row.sent_at,
     parentMessageId: row.parent_message_id,
+    isSystem:        Boolean(row.is_system),
     attachments:     parseJsonArray(row.attachments),
     readReceipts:    parseJsonArray(row.read_receipts),
     parentMessage:   row.parent_message_id ? {
@@ -1066,6 +1067,7 @@ async function getThread(conversationId, userId) {
         m.parent_message_id,
         m.body_html,
         m.sent_at,
+        m.is_system,
         COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''), u.email, 'Unknown') AS sender_name,
         pm.body_html  AS parent_body_html,
         pm.is_deleted AS parent_is_deleted,
