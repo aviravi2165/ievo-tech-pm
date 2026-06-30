@@ -247,6 +247,11 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
       const uid = currentUserIdRef.current;
       if (uid) markAllReadRef.current(uid);
 
+      // System messages (group name/description change notices) never
+      // trigger the "new message" pill or count toward it — they're
+      // informational chips, not content the user needs to be nudged to read.
+      if (payload.isSystem) return;
+
       const isMine = payload.senderUserId &&
         String(payload.senderUserId) === String(uid);
       if (isMine) return;

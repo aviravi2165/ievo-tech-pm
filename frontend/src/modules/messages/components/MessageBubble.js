@@ -71,6 +71,7 @@ export default function MessageBubble({
   const [downloadingId, setDownloadingId] = useState(null);
   const [downloadError, setDownloadError] = useState('');
   const [showAllSeen,   setShowAllSeen]   = useState(false);
+  const [systemExpanded, setSystemExpanded] = useState(false);
 
   // ── System messages (e.g. "Group name changed from X to Y") ───────────────
   // Regular messages render as large white "email row" cards (.thread-message,
@@ -79,7 +80,12 @@ export default function MessageBubble({
   // with no card chrome, no sender name ("Unknown" never shows since there's
   // no header row at all), no border-matching-message style, no footer.
   // Persisted as real rows with is_system=1, so they survive a refresh.
+  //
+  // Long change text (e.g. two long values quoted) gets clipped at maxWidth.
+  // Click the chip to expand it to full wrapped text; click again to
+  // collapse back to the truncated single-line pill.
   if (message.isSystem) {
+    const fullText = (message.bodyHtml || '').replace(/<[^>]+>/g, '');
     return (
       <div
         ref={node => registerRef?.(message.messageId, node)}
@@ -88,20 +94,36 @@ export default function MessageBubble({
           margin: '6px 20px',
         }}
       >
-        <span style={{
-          display: 'inline-flex', alignItems: 'center', gap: 6,
-          fontSize: 11, lineHeight: 1.3,
-          color: '#9a6b00',
-          background: '#fff6e0',
-          border: '1px solid #f3dca0',
-          borderRadius: 999,
-          padding: '4px 12px',
-          maxWidth: '70%',
-        }}>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {(message.bodyHtml || '').replace(/<[^>]+>/g, '')}
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={() => setSystemExpanded(v => !v)}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSystemExpanded(v => !v); } }}
+          title={systemExpanded ? 'Click to collapse' : 'Click to expand'}
+          style={{
+            display: 'inline-flex',
+            alignItems: systemExpanded ? 'flex-start' : 'center',
+            flexDirection: systemExpanded ? 'column' : 'row',
+            gap: systemExpanded ? 2 : 6,
+            fontSize: 11, lineHeight: 1.4,
+            color: '#9a6b00',
+            background: '#fff6e0',
+            border: '1px solid #f3dca0',
+            borderRadius: systemExpanded ? 12 : 999,
+            padding: '4px 12px',
+            maxWidth: systemExpanded ? '90%' : '70%',
+            cursor: 'pointer',
+            userSelect: 'none',
+          }}
+        >
+          <span style={
+            systemExpanded
+              ? { whiteSpace: 'normal', wordBreak: 'break-word' }
+              : { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+          }>
+            {fullText}
           </span>
-          <span style={{ color: '#b8924a', fontSize: 10, flexShrink: 0 }}>
+          <span style={{ color: '#b8924a', fontSize: 10, flexShrink: 0, alignSelf: systemExpanded ? 'flex-end' : 'center' }}>
             {fmtTs(message.sentAt)}
           </span>
         </span>

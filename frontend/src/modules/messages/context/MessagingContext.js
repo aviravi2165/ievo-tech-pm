@@ -177,16 +177,20 @@ export function MessagingProvider({ children }) {
         return;
       }
 
-      // Message from someone else — update the right list
+      // Message from someone else — update the right list.
+      // System messages (group name/description changes, sender = null) never
+      // count toward unread — they're informational chips, not real content.
       const updateList = (setter) => setter(prev => {
         const exists = prev.find(c => String(c.conversationId) === String(payload.conversationId));
         if (!exists) return prev;
         const updated = {
           ...exists,
-          latestSender: payload.senderName,
+          latestSender: payload.isSystem ? exists.latestSender : payload.senderName,
           latestAt:     new Date().toISOString(),
-          unreadCount:  isOpen ? (exists.unreadCount || 0) : (exists.unreadCount || 0) + 1,
-          _flash: !isOpen,
+          unreadCount:  payload.isSystem
+            ? (exists.unreadCount || 0)
+            : (isOpen ? (exists.unreadCount || 0) : (exists.unreadCount || 0) + 1),
+          _flash: !payload.isSystem && !isOpen,
         };
         if (updated._flash) {
           setTimeout(() => {
