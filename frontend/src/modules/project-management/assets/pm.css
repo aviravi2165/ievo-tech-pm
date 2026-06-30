@@ -4,6 +4,21 @@
    --light=#1a1d23 (dark text), --muted=#707070, --gold=ievo-red
    ================================================================ */
 
+:root {
+  --charcoal:  #ffffff;
+  --slate:     #f8f5f0;
+  --mid:       #ebebeb;
+  --light:     #1a1d23;
+  --muted:     #707070;
+  --divider:   #e0dcd4;
+  --gold:      #D92906;
+  --gold-dim:  #b91520;
+  --radius:    4px;
+  --radius-lg: 8px;
+  --font-display: 'Cormorant Garamond', Georgia, serif;
+  --font-body:    'Inter', -apple-system, sans-serif;
+}
+
 /* ── Module root — fills erp-main, owns its own scroll ── */
 .pm-wrap        { display:flex; height:100%; flex-direction:column; background:var(--slate); color:var(--light); font-family:var(--font-body); overflow:hidden; }
 .pm-topbar      { display:flex; align-items:center; gap:16px; padding:14px 24px; border-bottom:1px solid var(--divider); background:var(--charcoal); flex-shrink:0; }
