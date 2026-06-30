@@ -21,7 +21,7 @@ const CONV_TYPE_LABEL = {
 
 export default function ChatWindow({ conversation, onBack, onDisableGroup, onEnableGroup, onDeleteGroup, onHideGroup }) {
   const { currentUserId, toast, groups = [] } = useMessaging();
-  const { messages, conversation: threadConv, loading, error, markAllRead, sendReply, editMessage, refetch, onNewMessageRef } =
+  const { messages, conversation: threadConv, loading, error, markAllRead, sendReply, editMessage, appendMessage, refetch, onNewMessageRef } =
     useThread(conversation?.conversationId);
   const { socket } = useSocket();
 
@@ -66,6 +66,7 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
   const dividerComputedForRef = useRef(null); // conversationId we've already computed the divider for
   const descRef = useRef(null);
   const initialScrollDoneRef = useRef(false); // has the initial scroll-to-divider/bottom run for this conversation?
+  const dividerRef = useRef(null); // DOM node of the "New messages" divider line itself
 
   const registerMessageRef = (messageId, node) => {
     if (node) messageNodesRef.current[messageId] = node;
@@ -202,6 +203,36 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
     initialScrollDoneRef.current = true;
   });
 
+  // ── Remove the "New messages" divider once it's been scrolled past ────────
+  // The divider's POSITION is intentionally frozen for the session (computed
+  // once in the effect above) so it doesn't jump around as things get marked
+  // read. But the divider itself should disappear promptly once the user has
+  // actually scrolled down past it and seen the messages below — not linger
+  // for the rest of the session. Watches the divider's own DOM node: once it
+  // scrolls above the visible scroll area (top edge negative relative to the
+  // container), it's been seen and is cleared.
+  useEffect(() => {
+    if (!dividerId) return;
+    const root = containerRef.current;
+    const node = dividerRef.current;
+    if (!root || !node) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        const scrolledPast =
+          !entry.isIntersecting &&
+          entry.boundingClientRect.top < (entry.rootBounds?.top ?? 0);
+        if (scrolledPast) {
+          setDividerId(null);
+          observer.disconnect();
+        }
+      },
+      { root, threshold: 0 }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [dividerId]);
+
 
 
   useEffect(() => {
@@ -246,11 +277,6 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
     onNewMessageRef.current = (payload) => {
       const uid = currentUserIdRef.current;
       if (uid) markAllReadRef.current(uid);
-
-      // System messages (group name/description change notices) never
-      // trigger the "new message" pill or count toward it — they're
-      // informational chips, not content the user needs to be nudged to read.
-      if (payload.isSystem) return;
 
       const isMine = payload.senderUserId &&
         String(payload.senderUserId) === String(uid);
@@ -407,9 +433,17 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
   // Edit message handlers
   const handleEditStart = (msg) => {
     setEditingMessageId(msg.messageId);
-    // Strip HTML tags for the edit textarea
+    // BUG FIX: textContent silently drops <br> elements with no replacement
+    // character, so a 3-line message became one merged line the instant you
+    // opened the edit textarea. Convert line-break-producing tags to '\n'
+    // FIRST, then extract the now-plain text so breaks survive into the
+    // textarea (and round-trip back to <br> on save below).
+    const withNewlines = (msg.bodyHtml || '')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>\s*<p[^>]*>/gi, '\n')
+      .replace(/<\/?p[^>]*>/gi, '');
     const tmp = document.createElement('div');
-    tmp.innerHTML = msg.bodyHtml || '';
+    tmp.innerHTML = withNewlines;
     setEditBody(tmp.textContent || '');
     setEditError('');
   };
@@ -437,10 +471,39 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
     if (!editGroupName.trim()) { setEditGroupError('Group name is required.'); return; }
     setEditGroupSaving(true); setEditGroupError('');
     try {
-      await groupApi.update(matchedGroup.groupId, { groupName: editGroupName.trim(), description: editGroupDesc.trim() || null });
+      const result = await groupApi.update(matchedGroup.groupId, { groupName: editGroupName.trim(), description: editGroupDesc.trim() || null });
       setLiveGroupName(editGroupName.trim());
       setLiveGroupDesc(editGroupDesc.trim() || null);
       setEditingGroup(false);
+      // BUG FIX: don't wait on the NEW_MESSAGE socket round-trip to show the
+      // "Group name changed…" / "Description added…" notice — append it to
+      // this open chat window immediately from the PATCH response itself.
+      // The socket event still arrives a moment later for OTHER participants
+      // (and for this client too, harmlessly — appendMessage dedupes by
+      // messageId), but the person making the change no longer has to
+      // reopen or refresh the chat to see their own system message appear.
+      if (result?.insertedMessage) {
+        appendMessage({
+          messageId:      result.insertedMessage.messageId,
+          conversationId: result.insertedMessage.conversationId,
+          senderId:       null,
+          senderName:     null,
+          bodyHtml:       result.insertedMessage.bodyHtml,
+          sentAt:         result.insertedMessage.sentAt,
+          isSystem:       true,
+          attachments:    [],
+          parentMessage:  null,
+          readReceipts:   [],
+        });
+      }
+      // BUG FIX: without this, the global `groups` list (used by GroupManager's
+      // sidebar list and as the fallback source for matchedGroup.description
+      // whenever this chat window remounts) never refetches. The edit looked
+      // like it worked (system message + live header update in THIS open
+      // window), but reopening the group, navigating away and back, or
+      // checking the Groups tab list would all still show the old/empty
+      // description because nothing told the rest of the app to refetch.
+      window.dispatchEvent(new Event('groups-updated'));
     } catch (err) {
       setEditGroupError(err?.response?.data?.error || 'Update failed.');
     } finally { setEditGroupSaving(false); }
@@ -917,7 +980,7 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
           {!loading && messages.map(msg => (
             <div key={msg.messageId}>
               {msg.messageId === dividerId && (
-                <div className="unread-divider"><span>New messages</span></div>
+                <div ref={dividerRef} className="unread-divider"><span>New messages</span></div>
               )}
               <MessageBubble
                 message={msg}

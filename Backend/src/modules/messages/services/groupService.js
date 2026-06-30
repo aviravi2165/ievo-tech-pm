@@ -665,7 +665,13 @@ async function updateGroup(groupId, userId, { groupName, description }) {
   if (!cur) { const e = new Error('Group not found'); e.statusCode = 404; throw e; }
 
   const newName = (groupName || '').trim() || cur.group_name;
-  const newDesc = description !== undefined ? (description.trim() || null) : cur.description;
+  // description can be explicitly null (clearing it) or a string ('' also
+  // means clear) or undefined (field omitted = leave unchanged). Guard
+  // against null before calling .trim() — null.trim() throws and was
+  // crashing this endpoint whenever someone cleared an existing description.
+  const newDesc = description !== undefined
+    ? ((description || '').trim() || null)
+    : cur.description;
 
   await pool.request()
     .input('groupId',     sql.Int,      groupId)
@@ -680,6 +686,8 @@ async function updateGroup(groupId, userId, { groupName, description }) {
   // Build the WhatsApp-style change description, e.g.:
   //   Group name changed from "Old" to "New"
   //   Description changed from "old desc" to "new desc"
+  //   Description removed
+  //   Description added: "new desc"
   const nameChanged = cur.group_name !== newName;
   const descChanged = (cur.description || '') !== (newDesc || '');
   const changeLines = [];
@@ -687,9 +695,13 @@ async function updateGroup(groupId, userId, { groupName, description }) {
     changeLines.push(`Group name changed from "${cur.group_name}" to "${newName}"`);
   }
   if (descChanged) {
-    const fromTxt = cur.description ? `"${cur.description}"` : '(none)';
-    const toTxt   = newDesc ? `"${newDesc}"` : '(none)';
-    changeLines.push(`Description changed from ${fromTxt} to ${toTxt}`);
+    if (cur.description && !newDesc) {
+      changeLines.push('Description removed');
+    } else if (!cur.description && newDesc) {
+      changeLines.push(`Description added: "${newDesc}"`);
+    } else {
+      changeLines.push(`Description changed from "${cur.description}" to "${newDesc}"`);
+    }
   }
   const systemMessage = changeLines.join('. ');
 
