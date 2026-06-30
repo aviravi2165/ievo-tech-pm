@@ -58,10 +58,56 @@ export default function MessageBubble({
   onJumpToParent,
   isHighlighted = false,
   registerRef,
+  isEditing = false,
+  editBody = '',
+  onEditBodyChange,
+  onEditStart,
+  onEditCancel,
+  onEditSave,
+  editSaving = false,
+  editError = '',
+  editDeadlineMinutes = 10,
 }) {
   const [downloadingId, setDownloadingId] = useState(null);
   const [downloadError, setDownloadError] = useState('');
   const [showAllSeen,   setShowAllSeen]   = useState(false);
+
+  // ── System messages (e.g. "Group name changed from X to Y") ───────────────
+  // Regular messages render as large white "email row" cards (.thread-message,
+  // ~24px/32px padding, sender header, divider line). System messages must
+  // look nothing like that: a small, centered, single-line gold-tinted chip
+  // with no card chrome, no sender name ("Unknown" never shows since there's
+  // no header row at all), no border-matching-message style, no footer.
+  // Persisted as real rows with is_system=1, so they survive a refresh.
+  if (message.isSystem) {
+    return (
+      <div
+        ref={node => registerRef?.(message.messageId, node)}
+        style={{
+          display: 'flex', justifyContent: 'center',
+          margin: '6px 20px',
+        }}
+      >
+        <span style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          fontSize: 11, lineHeight: 1.3,
+          color: '#9a6b00',
+          background: '#fff6e0',
+          border: '1px solid #f3dca0',
+          borderRadius: 999,
+          padding: '4px 12px',
+          maxWidth: '70%',
+        }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {(message.bodyHtml || '').replace(/<[^>]+>/g, '')}
+          </span>
+          <span style={{ color: '#b8924a', fontSize: 10, flexShrink: 0 }}>
+            {fmtTs(message.sentAt)}
+          </span>
+        </span>
+      </div>
+    );
+  }
 
   const cleanHtml = DOMPurify.sanitize(message.bodyHtml || '', {
     ALLOWED_TAGS: ['b','i','u','strong','em','p','br','ul','ol','li','a','table','thead','tbody','tr','th','td','span'],
@@ -86,6 +132,14 @@ export default function MessageBubble({
     r => String(r.userId) !== String(message.senderId)
   );
   const isSeen = seenBy.length > 0;
+
+  // Can this message still be edited? Only the sender, only within the deadline.
+  const withinEditWindow = (() => {
+    if (!isMine || !message.sentAt) return false;
+    const sentMs = new Date(message.sentAt).getTime();
+    const elapsedMin = (Date.now() - sentMs) / 60000;
+    return elapsedMin <= editDeadlineMinutes;
+  })();
 
   // ── Read receipt badge logic ──────────────────────────────────────────────
   // Only show on own messages AND only on the last sent message
@@ -187,6 +241,11 @@ export default function MessageBubble({
 
         <div className="thread-time">
           {fmtTs(message.sentAt)}
+          {message.isEdited && (
+            <span style={{ color: 'var(--muted)', fontStyle: 'italic', marginLeft: 5 }}>
+              (edited)
+            </span>
+          )}
         </div>
       </div>
 
@@ -225,10 +284,49 @@ export default function MessageBubble({
     )}
 
     {/* Body */}
-    <div
-      className="thread-message-body"
-      dangerouslySetInnerHTML={{ __html: cleanHtml }}
-    />
+    {isEditing ? (
+      <div style={{ padding: '4px 0' }}>
+        <textarea
+          autoFocus
+          value={editBody}
+          onChange={e => onEditBodyChange?.(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onEditSave?.(); }
+            if (e.key === 'Escape') onEditCancel?.();
+          }}
+          rows={3}
+          style={{
+            width: '100%', boxSizing: 'border-box', resize: 'vertical',
+            padding: '8px 10px', borderRadius: 8, border: '1px solid var(--accent)',
+            background: 'var(--mid)', color: 'var(--light)', fontSize: 13.5,
+            fontFamily: 'inherit', outline: 'none',
+          }}
+        />
+        {editError && (
+          <div style={{ color: 'var(--danger)', fontSize: 11.5, marginTop: 4 }}>{editError}</div>
+        )}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 6 }}>
+          <button
+            onClick={onEditCancel}
+            style={{ padding: '4px 12px', borderRadius: 7, border: '1px solid var(--divider)', background: 'transparent', color: 'var(--muted)', cursor: 'pointer', fontSize: 12 }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onEditSave}
+            disabled={editSaving}
+            style={{ padding: '4px 12px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
+          >
+            {editSaving ? 'Saving…' : 'Save (⌘+Enter)'}
+          </button>
+        </div>
+      </div>
+    ) : (
+      <div
+        className="thread-message-body"
+        dangerouslySetInnerHTML={{ __html: cleanHtml }}
+      />
+    )}
 
     {/* Attachments */}
     {message.attachments?.length > 0 && (
@@ -262,22 +360,34 @@ export default function MessageBubble({
     )}
 
     {/* Footer Actions */}
-    <div className="thread-footer">
+    {!isEditing && (
+      <div className="thread-footer">
 
-      {onReply && (
-        <button
-          className="thread-reply-btn"
-          onClick={() => onReply(message)}
-        >
-          ↩ Reply
-        </button>
-      )}
+        {onReply && (
+          <button
+            className="thread-reply-btn"
+            onClick={() => onReply(message)}
+          >
+            ↩ Reply
+          </button>
+        )}
 
-      <div className="thread-receipt">
-        {renderReceiptBadge()}
+        {withinEditWindow && onEditStart && (
+          <button
+            className="thread-reply-btn"
+            onClick={onEditStart}
+            title={`Editable for ${editDeadlineMinutes} minutes after sending`}
+          >
+            ✎ Edit
+          </button>
+        )}
+
+        <div className="thread-receipt">
+          {renderReceiptBadge()}
+        </div>
+
       </div>
-
-    </div>
+    )}
 
   </div>
 );

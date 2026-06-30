@@ -648,9 +648,100 @@ async function ensureGroupConversation(groupId, userId) {
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Update group name / description (admin only)
+// Returns the old and new values so the caller can broadcast a system message.
+// ─────────────────────────────────────────────────────────────────────────────
+async function updateGroup(groupId, userId, { groupName, description }) {
+  await assertGroupAdmin(groupId, userId);
+
+  const pool = await getPool();
+
+  // Fetch current values first so we can build the change message
+  const curRes = await pool.request()
+    .input('groupId', sql.Int, groupId)
+    .query(`SELECT group_name, description FROM comm_groups WHERE group_id = @groupId`);
+  const cur = curRes.recordset[0];
+  if (!cur) { const e = new Error('Group not found'); e.statusCode = 404; throw e; }
+
+  const newName = (groupName || '').trim() || cur.group_name;
+  const newDesc = description !== undefined ? (description.trim() || null) : cur.description;
+
+  await pool.request()
+    .input('groupId',     sql.Int,      groupId)
+    .input('groupName',   sql.NVarChar, newName)
+    .input('description', sql.NVarChar, newDesc)
+    .query(`
+      UPDATE comm_groups
+      SET group_name = @groupName, description = @description
+      WHERE group_id = @groupId
+    `);
+
+  // Build the WhatsApp-style change description, e.g.:
+  //   Group name changed from "Old" to "New"
+  //   Description changed from "old desc" to "new desc"
+  const nameChanged = cur.group_name !== newName;
+  const descChanged = (cur.description || '') !== (newDesc || '');
+  const changeLines = [];
+  if (nameChanged) {
+    changeLines.push(`Group name changed from "${cur.group_name}" to "${newName}"`);
+  }
+  if (descChanged) {
+    const fromTxt = cur.description ? `"${cur.description}"` : '(none)';
+    const toTxt   = newDesc ? `"${newDesc}"` : '(none)';
+    changeLines.push(`Description changed from ${fromTxt} to ${toTxt}`);
+  }
+  const systemMessage = changeLines.join('. ');
+
+  // Persist as a real system message inside the group's conversation (if one
+  // exists yet) so it shows inline in chat history, like WhatsApp — not just
+  // a client-side toast that disappears on refresh.
+  let insertedMessage = null;
+  if (systemMessage) {
+    const convRes = await pool.request()
+      .input('groupId', sql.Int, groupId)
+      .query(`
+        SELECT TOP 1 conversation_id AS conversationId
+        FROM comm_conversations
+        WHERE group_id = @groupId AND is_deleted = 0
+        ORDER BY conversation_id DESC
+      `);
+    const conversationId = convRes.recordset[0]?.conversationId;
+    if (conversationId) {
+      const msgRes = await pool.request()
+        .input('convId', sql.Int, conversationId)
+        .input('body',   sql.NVarChar, systemMessage)
+        .query(`
+          INSERT INTO comm_messages (conversation_id, sender_id, body_html, is_system)
+          OUTPUT INSERTED.message_id  AS messageId,
+                 INSERTED.sent_at     AS sentAt
+          VALUES (@convId, NULL, @body, 1)
+        `);
+      insertedMessage = {
+        messageId:      msgRes.recordset[0].messageId,
+        conversationId,
+        sentAt:         msgRes.recordset[0].sentAt,
+        bodyHtml:       systemMessage,
+        isSystem:       true,
+      };
+      // Bump conversation's last-activity timestamp so it bubbles to top of lists
+      await pool.request()
+        .input('convId', sql.Int, conversationId)
+        .query(`UPDATE comm_conversations SET last_message_at = SYSDATETIMEOFFSET() WHERE conversation_id = @convId`);
+    }
+  }
+
+  return {
+    groupId, groupName: newName, description: newDesc,
+    oldGroupName: cur.group_name, oldDescription: cur.description,
+    systemMessage, insertedMessage,
+  };
+}
+
 module.exports = {
   listGroupsForUser,
   createGroup,
+  updateGroup,
   getGroupMembers,
   getMemberUserIdsForGroups,
   addMembers,

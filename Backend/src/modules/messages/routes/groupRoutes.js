@@ -24,6 +24,7 @@ router.patch('/:groupId/enable',        groupController.enable);
 router.post('/:groupId/hide',           groupController.hide);
 
 // returns latest conversation for a group (for "open thread" feature)
+router.patch('/:groupId',                      groupController.updateGroup);
 router.get('/:groupId/conversation',    groupController.getGroupConversation);
 // creates (or returns existing) group conversation
 router.post('/:groupId/conversation',   groupController.createGroupConversation);
