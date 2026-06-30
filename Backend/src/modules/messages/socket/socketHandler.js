@@ -84,6 +84,21 @@ function initSocket(httpServer) {
       if (!Number.isNaN(conversationId)) socket.leave(`conv:${conversationId}`);
     });
 
+    // Group rooms for GROUP_UPDATED events (name/description changes)
+    socket.on('join_group', async (data = {}) => {
+      const groupId = parseInt(data.groupId, 10);
+      if (Number.isNaN(groupId) || userType === 'admin') return;
+      try {
+        const groupService = require('../services/groupService');
+        await groupService.assertGroupMember(groupId, userId);
+        socket.join(`group:${groupId}`);
+      } catch { /* not a member */ }
+    });
+    socket.on('leave_group', (data = {}) => {
+      const groupId = parseInt(data.groupId, 10);
+      if (!Number.isNaN(groupId)) socket.leave(`group:${groupId}`);
+    });
+
     /**
      * MARK_READ relay — client emits after its REST PATCH /read call succeeds.
      * Server validates participant then re-emits to other viewers in the room

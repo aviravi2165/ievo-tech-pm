@@ -3,6 +3,7 @@ import api from './axiosInstance';
 export const groupApi = {
   list:         ()                          => api.get('/api/groups').then(r => r.data),
   create:       (groupName, description)    => api.post('/api/groups', { groupName, description }).then(r => r.data),
+  update:       (groupId, data)             => api.patch(`/api/groups/${groupId}`, data).then(r => r.data),
 
   getMembers:   (groupId)                   => api.get(`/api/groups/${groupId}/members`).then(r => r.data),
   addMembers:   (groupId, userIds)          => api.post(`/api/groups/${groupId}/members`, { userIds }).then(r => r.data),

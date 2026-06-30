@@ -1,11 +1,17 @@
-import { useEffect, useRef, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useMemo, useState, useCallback } from 'react';
 import MessageBubble from './MessageBubble';
 import Composer      from './Composer';
 import { useThread }    from '../hooks/useThread';
 import { useMessaging } from '../context/MessagingContext';
+import { useSocket }    from '../context/SocketContext';
 import { messageApi } from '../api/messageApi';
 import { groupApi }   from '../api/groupApi';
 import api            from '../api/axiosInstance';
+
+// How many minutes after sending a message it remains editable.
+// Configurable via VITE_MESSAGE_EDIT_DEADLINE_MINUTES (frontend env);
+// the actual enforcement happens server-side using the same window.
+const editDeadlineMinutes = parseInt(import.meta.env.VITE_MESSAGE_EDIT_DEADLINE_MINUTES || '10', 10);
 
 const CONV_TYPE_LABEL = {
   bcc:          { label: 'Private',    bg: 'var(--accent-glow)',   color: 'var(--accent)',  border: 'rgba(224,28,36,0.3)' },
@@ -15,33 +21,51 @@ const CONV_TYPE_LABEL = {
 
 export default function ChatWindow({ conversation, onBack, onDisableGroup, onEnableGroup, onDeleteGroup, onHideGroup }) {
   const { currentUserId, toast, groups = [] } = useMessaging();
-  const { messages, conversation: threadConv, loading, error, markAllRead, sendReply, refetch, onNewMessageRef } =
+  const { messages, conversation: threadConv, loading, error, markAllRead, sendReply, editMessage, refetch, onNewMessageRef } =
     useThread(conversation?.conversationId);
+  const { socket } = useSocket();
 
   const [replyingTo,       setReplyingTo]       = useState(null);
   const [showParticipants, setShowParticipants]  = useState(false);
   const [descExpanded,     setDescExpanded]      = useState(false);
   const [isDescTruncated,  setIsDescTruncated]   = useState(false);
-  const [removing,         setRemoving]          = useState(null); // userId being removed
+  const [removing,         setRemoving]          = useState(null);
   const [removeError,      setRemoveError]       = useState('');
   const [highlightedId,    setHighlightedId]     = useState(null);
-  const [showNewPill,      setShowNewPill]        = useState(false); // Case A: scrolled away when a new msg lands in this same chat
+  const [showNewPill,      setShowNewPill]        = useState(false);
   const [newPillCount,     setNewPillCount]       = useState(0);
-  const [dividerId,        setDividerId]          = useState(null);  // first-unread marker, computed once per open
+  const [dividerId,        setDividerId]          = useState(null);
   const [addingMember,     setAddingMember]      = useState(false);
   const [memberSearch,     setMemberSearch]      = useState('');
   const [searchResults,    setSearchResults]     = useState([]);
   const [searchLoading,    setSearchLoading]     = useState(false);
   const [groupActionError, setGroupActionError]  = useState('');
   const [groupRemoving,    setGroupRemoving]     = useState(null);
-  const [adminToggling,    setAdminToggling]     = useState(null); // userId being promoted/demoted
-  const [groupActing,      setGroupActing]       = useState(false); // disable/enable/delete/hide in progress
+  const [adminToggling,    setAdminToggling]     = useState(null);
+  const [groupActing,      setGroupActing]       = useState(false);
+  // Edit message state
+  const [editingMessageId, setEditingMessageId] = useState(null);
+  const [editBody,         setEditBody]         = useState('');
+  const [editError,        setEditError]        = useState('');
+  const [editSaving,       setEditSaving]       = useState(false);
+  // Edit group name/description state
+  const [editingGroup,     setEditingGroup]     = useState(false);
+  const [editGroupName,    setEditGroupName]    = useState('');
+  const [editGroupDesc,    setEditGroupDesc]    = useState('');
+  const [editGroupError,   setEditGroupError]   = useState('');
+  const [editGroupSaving,  setEditGroupSaving]  = useState(false);
+  // Group name/description can be updated via socket GROUP_UPDATED
+  const [liveGroupName,    setLiveGroupName]    = useState(null);
+  const [liveGroupDesc,    setLiveGroupDesc]    = useState(null);
+
+  const composerRef  = useRef(null);
   const markedAllRef = useRef(null);
   const bottomRef    = useRef(null);
   const containerRef  = useRef(null);
   const messageNodesRef = useRef({}); // messageId -> DOM node
   const dividerComputedForRef = useRef(null); // conversationId we've already computed the divider for
   const descRef = useRef(null);
+  const initialScrollDoneRef = useRef(false); // has the initial scroll-to-divider/bottom run for this conversation?
 
   const registerMessageRef = (messageId, node) => {
     if (node) messageNodesRef.current[messageId] = node;
@@ -123,15 +147,13 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
     };
   }, [matchedGroup?.description, descExpanded]);
 
-  // Scroll to bottom on new messages
-  const firstLoadRef = useRef(true);
-
+  // ── Reset per conversation ────────────────────────────────────────────────
   useEffect(() => {
-    firstLoadRef.current = true;
     dividerComputedForRef.current = null;
     setDividerId(null);
     setShowNewPill(false);
     setNewPillCount(0);
+    initialScrollDoneRef.current = false;
   }, [conversation?.conversationId]);
 
   // Compute the "unread starts here" divider ONCE per conversation open, from
@@ -140,30 +162,47 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
   // thread was opened, and stays frozen for the rest of this viewing session
   // (it intentionally does not move as messages get marked read while you
   // scroll, and won't reappear until you close and reopen the thread fresh).
-  useEffect(() => {
+  // Declared as useLayoutEffect, and BEFORE the scroll effect below, so the
+  // divider position is known before we decide where to scroll.
+  useLayoutEffect(() => {
     const cid = conversation?.conversationId;
     if (!cid || loading || !messages.length) return;
     if (dividerComputedForRef.current === cid) return;
     dividerComputedForRef.current = cid;
 
     const firstUnread = messages.find(m =>
+      !m.isSystem &&
       String(m.senderId) !== String(currentUserId) &&
       !m.readReceipts?.some(r => String(r.userId) === String(currentUserId))
     );
     setDividerId(firstUnread ? firstUnread.messageId : null);
   }, [conversation?.conversationId, loading, messages, currentUserId]);
 
-  useEffect(() => {
-    if (firstLoadRef.current && messages.length > 0) {
-      // Use container.scrollTop instead of scrollIntoView — scrollIntoView
-      // scrolls the entire viewport which causes the jarring jump from top.
-      setTimeout(() => {
-        const c = containerRef.current;
-        if (c) c.scrollTop = c.scrollHeight;
-      }, 50);
-      firstLoadRef.current = false;
+  // ── Initial scroll: land on the unread divider if one exists, else bottom ──
+  // useLayoutEffect fires before browser paint, avoiding any visible jump.
+  // Waits for dividerId to be computed (or confirmed absent) before scrolling,
+  // so we don't scroll to bottom first and then jump up to the divider.
+  useLayoutEffect(() => {
+    if (initialScrollDoneRef.current || loading || !messages.length) return;
+    if (dividerComputedForRef.current !== conversation?.conversationId) return; // wait for divider calc
+    const c = containerRef.current;
+    if (!c) return;
+
+    if (dividerId) {
+      const node = messageNodesRef.current[dividerId];
+      if (node) {
+        // Scroll so the divider sits near the top of the visible area
+        c.scrollTop = node.offsetTop - 12;
+      } else {
+        c.scrollTop = c.scrollHeight;
+      }
+    } else {
+      c.scrollTop = c.scrollHeight;
     }
-  }, [messages.length]);
+    initialScrollDoneRef.current = true;
+  });
+
+
 
   useEffect(() => {
     if (!messages.length) return;
@@ -351,6 +390,78 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
     { closesView: true }
   );
 
+  const handleReply = (message) => {
+    setReplyingTo(message);
+    // Focus the composer editor after setting reply context
+    setTimeout(() => {
+      const editor = composerRef.current?.querySelector('[contenteditable]');
+      if (editor) editor.focus();
+    }, 0);
+  };
+
+  // Edit message handlers
+  const handleEditStart = (msg) => {
+    setEditingMessageId(msg.messageId);
+    // Strip HTML tags for the edit textarea
+    const tmp = document.createElement('div');
+    tmp.innerHTML = msg.bodyHtml || '';
+    setEditBody(tmp.textContent || '');
+    setEditError('');
+  };
+  const handleEditCancel = () => { setEditingMessageId(null); setEditBody(''); setEditError(''); };
+  const handleEditSave = async (messageId) => {
+    if (!editBody.trim()) { setEditError('Message cannot be empty.'); return; }
+    setEditSaving(true); setEditError('');
+    try {
+      await editMessage(messageId, `<p>${editBody.replace(/\n/g, '<br>')}</p>`);
+      setEditingMessageId(null); setEditBody('');
+    } catch (err) {
+      setEditError(err?.response?.data?.error || 'Edit failed. The edit window may have passed.');
+    } finally { setEditSaving(false); }
+  };
+
+  // Group name/description edit handlers
+  const handleGroupEditStart = () => {
+    setEditGroupName(liveGroupName || matchedGroup?.groupName || '');
+    setEditGroupDesc(liveGroupDesc !== null ? liveGroupDesc : (matchedGroup?.description || ''));
+    setEditGroupError('');
+    setEditingGroup(true);
+  };
+  const handleGroupEditCancel = () => { setEditingGroup(false); setEditGroupError(''); };
+  const handleGroupEditSave = async () => {
+    if (!editGroupName.trim()) { setEditGroupError('Group name is required.'); return; }
+    setEditGroupSaving(true); setEditGroupError('');
+    try {
+      await groupApi.update(matchedGroup.groupId, { groupName: editGroupName.trim(), description: editGroupDesc.trim() || null });
+      setLiveGroupName(editGroupName.trim());
+      setLiveGroupDesc(editGroupDesc.trim() || null);
+      setEditingGroup(false);
+    } catch (err) {
+      setEditGroupError(err?.response?.data?.error || 'Update failed.');
+    } finally { setEditGroupSaving(false); }
+  };
+
+  // GROUP_UPDATED socket listener — live header name/description updates.
+  // The actual change notice ("Group name changed from X to Y") arrives
+  // separately as a persisted system message via the normal NEW_MESSAGE
+  // socket event, which useThread() appends to `messages` automatically —
+  // so it shows inline in the chat history (and survives a refresh), rather
+  // than as a client-side-only toast that disappears.
+  useEffect(() => {
+    if (!socket || !conv.groupId) return;
+    socket.emit('join_group', { groupId: conv.groupId });
+    const onGroupUpdated = ({ groupId, groupName, description }) => {
+      if (String(groupId) !== String(conv.groupId)) return;
+      if (groupName)   setLiveGroupName(groupName);
+      if (description !== undefined) setLiveGroupDesc(description);
+    };
+    socket.on('GROUP_UPDATED', onGroupUpdated);
+    return () => {
+      socket.off('GROUP_UPDATED', onGroupUpdated);
+      socket.emit('leave_group', { groupId: conv.groupId });
+    };
+  }, [socket, conv.groupId]);
+
   const handleSend = async (payload) => {
     await sendReply(payload);
     setReplyingTo(null);
@@ -405,7 +516,7 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
        <div className="thread-header-info" style={{ flex: 1, minWidth: 0 }}>
           {/* Subject line */}
           <div className="thread-subject">
-            {isGroupThread ? (conv.groupName || conv.subject) : conv.subject}
+            {isGroupThread ? (liveGroupName || conv.groupName || conv.subject) : conv.subject}
           </div>
 
           {/* Meta row: type badge + participants/description */}
@@ -429,7 +540,7 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
             )}
 
             {/* Group description — expandable */}
-            {isGroupThread && matchedGroup?.description && (
+            {isGroupThread && (liveGroupDesc !== null ? liveGroupDesc : matchedGroup?.description) && (
               <span
                 onClick={() => {
                   if (isDescTruncated) setDescExpanded(v => !v);
@@ -453,7 +564,7 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
                     whiteSpace: descExpanded ? 'normal' : 'nowrap',
                   }}
                 >
-                  {matchedGroup.description}
+                  {liveGroupDesc !== null ? liveGroupDesc : matchedGroup?.description}
                 </span>
                 
                 {/* Only render if truncated, and color changed to grey (text-muted) */}
@@ -481,6 +592,21 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
             }}>
               {isGroupDisabled ? (isGroupThread ? 'Group Disabled' : 'Thread Disabled') : conv.allowReply ? 'Read only' : 'Broadcast'}
             </span>
+          )}
+
+          {/* Group edit button — admin only */}
+          {isGroupThread && isGroupAdmin && !isGroupDisabled && (
+            <button
+              className={`icon-btn ${editingGroup ? 'active' : ''}`}
+              title="Edit group name / description"
+              onClick={editingGroup ? handleGroupEditCancel : handleGroupEditStart}
+              style={{ width: 30, height: 30 }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+            </button>
           )}
 
           {/* Participants panel toggle — CC and group threads */}
@@ -569,6 +695,41 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
           )}
         </div>
       </div>
+
+      {/* ── Group edit panel ── */}
+      {isGroupThread && editingGroup && isGroupAdmin && (
+        <div style={{
+          padding: '12px 20px', borderBottom: '1px solid var(--divider)',
+          background: 'var(--charcoal)', flexShrink: 0,
+        }}>
+          <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.06em', display: 'block', marginBottom: 4 }}>Group Name</label>
+              <input
+                value={editGroupName}
+                onChange={e => setEditGroupName(e.target.value)}
+                style={{ width: '100%', padding: '6px 10px', borderRadius: 8, border: '1px solid var(--divider)', background: 'var(--mid)', color: 'var(--light)', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ flex: 2 }}>
+              <label style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.06em', display: 'block', marginBottom: 4 }}>Description <span style={{ textTransform: 'none', letterSpacing: 0 }}>(optional)</span></label>
+              <input
+                value={editGroupDesc}
+                onChange={e => setEditGroupDesc(e.target.value)}
+                placeholder="What is this group for?"
+                style={{ width: '100%', padding: '6px 10px', borderRadius: 8, border: '1px solid var(--divider)', background: 'var(--mid)', color: 'var(--light)', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+              />
+            </div>
+          </div>
+          {editGroupError && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 6 }}>{editGroupError}</div>}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button onClick={handleGroupEditCancel} style={{ padding: '5px 14px', borderRadius: 8, border: '1px solid var(--divider)', background: 'transparent', color: 'var(--muted)', cursor: 'pointer', fontSize: 12 }}>Cancel</button>
+            <button onClick={handleGroupEditSave} disabled={editGroupSaving} style={{ padding: '5px 14px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+              {editGroupSaving ? 'Saving…' : 'Save changes'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Participants panel (CC: removable by sender; group threads: view only) ── */}
       {showParticipants && (isCcThread || isGroupThread) && (
@@ -759,10 +920,19 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
                 isGroup={isGroup}
                 currentUserId={currentUserId}
                 isLastSentByMe={msg.messageId === lastSentByMeId}
-                onReply={canReply ? setReplyingTo : null}
+                onReply={canReply ? handleReply : null}
                 onJumpToParent={handleJumpToParent}
                 isHighlighted={msg.messageId === highlightedId}
                 registerRef={registerMessageRef}
+                isEditing={editingMessageId === msg.messageId}
+                editBody={editBody}
+                onEditBodyChange={setEditBody}
+                onEditStart={() => handleEditStart(msg)}
+                onEditCancel={handleEditCancel}
+                onEditSave={() => handleEditSave(msg.messageId)}
+                editSaving={editSaving}
+                editError={editingMessageId === msg.messageId ? editError : ''}
+                editDeadlineMinutes={editDeadlineMinutes}
               />
             </div>
           ))}
@@ -798,13 +968,15 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
             : 'This thread has been disabled by an admin — you can still read past messages, but no one can send new ones.'}
         </div>
       ) : (
-        <Composer
-          allowReply={canReply}
-          replyingTo={replyingTo}
-          onCancelReply={() => setReplyingTo(null)}
-          onSend={handleSend}
-          participants={mentionableParticipants}
-        />
+        <div ref={composerRef}>
+          <Composer
+            allowReply={canReply}
+            replyingTo={replyingTo}
+            onCancelReply={() => setReplyingTo(null)}
+            onSend={handleSend}
+            participants={mentionableParticipants}
+          />
+        </div>
       )}
     </>
   );

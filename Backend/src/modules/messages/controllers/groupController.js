@@ -224,9 +224,74 @@ async function createGroupConversation(req, res) {
   }
 }
 
+async function updateGroup(req, res) {
+  try {
+    const groupId = parseInt(req.params.groupId, 10);
+    if (Number.isNaN(groupId)) return res.status(400).json({ error: 'Invalid groupId' });
+    const { groupName, description } = req.body;
+    const result = await groupService.updateGroup(groupId, req.user.userId, { groupName, description });
+
+    const io = req.app.get('io');
+    if (io) {
+      // Live-update the group name/description shown in headers/lists
+      io.to(`group:${groupId}`).emit('GROUP_UPDATED', {
+        groupId,
+        groupName:   result.groupName,
+        description: result.description,
+        systemMessage: result.systemMessage,
+      });
+
+      // If a system message was persisted into the conversation, broadcast it
+      // the same way a normal NEW_MESSAGE is broadcast, so open chats append
+      // it inline immediately (WhatsApp-style) instead of waiting for a refetch.
+      if (result.insertedMessage) {
+        const convRoom = `conv:${result.insertedMessage.conversationId}`;
+        io.to(convRoom).emit('NEW_MESSAGE', {
+          conversationId: result.insertedMessage.conversationId,
+          messageId:      result.insertedMessage.messageId,
+          senderName:     null,
+          senderUserId:   null,
+          subject:        null,
+          groupId,
+          groupName:      result.groupName,
+          convType:       'group_thread',
+          bodyHtml:       result.insertedMessage.bodyHtml,
+          createdAt:      result.insertedMessage.sentAt,
+          isSystem:       true,
+          attachments:    [],
+          parentMessage:  null,
+          readReceipts:   [],
+        });
+        // Also notify the group's participants outside the open conv room
+        // (mirrors broadcastNewMessage's user:{id} fan-out) so inbox/group
+        // list previews update without a refresh.
+        const memberIds = await groupService.getMemberUserIdsForGroups([groupId]);
+        memberIds.forEach(uid => {
+          io.to(`user:${uid}`).except(convRoom).emit('NEW_MESSAGE', {
+            conversationId: result.insertedMessage.conversationId,
+            messageId:      result.insertedMessage.messageId,
+            senderName:     null,
+            senderUserId:   null,
+            groupId,
+            groupName:      result.groupName,
+            convType:       'group_thread',
+            bodyHtml:       result.insertedMessage.bodyHtml,
+            createdAt:      result.insertedMessage.sentAt,
+            isSystem:       true,
+          });
+        });
+      }
+    }
+    return res.json(result);
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
 module.exports = {
   list,
   create,
+  updateGroup,
   getMembers,
   addMembers,
   removeMember,

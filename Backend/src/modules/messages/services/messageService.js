@@ -1391,6 +1391,44 @@ async function hideDisabledThreadForUser(conversationId, userId) {
   return true;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Edit message (sender only, within MESSAGE_EDIT_DEADLINE_MINUTES)
+// ─────────────────────────────────────────────────────────────────────────────
+async function editMessage(messageId, userId, newBodyHtml) {
+  const deadlineMinutes = parseInt(process.env.MESSAGE_EDIT_DEADLINE_MINUTES || '10', 10);
+  const sanitized = sanitizeBodyHtml(newBodyHtml);
+
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('messageId', sql.Int,             messageId)
+    .input('userId',    sql.UniqueIdentifier, userId)
+    .input('bodyHtml',  sql.NVarChar,         sanitized)
+    .input('deadline',  sql.Int,              deadlineMinutes)
+    .query(`
+      UPDATE comm_messages
+      SET    body_html  = @bodyHtml,
+             is_edited  = 1,
+             edited_at  = SYSDATETIMEOFFSET()
+      OUTPUT INSERTED.message_id       AS messageId,
+             INSERTED.conversation_id  AS conversationId,
+             INSERTED.sender_id        AS senderId,
+             INSERTED.body_html        AS bodyHtml,
+             INSERTED.is_edited        AS isEdited,
+             INSERTED.edited_at        AS editedAt
+      WHERE  message_id = @messageId
+        AND  sender_id  = @userId
+        AND  is_deleted = 0
+        AND  DATEDIFF(MINUTE, sent_at, SYSDATETIMEOFFSET()) <= @deadline
+    `);
+
+  if (!result.recordset.length) {
+    const err = new Error('Cannot edit this message — either it is not yours, already deleted, or the edit window has passed.');
+    err.statusCode = 403;
+    throw err;
+  }
+  return result.recordset[0];
+}
+
 module.exports = {
   sanitizeBodyHtml, sendMessage, replyToConversation, removeParticipant,
   getInbox, getSent, getUnreadCount, getUnreadConversationIds,
@@ -1401,4 +1439,5 @@ module.exports = {
   isThreadAdminOrSuperAdmin, assertThreadAdmin,
   listAllThreadsForAdmin, disableThread, enableThread,
   deleteThreadForActor, hideDisabledThreadForUser,
+  editMessage,
 };

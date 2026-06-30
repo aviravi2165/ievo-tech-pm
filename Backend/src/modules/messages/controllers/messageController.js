@@ -141,6 +141,30 @@ async function markRead(req, res) {
   } catch (err) { return handleError(res, err); }
 }
 
+async function editMessage(req, res) {
+  try {
+    const messageId = parseInt(req.params.messageId, 10);
+    if (Number.isNaN(messageId)) return res.status(400).json({ error: 'Invalid messageId' });
+    const { bodyHtml } = req.body;
+    if (!bodyHtml?.trim()) return res.status(400).json({ error: 'bodyHtml is required' });
+    const result = await messageService.editMessage(messageId, req.user.userId, bodyHtml);
+    // Broadcast MESSAGE_EDITED to conv room
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`conv:${result.conversationId}`).emit('MESSAGE_EDITED', {
+        messageId:      result.messageId,
+        conversationId: result.conversationId,
+        bodyHtml:       result.bodyHtml,
+        isEdited:       true,
+        editedAt:       result.editedAt,
+      });
+    }
+    return res.json(result);
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
 async function remove(req, res) {
   try {
     const messageId = parseInt(req.params.messageId, 10);
@@ -200,6 +224,6 @@ module.exports = {
   search, send, getThread, reply, archive,
   removeParticipant,  // FIX: exported
   addParticipant,
-  markRead, remove,
+  markRead, remove, editMessage,
   listThreadsForAdmin, disableThread, enableThread, deleteThread, hideThread,
 };
