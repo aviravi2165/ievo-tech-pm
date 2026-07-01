@@ -697,7 +697,17 @@ async function getInbox(userId, page = 1, limit = 30) {
           WHERE um.conversation_id = c.conversation_id
             AND um.is_deleted = 0
             AND um.sent_at > COALESCE(p.joined_at, '1753-01-01')
-            AND um.sent_at <= COALESCE(p.left_at, '9999-12-31')
+            -- For active members (is_deleted=0) never cap at left_at — it may be
+            -- a stale timestamp from a prior removal cycle. Removed members are
+            -- excluded by the outer JOIN (p.is_deleted = 0), so this branch only
+            -- ever runs for currently-active participants.
+            -- Gap exclusion: if the member was re-added after a prior removal,
+            -- skip messages that fell inside that gap (left_at..rejoined_at).
+            AND (
+              p.left_at IS NULL OR p.rejoined_at IS NULL
+              OR um.sent_at <= p.left_at
+              OR um.sent_at > p.rejoined_at
+            )
             AND um.sender_id <> @userId
             AND NOT EXISTS (
               SELECT 1 FROM comm_read_receipts rr
@@ -713,7 +723,12 @@ async function getInbox(userId, page = 1, limit = 30) {
         FROM comm_messages
         WHERE conversation_id = c.conversation_id AND is_deleted = 0
           AND sent_at > COALESCE(p.joined_at, '1753-01-01')
-          AND sent_at <= COALESCE(p.left_at, '9999-12-31')
+          -- Same gap exclusion for the preview snippet
+          AND (
+            p.left_at IS NULL OR p.rejoined_at IS NULL
+            OR sent_at <= p.left_at
+            OR sent_at > p.rejoined_at
+          )
         ORDER BY sent_at DESC
       ) lm
       LEFT JOIN auth_users su ON su.user_id = lm.sender_id
@@ -804,7 +819,13 @@ async function getUnreadCount(userId) {
         ON c.conversation_id = m.conversation_id AND c.is_deleted = 0
       WHERE m.is_deleted = 0 AND m.sender_id <> @userId
         AND m.sent_at > COALESCE(p.joined_at, '1753-01-01')
-        AND m.sent_at <= COALESCE(p.left_at, '9999-12-31')
+        -- Active members (is_deleted=0): never cap at left_at (stale from prior
+        -- removal cycle). Gap exclusion: skip messages in [left_at, rejoined_at].
+        AND (
+          p.left_at IS NULL OR p.rejoined_at IS NULL
+          OR m.sent_at <= p.left_at
+          OR m.sent_at > p.rejoined_at
+        )
         AND NOT EXISTS (
           SELECT 1 FROM comm_read_receipts rr
           WHERE rr.message_id = m.message_id AND rr.user_id = @userId
@@ -827,7 +848,11 @@ async function getUnreadConversationIds(userId) {
         ON c.conversation_id = m.conversation_id AND c.is_deleted = 0
       WHERE m.is_deleted = 0 AND m.sender_id <> @userId
         AND m.sent_at > COALESCE(p.joined_at, '1753-01-01')
-        AND m.sent_at <= COALESCE(p.left_at, '9999-12-31')
+        AND (
+          p.left_at IS NULL OR p.rejoined_at IS NULL
+          OR m.sent_at <= p.left_at
+          OR m.sent_at > p.rejoined_at
+        )
         AND NOT EXISTS (
           SELECT 1 FROM comm_read_receipts rr
           WHERE rr.message_id = m.message_id AND rr.user_id = @userId
@@ -857,7 +882,11 @@ async function searchMessages(userId, query) {
       LEFT JOIN comm_messages m
         ON m.conversation_id = c.conversation_id AND m.is_deleted = 0
         AND m.sent_at > COALESCE(p.joined_at, '1753-01-01')
-        AND m.sent_at <= COALESCE(p.left_at, '9999-12-31')
+        AND (
+          p.left_at IS NULL OR p.rejoined_at IS NULL
+          OR m.sent_at <= p.left_at
+          OR m.sent_at > p.rejoined_at
+        )
       WHERE c.is_deleted = 0 AND (c.subject LIKE @search OR m.body_html LIKE @search)
       ORDER BY c.last_message_at DESC
       OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY
