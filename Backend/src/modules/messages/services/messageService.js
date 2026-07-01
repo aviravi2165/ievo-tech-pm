@@ -49,66 +49,6 @@ function mapThreadMessage(row) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Schema guard — ensures archived_at / left_at / rejoined_at columns exist on
-// first use. Uses batch() because ALTER TABLE cannot run in a parameterised
-// request.
-// ─────────────────────────────────────────────────────────────────────────────
-
-let _archiveColReady;
-
-async function ensureParticipantArchiveColumn() {
-  if (!_archiveColReady) {
-    _archiveColReady = (async () => {
-      const pool = await getPool();
-      await pool.request().batch(`
-        -- Remove the old archive columns — the archive feature was removed
-        -- from the frontend UI; these are now dead weight and were causing
-        -- confusion by sharing a name with the unrelated group/thread
-        -- disable feature.
-        IF EXISTS (
-          SELECT 1 FROM sys.columns
-          WHERE object_id = OBJECT_ID('comm_participants') AND name = 'archived_at'
-        )
-          ALTER TABLE comm_participants DROP COLUMN archived_at;
-
-        IF EXISTS (
-          SELECT 1 FROM sys.columns
-          WHERE object_id = OBJECT_ID('comm_participants') AND name = 'is_archived'
-        )
-          ALTER TABLE comm_participants DROP COLUMN is_archived;
-
-        -- Ensure the columns that ARE needed exist.
-        IF NOT EXISTS (
-          SELECT 1 FROM sys.columns
-          WHERE object_id = OBJECT_ID('comm_participants') AND name = 'left_at'
-        )
-          ALTER TABLE comm_participants ADD left_at DATETIMEOFFSET;
-
-        IF NOT EXISTS (
-          SELECT 1 FROM sys.columns
-          WHERE object_id = OBJECT_ID('comm_participants') AND name = 'joined_at'
-        )
-          ALTER TABLE comm_participants ADD joined_at DATETIMEOFFSET;
-
-        IF NOT EXISTS (
-          SELECT 1 FROM sys.columns
-          WHERE object_id = OBJECT_ID('comm_participants') AND name = 'rejoined_at'
-        )
-          ALTER TABLE comm_participants ADD rejoined_at DATETIMEOFFSET;
-      `);
-    })().catch(err => {
-      // FIX Bug 7: if the ALTER TABLE fails (e.g. permissions error on
-      // first run), reset the singleton so the next call retries instead
-      // of permanently returning the same rejected promise forever. Without
-      // this reset, every subsequent call to any function that calls
-      // ensureParticipantArchiveColumn() throws the original error even
-      // if the column was manually added in the interim.
-      _archiveColReady = null;
-      throw err;
-    });
-  }
-  await _archiveColReady;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Access guards
@@ -299,8 +239,6 @@ async function addParticipants(reqFn, conversationId, userIds, participantType =
         ON (target.conversation_id = source.conversation_id AND target.user_id = source.user_id)
         WHEN MATCHED THEN UPDATE SET
           is_deleted       = 0,
-          is_archived      = 0,
-          archived_at      = CASE WHEN target.is_deleted = 1 THEN NULL ELSE target.archived_at END,
           participant_type = source.participant_type,
           -- Re-adding someone who was previously removed (target.is_deleted
           -- = 1): deliberately do NOT touch left_at — it's preserved as the
@@ -354,7 +292,6 @@ async function linkAttachmentsToMessage(reqFn, messageId, attachmentIds, uploade
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function sendMessage(senderUserId, payload) {
-  await ensureParticipantArchiveColumn();
 
   const {
     recipientIds         = [],
@@ -533,7 +470,6 @@ async function sendMessage(senderUserId, payload) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function removeParticipant(conversationId, targetUserId, actorUserId) {
-  await ensureParticipantArchiveColumn();
   const pool = await getPool();
   const res  = await pool.request()
     .input('convId', sql.Int, conversationId)
@@ -566,7 +502,6 @@ async function removeParticipant(conversationId, targetUserId, actorUserId) {
 }
 
 async function addParticipant(conversationId, userIds, actorUserId, actorUserType) {
-  await ensureParticipantArchiveColumn();
   const pool = await getPool();
   const res  = await pool.request()
     .input('convId', sql.Int, conversationId)
@@ -625,7 +560,6 @@ async function addParticipant(conversationId, userIds, actorUserId, actorUserTyp
 async function replyToConversation(conversationId, senderUserId, payload) {
   const { bodyHtml, attachmentIds = [], parentMessageId = null } = payload;
   await assertConversationParticipant(conversationId, senderUserId);
-  await ensureParticipantArchiveColumn();
 
   const pool = await getPool();
   const convRes = await pool.request()
@@ -722,7 +656,6 @@ async function replyToConversation(conversationId, senderUserId, payload) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function getInbox(userId, page = 1, limit = 30) {
-  await ensureParticipantArchiveColumn();
   const pool   = await getPool();
   const offset = (Math.max(page, 1) - 1) * limit;
 
@@ -858,7 +791,6 @@ async function getSent(userId, page = 1, limit = 30) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function getUnreadCount(userId) {
-  await ensureParticipantArchiveColumn();
   const pool = await getPool();
   const result = await pool.request()
     .input('userId', sql.UniqueIdentifier, userId)
@@ -882,7 +814,6 @@ async function getUnreadCount(userId) {
 }
 
 async function getUnreadConversationIds(userId) {
-  await ensureParticipantArchiveColumn();
   const pool = await getPool();
   const result = await pool.request()
     .input('userId', sql.UniqueIdentifier, userId)
@@ -910,7 +841,6 @@ async function getUnreadConversationIds(userId) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function searchMessages(userId, query) {
-  await ensureParticipantArchiveColumn();
   const pool = await getPool();
   const result = await pool.request()
     .input('userId', sql.UniqueIdentifier, userId)
@@ -941,7 +871,6 @@ async function searchMessages(userId, query) {
 
 async function getThread(conversationId, userId) {
   await assertConversationParticipant(conversationId, userId);
-  await ensureParticipantArchiveColumn();
 
   const pool = await getPool();
 
@@ -1472,6 +1401,5 @@ module.exports = {
   isThreadAdminOrSuperAdmin, assertThreadAdmin,
   listAllThreadsForAdmin, disableThread, enableThread,
   deleteThreadForActor, hideDisabledThreadForUser,
-  editMessage,
-  ensureParticipantArchiveColumn,
+  editMessage
 };
