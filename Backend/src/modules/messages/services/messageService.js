@@ -49,8 +49,9 @@ function mapThreadMessage(row) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Schema guard — ensures archived_at / left_at columns exist on first use.
-// Uses batch() because ALTER TABLE cannot run in a parameterised request.
+// Schema guard — ensures archived_at / left_at / rejoined_at columns exist on
+// first use. Uses batch() because ALTER TABLE cannot run in a parameterised
+// request.
 // ─────────────────────────────────────────────────────────────────────────────
 
 let _archiveColReady;
@@ -71,6 +72,12 @@ async function ensureParticipantArchiveColumn() {
           WHERE object_id = OBJECT_ID('comm_participants') AND name = 'left_at'
         )
           ALTER TABLE comm_participants ADD left_at DATETIMEOFFSET;
+
+        IF NOT EXISTS (
+          SELECT 1 FROM sys.columns
+          WHERE object_id = OBJECT_ID('comm_participants') AND name = 'rejoined_at'
+        )
+          ALTER TABLE comm_participants ADD rejoined_at DATETIMEOFFSET;
       `);
     })().catch(err => {
       // FIX Bug 7: if the ALTER TABLE fails (e.g. permissions error on
@@ -277,10 +284,20 @@ async function addParticipants(reqFn, conversationId, userIds, participantType =
           is_deleted       = 0,
           is_archived      = 0,
           archived_at      = CASE WHEN target.is_deleted = 1 THEN NULL ELSE target.archived_at END,
-          left_at          = NULL,
-          participant_type = source.participant_type
-        WHEN NOT MATCHED THEN INSERT (conversation_id, user_id, participant_type)
-          VALUES (source.conversation_id, source.user_id, source.participant_type);
+          participant_type = source.participant_type,
+          -- Re-adding someone who was previously removed (target.is_deleted
+          -- = 1): deliberately do NOT touch left_at — it's preserved as the
+          -- boundary marking the end of their ORIGINAL window (everything
+          -- they could see before they were removed). rejoined_at is
+          -- stamped as the start of their NEW window (everything from now
+          -- on). getThread() then shows messages from either window while
+          -- excluding the gap between left_at and rejoined_at — i.e. the
+          -- time they were actually removed. joined_at is left untouched
+          -- here on purpose: it's the absolute original join time and
+          -- should never change again after the very first insert.
+          rejoined_at      = CASE WHEN target.is_deleted = 1 THEN SYSDATETIMEOFFSET() ELSE target.rejoined_at END
+        WHEN NOT MATCHED THEN INSERT (conversation_id, user_id, participant_type, joined_at)
+          VALUES (source.conversation_id, source.user_id, source.participant_type, SYSDATETIMEOFFSET());
       `);
   }
 }
@@ -499,6 +516,7 @@ async function sendMessage(senderUserId, payload) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function removeParticipant(conversationId, targetUserId, actorUserId) {
+  await ensureParticipantArchiveColumn();
   const pool = await getPool();
   const res  = await pool.request()
     .input('convId', sql.Int, conversationId)
@@ -521,11 +539,17 @@ async function removeParticipant(conversationId, targetUserId, actorUserId) {
   await pool.request()
     .input('convId',       sql.Int,              conversationId)
     .input('targetUserId', sql.UniqueIdentifier, targetUserId)
-    .query(`UPDATE comm_participants SET is_deleted = 1 WHERE conversation_id = @convId AND user_id = @targetUserId`);
+    .query(`
+      UPDATE comm_participants
+      SET is_deleted = 1,
+          left_at    = COALESCE(left_at, SYSDATETIMEOFFSET())
+      WHERE conversation_id = @convId AND user_id = @targetUserId
+    `);
   return true;
 }
 
 async function addParticipant(conversationId, userIds, actorUserId, actorUserType) {
+  await ensureParticipantArchiveColumn();
   const pool = await getPool();
   const res  = await pool.request()
     .input('convId', sql.Int, conversationId)
@@ -939,6 +963,14 @@ async function getThread(conversationId, userId) {
   // populated correctly by addMembers/removeMember), but for group threads
   // enrich each row with the isAdmin/isCoAdmin/isCreator flags from the
   // group member table so the UI can show admin badges correctly.
+  //
+  // NOTE: the "currently active" check is is_deleted = 0 alone — NOT also
+  // left_at IS NULL. left_at is intentionally preserved (not cleared) when
+  // someone is re-added after being removed, since it marks the end of
+  // their original viewing window for getThread()'s gap-exclusion logic
+  // (see addParticipants() / the message-visibility query below). A
+  // currently-active re-added member would incorrectly disappear from this
+  // list if left_at IS NULL were still required here.
   let partRes;
   if (convRow.convType === 'group_thread') {
     partRes = await pool.request()
@@ -961,7 +993,6 @@ async function getThread(conversationId, userId) {
         LEFT JOIN comm_group_members gm ON gm.group_id = @groupId AND gm.user_id = p.user_id
         WHERE p.conversation_id = @convId
           AND p.is_deleted = 0
-          AND p.left_at IS NULL
         ORDER BY u.first_name, u.last_name
       `);
   } else {
@@ -981,9 +1012,9 @@ async function getThread(conversationId, userId) {
     .input('convId', sql.Int,              conversationId)
     .input('userId', sql.UniqueIdentifier, userId)
     .query(`
-      SELECT archived_at AS archivedAt, left_at AS leftAt
+      SELECT archived_at AS archivedAt, left_at AS leftAt, joined_at AS joinedAt, rejoined_at AS rejoinedAt
       FROM comm_participants
-      WHERE conversation_id = @convId AND user_id = @userId AND is_deleted = 0
+      WHERE conversation_id = @convId AND user_id = @userId
     `);
 
   // ── Super-admin governance path ──────────────────────────────────────────
@@ -1046,6 +1077,8 @@ async function getThread(conversationId, userId) {
 
   const archivedAt = curPartRes.recordset[0]?.archivedAt || null;
   const leftAt     = curPartRes.recordset[0]?.leftAt     || null;
+  const joinedAt   = curPartRes.recordset[0]?.joinedAt   || null;
+  const rejoinedAt = curPartRes.recordset[0]?.rejoinedAt || null;
 
   // FIX Bug 8: passing null as sql.DateTimeOffset parameter and then
   // COALESCE-ing with a varchar literal '1753-01-01' triggers implicit
@@ -1054,11 +1087,33 @@ async function getThread(conversationId, userId) {
   // proper typed parameters to avoid any implicit cast warnings.
   const archivedBound = archivedAt  || new Date('1753-01-01T00:00:00Z');
 
+  // A participant added mid-conversation (via the "add participant"/"add
+  // member" flow) should only ever see messages sent after they joined —
+  // never the conversation's prior history. joined_at defaults to the row's
+  // creation time, so founding participants (who joined before the first
+  // message existed) are unaffected; this only actually excludes anything
+  // for someone added later. Take whichever bound is more recent: if they
+  // later archived-then-unarchived AFTER joining, that more recent archive
+  // timestamp should win; otherwise joined_at is the real floor.
+  const visibilityFloor = joinedAt && joinedAt > archivedBound ? joinedAt : archivedBound;
+
+  // Gap window: if this participant was removed and later re-added, left_at
+  // marks the end of their ORIGINAL window and rejoined_at marks the start
+  // of their NEW one — the time in between (while they were actually
+  // removed) should stay hidden. The SQL below expresses this as:
+  //   sent_at > visibilityFloor
+  //   AND (left_at IS NULL OR sent_at <= left_at OR sent_at > rejoinedAt)
+  // i.e. normal participants (left_at NULL) just use the floor as usual;
+  // a removed-and-since-re-added participant additionally sees everything
+  // up to their original left_at, OR anything after they came back —
+  // with the gap between those two points excluded.
+
 
   const msgRes = await pool.request()
     .input('convId',       sql.Int,            conversationId)
-    .input('archivedAt',   sql.DateTimeOffset,  archivedBound)
+    .input('visibleFrom',  sql.DateTimeOffset,  visibilityFloor)
   .input('leftAt', sql.DateTimeOffset, leftAt)
+  .input('rejoinedAt', sql.DateTimeOffset, rejoinedAt)
     .query(`
       SELECT
         m.message_id,
@@ -1096,10 +1151,11 @@ async function getThread(conversationId, userId) {
       LEFT JOIN auth_users  pu ON pu.user_id = pm.sender_id
       WHERE m.conversation_id = @convId
         AND m.is_deleted = 0
-        AND m.sent_at > @archivedAt
+        AND m.sent_at > @visibleFrom
         AND (
       @leftAt IS NULL
       OR m.sent_at <= @leftAt
+      OR m.sent_at > @rejoinedAt
     )
       ORDER BY m.sent_at ASC
     `);
@@ -1442,4 +1498,5 @@ module.exports = {
   listAllThreadsForAdmin, disableThread, enableThread,
   deleteThreadForActor, hideDisabledThreadForUser,
   editMessage,
+  ensureParticipantArchiveColumn,
 };

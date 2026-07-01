@@ -1,6 +1,7 @@
 'use strict';
 
 const { getPool, withTransaction, sql } = require('../../../config/db');
+const { ensureParticipantArchiveColumn } = require('./messageService');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Guards
@@ -271,6 +272,7 @@ async function getMemberUserIdsForGroups(groupIds = []) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function addMembers(groupId, actorUserId, userIds) {
+  await ensureParticipantArchiveColumn();
   await assertGroupAdmin(groupId, actorUserId);
 
   const pool = await getPool();
@@ -327,10 +329,16 @@ async function addMembers(groupId, actorUserId, userIds) {
             is_deleted       = 0,
             is_archived      = 0,
             archived_at      = NULL,
-            left_at          = NULL,
-            participant_type = 'to'
-          WHEN NOT MATCHED THEN INSERT (conversation_id, user_id, participant_type)
-            VALUES (source.conversation_id, source.user_id, source.participant_type);
+            participant_type = 'to',
+            -- See messageService.addParticipants() for the full rationale.
+            -- left_at is deliberately left untouched here (preserved as the
+            -- end of their original pre-removal window); rejoined_at is
+            -- stamped only on a genuine re-add (target.is_deleted = 1).
+            -- joined_at (the absolute original join time) is never touched
+            -- after its initial insert.
+            rejoined_at      = CASE WHEN target.is_deleted = 1 THEN SYSDATETIMEOFFSET() ELSE target.rejoined_at END
+          WHEN NOT MATCHED THEN INSERT (conversation_id, user_id, participant_type, joined_at)
+            VALUES (source.conversation_id, source.user_id, source.participant_type, SYSDATETIMEOFFSET());
         `);
 
       // Un-hide group for re-added member
@@ -356,6 +364,7 @@ async function addMembers(groupId, actorUserId, userIds) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function removeMember(groupId, actorUserId, memberUserId) {
+  await ensureParticipantArchiveColumn();
   await assertGroupAdmin(groupId, actorUserId);
 
   const pool = await getPool();
