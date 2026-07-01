@@ -374,15 +374,24 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
   };
 
   const handleAddMember = async (user) => {
-    if (!matchedGroup) return;
     setGroupActionError('');
     try {
-      await groupApi.addMembers(matchedGroup.groupId, [user.userId]);
+      // Group threads: add via the group's member list (propagates to
+      // every conversation tied to that group). CC threads: add directly
+      // to this single conversation's participant list.
+      if (isGroupThread) {
+        if (!matchedGroup) return;
+        await groupApi.addMembers(matchedGroup.groupId, [user.userId]);
+      } else if (isCcThread) {
+        await messageApi.addParticipants(conv.conversationId, [user.userId]);
+      } else {
+        return;
+      }
       await refetch();
       toast?.(`${user.firstName || ''} ${user.lastName || ''} added`.trim(), 'success');
       setMemberSearch(''); setSearchResults([]);
     } catch (err) {
-      setGroupActionError(err?.response?.data?.error || 'Failed to add member.');
+      setGroupActionError(err?.response?.data?.error || 'Failed to add participant.');
     }
   };
 
@@ -812,6 +821,18 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
             textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 8, fontWeight: 600,
           }}>
             Participants ({conv.participants.length})
+            {isCcThread && isSender && !isGroupDisabled && (
+              <button
+                onClick={() => { setAddingMember(v => !v); setMemberSearch(''); setSearchResults([]); }}
+                style={{
+                  marginLeft: 10, background: 'var(--mid)', border: '1px solid var(--divider)',
+                  borderRadius: 12, padding: '2px 10px', fontSize: 11, color: 'var(--gold)',
+                  cursor: 'pointer', fontWeight: 600,
+                }}
+              >
+                + Add participant
+              </button>
+            )}
             {isCcThread && isSender && (
               <span style={{ marginLeft: 6, color: 'var(--muted)', fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 11 }}>
                 · You can remove others
@@ -838,8 +859,8 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
           {(removeError || groupActionError) && (
             <div style={{ color: 'var(--danger)', fontSize: 11, marginBottom: 6 }}>{removeError || groupActionError}</div>
           )}
-          {/* Inline add member — group admin only */}
-          {isGroupThread && isGroupAdmin && addingMember && (
+          {/* Inline add member/participant — group admin or CC thread creator */}
+          {((isGroupThread && isGroupAdmin) || (isCcThread && isSender)) && addingMember && (
             <div style={{ marginBottom: 10 }}>
               <input
                 autoFocus
