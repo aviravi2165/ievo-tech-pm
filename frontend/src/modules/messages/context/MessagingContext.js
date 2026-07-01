@@ -134,15 +134,6 @@ export function MessagingProvider({ children }) {
     clearUnreadDot(conversationId);
   }, [clearUnreadDot]);
 
-  // ── archiveConversation ────────────────────────────────────────────────────
-  const archiveConversation = useCallback(async (conversationId) => {
-    await messageApi.archive(conversationId);
-    setConversations(prev => prev.filter(c => c.conversationId !== conversationId));
-    setGroupConversations(prev => prev.filter(c => c.conversationId !== conversationId));
-    knownInboxIdsRef.current.delete(conversationId);
-    knownGroupIdsRef.current.delete(conversationId);
-  }, []);
-
   // ── Socket: NEW_MESSAGE ────────────────────────────────────────────────────
   useEffect(() => {
     if (!socket) return;
@@ -230,7 +221,7 @@ export function MessagingProvider({ children }) {
     groups, groupsLoading, createGroup, disableGroup, enableGroup, deleteGroup, hideGroup, refetchGroups,
     unreadCount, inboxUnreadCount, groupUnreadCount, decrement,
     conversations, groupConversations, groupConvsLoading,
-    inboxLoading, inboxError, fetchInbox, clearUnreadDot, archiveConversation,
+    inboxLoading, inboxError, fetchInbox, clearUnreadDot,
     activeConversationId, setActiveConversationId, activeConvIdRef,
   };
 

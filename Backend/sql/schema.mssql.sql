@@ -1,5 +1,3 @@
--- Schema is provided separately as schema.mssql.sql
--- Run the MSSQL schema script you already have against your SQL Server instance.
 -- [ievo-tech-pm].dbo.dept_master definition
 
 -- Drop table
@@ -40,6 +38,7 @@ CREATE TABLE [ievo-tech-pm].dbo.auth_users (
 	employee_code varchar(50) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
 	is_active bit DEFAULT 1 NOT NULL,
 	must_change_password bit DEFAULT 0 NOT NULL,
+	required_email_notification bit DEFAULT 1 NOT NULL,
 	created_at datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
 	modified_at datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
 	CONSTRAINT PK__auth_use__B9BE370F707337F1 PRIMARY KEY (user_id),
@@ -149,13 +148,13 @@ CREATE TABLE [ievo-tech-pm].dbo.comm_messages (
 	is_edited BIT NOT NULL DEFAULT 0,
 	edited_at datetimeoffset NULL,
 	is_system BIT NOT NULL DEFAULT 0,
-	sender_id uniqueidentifier NULL,
 	CONSTRAINT PK__comm_mes__0BBF6EE68D1986E9 PRIMARY KEY (message_id),
 	CONSTRAINT FK__comm_mess__conve__04E4BC85 FOREIGN KEY (conversation_id) REFERENCES [ievo-tech-pm].dbo.comm_conversations(conversation_id),
 	CONSTRAINT FK__comm_mess__paren__06CD04F7 FOREIGN KEY (parent_message_id) REFERENCES [ievo-tech-pm].dbo.comm_messages(message_id),
 	CONSTRAINT FK__comm_mess__sende__05D8E0BE FOREIGN KEY (sender_id) REFERENCES [ievo-tech-pm].dbo.auth_users(user_id)
 );
 
+ 
 
 -- [ievo-tech-pm].dbo.comm_participants definition
 
@@ -168,11 +167,10 @@ CREATE TABLE [ievo-tech-pm].dbo.comm_participants (
 	conversation_id int NOT NULL,
 	user_id uniqueidentifier NOT NULL,
 	participant_type varchar(10) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT 'to' NOT NULL,
-	is_archived bit DEFAULT 0 NOT NULL,
 	is_deleted bit DEFAULT 0 NOT NULL,
 	joined_at datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
-	archived_at datetimeoffset NULL,
-	left_at datetimeoffset NULL,
+	left_at DATETIMEOFFSET NULL,
+	rejoined_at DATETIMEOFFSET NULL,
 	CONSTRAINT PK__comm_par__4E0378061F7A913F PRIMARY KEY (participant_id),
 	CONSTRAINT UQ_comm_participants UNIQUE (conversation_id,user_id),
 	CONSTRAINT FK_comm_participants_conv FOREIGN KEY (conversation_id) REFERENCES [ievo-tech-pm].dbo.comm_conversations(conversation_id),
@@ -234,6 +232,131 @@ CREATE TABLE [ievo-tech-pm].dbo.comm_conversation_hidden (
 	CONSTRAINT FK__comm_conv__conve__151B244E FOREIGN KEY (conversation_id) REFERENCES [ievo-tech-pm].dbo.comm_conversations(conversation_id) ON DELETE CASCADE,
 	CONSTRAINT FK__comm_conv__user___160F4887 FOREIGN KEY (user_id) REFERENCES [ievo-tech-pm].dbo.auth_users(user_id) ON DELETE CASCADE
 );
+
+
+-- Seed departments
+INSERT INTO [ievo-tech-pm].dbo.dept_master (dept_name, dept_code)
+SELECT v.dept_name, v.dept_code
+FROM (
+    VALUES 
+    ('ADMINISTRATION', 'ADMN'),
+    ('BDC', 'BDC'),
+    ('BOX PLANT', 'BOX'),
+    ('CIVIL', 'CIV'),
+    ('CNC', 'CNC'),
+    ('CONSULTANT', 'CONS'),
+    ('COST & ESTIMATION', 'C&E'),
+    ('DESIGN', 'DES'),
+    ('DISPATCH', 'DIS'),
+    ('ERP', 'ERP'),
+    ('F&B', 'F&B'),
+    ('FACILITY_L', 'FACL'),
+    ('FINANCE', 'FNC'),
+    ('FIRE & SAFETY', 'F&S'),
+    ('Founders Office', 'FND'),
+    ('GLASS', 'GLS'),
+    ('HABUFA', 'HAB'),
+    ('HOUSEKEEPING', 'HSKP'),
+    ('IN HOUSE MAINTENANCE', 'IHM'),
+    ('INSTALLATION', 'INST'),
+    ('IT', 'IT'),
+    ('LED', 'LED'),
+    ('MAINTENANCE', 'MNT'),
+    ('MAINTENANCE_HVAC', 'HVAC'),
+    ('MANAGEMENT', 'MGT'),
+    ('METAL', 'MET'),
+    ('MMT', 'MMT'),
+    ('OEM', 'OEM'),
+    ('OUTDOOR FURNITURE', 'ODF'),
+    ('OUTDOOR PROTO TYPE', 'ODPT'),
+    ('PACKAGING', 'PKG'),
+    ('PANEL WORKS', 'PW'),
+    ('PANEL WORKS ASSEMBLY', 'PWA'),
+    ('PANEL WORKS SURFACE FINISH', 'PWSF'),
+    ('PCD', 'PCD'),
+    ('PEOPLE OPERATIONS', 'POPS'),
+    ('PMC', 'PMC'),
+    ('PRINTING', 'PRT'),
+    ('PROCESS IMPROVEMENT & DEVELOPMENT', 'PID'),
+    ('PRODUCTION', 'PROD'),
+    ('PROTO-TYPE', 'PT'),
+    ('QC', 'QC'),
+    ('SKILL DEVELOPMENT', 'SKILL'),
+    ('SMC', 'SMC'),
+    ('SOLID WOOD ASSEMBLY', 'SWA'),
+    ('SOLID WOOD MACHINING', 'SWM'),
+    ('SOLID WOOD SURFACE FINISH', 'SWSF'),
+    ('STONE', 'STN'),
+    ('SU', 'SU'),
+    ('SUNDAY WAREHOUSE', 'SWH'),
+    ('UPHOLSTERY', 'UPH')
+) AS v(dept_name, dept_code)
+WHERE NOT EXISTS (
+    SELECT 1 
+    FROM [ievo-tech-pm].dbo.dept_master d 
+    WHERE d.dept_name = v.dept_name
+);
+
+SELECT * FROM [ievo-tech-pm].dbo.dept_master;
+
+-- Test / seed users
+INSERT INTO [ievo-tech-pm].dbo.auth_users 
+(username, password_hash, first_name, last_name, email, user_type, is_active, allow_login, must_change_password)
+SELECT 
+    v.username, v.password_hash, v.first_name, v.last_name, v.email, v.user_type, v.is_active, v.allow_login, v.must_change_password
+FROM (
+    VALUES 
+    ('admin',    '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Admin',  'User', 'admin@ievo.in', 'admin',    1, 1, 0),
+    ('testuser', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Test',   'User', 'test@ievo.in',  'employee', 1, 1, 0),
+    ('md',       '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Senior', 'MD',   'md@ievo.in',    'viewer',   1, 1, 0)
+) AS v(username, password_hash, first_name, last_name, email, user_type, is_active, allow_login, must_change_password)
+WHERE NOT EXISTS (
+    SELECT 1 
+    FROM [ievo-tech-pm].dbo.auth_users u 
+    WHERE u.username = v.username
+);
+SELECT * FROM [ievo-tech-pm].dbo.auth_users;
+
+
+
+
+INSERT INTO [ievo-tech-pm].dbo.auth_users 
+(username, password_hash, first_name, last_name, email, user_type, is_active, allow_login, must_change_password)
+SELECT 
+    v.username, v.password_hash, v.first_name, v.last_name, v.email, v.user_type, v.is_active, v.allow_login, v.must_change_password
+FROM (
+    VALUES 
+    ('Yash_Suthar', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Yash', 'Suthar', 'yash.suthar@ievo.co.in', 'employee', 1, 1, 0),
+    ('Ali_Atif', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Ali', 'Atif', 'ali.atif@ievo.co.in', 'employee', 1, 1, 0),
+    ('Jatin_K', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Jatin', 'K', 'jatin.kumawat105204@gmail.com', 'employee', 1, 1, 0),
+    ('Ravi_Asari', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Ravi', 'Asari', 'ravi.asari@ievo.co.in', 'employee', 1, 1, 1)
+) AS v(username, password_hash, first_name, last_name, email, user_type, is_active, allow_login, must_change_password)
+WHERE NOT EXISTS (
+    SELECT 1 
+    FROM [ievo-tech-pm].dbo.auth_users u 
+    WHERE u.username = v.username
+);
+
+INSERT INTO [ievo-tech-pm].dbo.auth_users 
+(username, password_hash, first_name, last_name, email, user_type, is_active, allow_login, must_change_password)
+SELECT 
+    v.username, v.password_hash, v.first_name, v.last_name, v.email, v.user_type, v.is_active, v.allow_login, v.must_change_password
+FROM (
+    VALUES 
+    ('Testuser2', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Test', 'User2', 'testuser2@gmail.com', 'employee', 1, 1, 1)
+) AS v(username, password_hash, first_name, last_name, email, user_type, is_active, allow_login, must_change_password)
+WHERE NOT EXISTS (
+    SELECT 1 
+    FROM [ievo-tech-pm].dbo.auth_users u 
+    WHERE u.username = v.username
+);
+
+
+SELECT p.user_id, u.username, p.participant_type, p.is_deleted
+FROM comm_participants p
+INNER JOIN auth_users u ON u.user_id = p.user_id
+WHERE p.conversation_id = <that_id>
+
 
 -- ============================================================
 -- I.EVO ERP — Project Management Module — MSSQL Schema Additions
@@ -465,3 +588,6 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_pm_tasks_activity')
 CREATE INDEX IX_pm_tasks_activity ON dbo.pm_tasks(activity_id) WHERE is_deleted = 0;
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_pm_audit_log_project')
 CREATE INDEX IX_pm_audit_log_project ON dbo.pm_audit_log(project_id, changed_at DESC);
+
+
+
