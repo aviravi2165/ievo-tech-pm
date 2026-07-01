@@ -32,9 +32,6 @@ export const messageApi = {
   markRead: (messageId) =>
     api.patch(`/api/messages/${messageId}/read`).then(r => r.data),
 
-  archive: (conversationId) =>
-    api.patch(`/api/messages/${conversationId}/archive`).then(r => r.data),
-
   // Remove a participant from a CC thread (sender only)
   removeParticipant: (conversationId, userId) =>
     api.delete(`/api/messages/${conversationId}/participants/${userId}`).then(r => r.data),

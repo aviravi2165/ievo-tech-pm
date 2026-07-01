@@ -83,15 +83,6 @@ async function reply(req, res) {
   } catch (err) { return handleError(res, err); }
 }
 
-async function archive(req, res) {
-  try {
-    const conversationId = parseInt(req.params.conversationId, 10);
-    if (isNaN(conversationId)) return res.status(400).json({ error: 'Invalid conversation id' });
-    await messageService.archiveConversation(conversationId, req.user.userId);
-    return res.json({ success: true });
-  } catch (err) { return handleError(res, err); }
-}
-
 // FIX: added — was missing entirely
 async function removeParticipant(req, res) {
   try {
@@ -221,7 +212,7 @@ async function hideThread(req, res) {
 
 module.exports = {
   getInbox, getSent, getUnreadCount, getUnreadConversationIds,
-  search, send, getThread, reply, archive,
+  search, send, getThread, reply,
   removeParticipant,  // FIX: exported
   addParticipant,
   markRead, remove, editMessage,

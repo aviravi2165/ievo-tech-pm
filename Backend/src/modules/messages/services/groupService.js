@@ -395,7 +395,7 @@ async function removeMember(groupId, actorUserId, memberUserId) {
       .input('groupId',      sql.Int,              groupId)
       .input('memberUserId', sql.UniqueIdentifier, memberUserId)
       .query(`
-        UPDATE p SET left_at = COALESCE(p.left_at, SYSDATETIMEOFFSET()), is_archived = 0
+        UPDATE p SET left_at = SYSDATETIMEOFFSET()
         FROM comm_participants p
         INNER JOIN comm_conversations c ON c.conversation_id = p.conversation_id
         WHERE c.group_id = @groupId

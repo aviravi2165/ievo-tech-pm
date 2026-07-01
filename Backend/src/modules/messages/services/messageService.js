@@ -61,17 +61,34 @@ async function ensureParticipantArchiveColumn() {
     _archiveColReady = (async () => {
       const pool = await getPool();
       await pool.request().batch(`
-        IF NOT EXISTS (
+        -- Remove the old archive columns — the archive feature was removed
+        -- from the frontend UI; these are now dead weight and were causing
+        -- confusion by sharing a name with the unrelated group/thread
+        -- disable feature.
+        IF EXISTS (
           SELECT 1 FROM sys.columns
           WHERE object_id = OBJECT_ID('comm_participants') AND name = 'archived_at'
         )
-          ALTER TABLE comm_participants ADD archived_at DATETIMEOFFSET;
+          ALTER TABLE comm_participants DROP COLUMN archived_at;
 
+        IF EXISTS (
+          SELECT 1 FROM sys.columns
+          WHERE object_id = OBJECT_ID('comm_participants') AND name = 'is_archived'
+        )
+          ALTER TABLE comm_participants DROP COLUMN is_archived;
+
+        -- Ensure the columns that ARE needed exist.
         IF NOT EXISTS (
           SELECT 1 FROM sys.columns
           WHERE object_id = OBJECT_ID('comm_participants') AND name = 'left_at'
         )
           ALTER TABLE comm_participants ADD left_at DATETIMEOFFSET;
+
+        IF NOT EXISTS (
+          SELECT 1 FROM sys.columns
+          WHERE object_id = OBJECT_ID('comm_participants') AND name = 'joined_at'
+        )
+          ALTER TABLE comm_participants ADD joined_at DATETIMEOFFSET;
 
         IF NOT EXISTS (
           SELECT 1 FROM sys.columns
@@ -542,7 +559,7 @@ async function removeParticipant(conversationId, targetUserId, actorUserId) {
     .query(`
       UPDATE comm_participants
       SET is_deleted = 1,
-          left_at    = COALESCE(left_at, SYSDATETIMEOFFSET())
+          left_at    = SYSDATETIMEOFFSET()
       WHERE conversation_id = @convId AND user_id = @targetUserId
     `);
   return true;
@@ -651,9 +668,6 @@ async function replyToConversation(conversationId, senderUserId, payload) {
     await req()
       .input('convId', sql.Int, conversationId)
       .query(`UPDATE comm_conversations SET last_message_at = SYSDATETIMEOFFSET() WHERE conversation_id = @convId`);
-    await req()
-      .input('convId', sql.Int, conversationId)
-      .query(`UPDATE comm_participants SET is_archived = 0 WHERE conversation_id = @convId AND is_deleted = 0`);
 
     // NOTE: read these through req() (the transaction's own connection),
     // not a fresh pool.request(). A separate connection reading rows this
@@ -749,7 +763,7 @@ async function getInbox(userId, page = 1, limit = 30) {
           FROM comm_messages um
           WHERE um.conversation_id = c.conversation_id
             AND um.is_deleted = 0
-            AND um.sent_at > COALESCE(p.archived_at, '1753-01-01')
+            AND um.sent_at > COALESCE(p.joined_at, '1753-01-01')
             AND um.sent_at <= COALESCE(p.left_at, '9999-12-31')
             AND um.sender_id <> @userId
             AND NOT EXISTS (
@@ -760,12 +774,12 @@ async function getInbox(userId, page = 1, limit = 30) {
       FROM comm_conversations c
       INNER JOIN comm_participants p
         ON p.conversation_id = c.conversation_id
-        AND p.user_id = @userId AND p.is_deleted = 0 AND p.is_archived = 0
+        AND p.user_id = @userId AND p.is_deleted = 0
       OUTER APPLY (
         SELECT TOP 1 body_html, sender_id
         FROM comm_messages
         WHERE conversation_id = c.conversation_id AND is_deleted = 0
-          AND sent_at > COALESCE(p.archived_at, '1753-01-01')
+          AND sent_at > COALESCE(p.joined_at, '1753-01-01')
           AND sent_at <= COALESCE(p.left_at, '9999-12-31')
         ORDER BY sent_at DESC
       ) lm
@@ -853,11 +867,11 @@ async function getUnreadCount(userId) {
       FROM comm_messages m
       INNER JOIN comm_participants p
         ON p.conversation_id = m.conversation_id
-        AND p.user_id = @userId AND p.is_deleted = 0 AND p.is_archived = 0
+        AND p.user_id = @userId AND p.is_deleted = 0
       INNER JOIN comm_conversations c
         ON c.conversation_id = m.conversation_id AND c.is_deleted = 0
       WHERE m.is_deleted = 0 AND m.sender_id <> @userId
-        AND m.sent_at > COALESCE(p.archived_at, '1753-01-01')
+        AND m.sent_at > COALESCE(p.joined_at, '1753-01-01')
         AND m.sent_at <= COALESCE(p.left_at, '9999-12-31')
         AND NOT EXISTS (
           SELECT 1 FROM comm_read_receipts rr
@@ -877,11 +891,11 @@ async function getUnreadConversationIds(userId) {
       FROM comm_messages m
       INNER JOIN comm_participants p
         ON p.conversation_id = m.conversation_id
-        AND p.user_id = @userId AND p.is_deleted = 0 AND p.is_archived = 0
+        AND p.user_id = @userId AND p.is_deleted = 0
       INNER JOIN comm_conversations c
         ON c.conversation_id = m.conversation_id AND c.is_deleted = 0
       WHERE m.is_deleted = 0 AND m.sender_id <> @userId
-        AND m.sent_at > COALESCE(p.archived_at, '1753-01-01')
+        AND m.sent_at > COALESCE(p.joined_at, '1753-01-01')
         AND m.sent_at <= COALESCE(p.left_at, '9999-12-31')
         AND NOT EXISTS (
           SELECT 1 FROM comm_read_receipts rr
@@ -909,10 +923,10 @@ async function searchMessages(userId, query) {
       FROM comm_conversations c
       INNER JOIN comm_participants p
         ON p.conversation_id = c.conversation_id
-        AND p.user_id = @userId AND p.is_deleted = 0 AND p.is_archived = 0
+        AND p.user_id = @userId AND p.is_deleted = 0
       LEFT JOIN comm_messages m
         ON m.conversation_id = c.conversation_id AND m.is_deleted = 0
-        AND m.sent_at > COALESCE(p.archived_at, '1753-01-01')
+        AND m.sent_at > COALESCE(p.joined_at, '1753-01-01')
         AND m.sent_at <= COALESCE(p.left_at, '9999-12-31')
       WHERE c.is_deleted = 0 AND (c.subject LIKE @search OR m.body_html LIKE @search)
       ORDER BY c.last_message_at DESC
@@ -1012,7 +1026,7 @@ async function getThread(conversationId, userId) {
     .input('convId', sql.Int,              conversationId)
     .input('userId', sql.UniqueIdentifier, userId)
     .query(`
-      SELECT archived_at AS archivedAt, left_at AS leftAt, joined_at AS joinedAt, rejoined_at AS rejoinedAt
+      SELECT left_at AS leftAt, joined_at AS joinedAt, rejoined_at AS rejoinedAt
       FROM comm_participants
       WHERE conversation_id = @convId AND user_id = @userId
     `);
@@ -1075,38 +1089,15 @@ async function getThread(conversationId, userId) {
     userCanReply    = userCanReply && !isThreadDisabled;
   }
 
-  const archivedAt = curPartRes.recordset[0]?.archivedAt || null;
   const leftAt     = curPartRes.recordset[0]?.leftAt     || null;
   const joinedAt   = curPartRes.recordset[0]?.joinedAt   || null;
   const rejoinedAt = curPartRes.recordset[0]?.rejoinedAt || null;
 
-  // FIX Bug 8: passing null as sql.DateTimeOffset parameter and then
-  // COALESCE-ing with a varchar literal '1753-01-01' triggers implicit
-  // type-conversion in some SQL Server versions. Use concrete
-  // DATETIMEOFFSET values when the DB values are null, binding them as
-  // proper typed parameters to avoid any implicit cast warnings.
-  const archivedBound = archivedAt  || new Date('1753-01-01T00:00:00Z');
-
-  // A participant added mid-conversation (via the "add participant"/"add
-  // member" flow) should only ever see messages sent after they joined —
-  // never the conversation's prior history. joined_at defaults to the row's
-  // creation time, so founding participants (who joined before the first
-  // message existed) are unaffected; this only actually excludes anything
-  // for someone added later. Take whichever bound is more recent: if they
-  // later archived-then-unarchived AFTER joining, that more recent archive
-  // timestamp should win; otherwise joined_at is the real floor.
-  const visibilityFloor = joinedAt && joinedAt > archivedBound ? joinedAt : archivedBound;
-
-  // Gap window: if this participant was removed and later re-added, left_at
-  // marks the end of their ORIGINAL window and rejoined_at marks the start
-  // of their NEW one — the time in between (while they were actually
-  // removed) should stay hidden. The SQL below expresses this as:
-  //   sent_at > visibilityFloor
-  //   AND (left_at IS NULL OR sent_at <= left_at OR sent_at > rejoinedAt)
-  // i.e. normal participants (left_at NULL) just use the floor as usual;
-  // a removed-and-since-re-added participant additionally sees everything
-  // up to their original left_at, OR anything after they came back —
-  // with the gap between those two points excluded.
+  // joined_at is the absolute floor for what a participant can see — they
+  // can never see messages from before they first joined. DATETIMEOFFSET
+  // min value used as fallback so founding participants (joinedAt very
+  // close to conversation creation) don't accidentally miss early messages.
+  const visibilityFloor = joinedAt || new Date('1753-01-01T00:00:00Z');
 
 
   const msgRes = await pool.request()
@@ -1166,7 +1157,6 @@ async function getThread(conversationId, userId) {
       participants:   partRes.recordset,
       userCanReply,
       isGroupDisabled,
-      archivedAt,
       leftAt,
     },
     messages: msgRes.recordset.map(mapThreadMessage),
@@ -1271,21 +1261,6 @@ async function markMessageRead(messageId, userId) {
 // Archive / Delete message
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function archiveConversation(conversationId, userId) {
-  await assertConversationParticipant(conversationId, userId);
-  await ensureParticipantArchiveColumn();
-  const pool = await getPool();
-  await pool.request()
-    .input('convId', sql.Int,              conversationId)
-    .input('userId', sql.UniqueIdentifier, userId)
-    .query(`
-      UPDATE comm_participants
-      SET is_archived = 1, archived_at = SYSDATETIMEOFFSET()
-      WHERE conversation_id = @convId AND user_id = @userId AND is_deleted = 0
-    `);
-  return true;
-}
-
 async function softDeleteMessage(messageId, userId) {
   const pool = await getPool();
   const res  = await pool.request()
@@ -1315,7 +1290,7 @@ async function getUsersForUnreadDigest() {
       u.last_name  AS lastName,
       CAST(COUNT(m.message_id) AS INT) AS unreadCount
     FROM auth_users u
-    INNER JOIN comm_participants  p ON p.user_id = u.user_id AND p.is_deleted = 0 AND p.is_archived = 0
+    INNER JOIN comm_participants  p ON p.user_id = u.user_id AND p.is_deleted = 0
     INNER JOIN comm_messages      m ON m.conversation_id = p.conversation_id AND m.is_deleted = 0 AND m.sender_id <> u.user_id
     INNER JOIN comm_conversations c ON c.conversation_id = m.conversation_id AND c.is_deleted = 0
     WHERE u.is_active = 1 AND u.required_email_notification = 1 AND u.email IS NOT NULL
@@ -1490,7 +1465,7 @@ async function editMessage(messageId, userId, newBodyHtml) {
 module.exports = {
   sanitizeBodyHtml, sendMessage, replyToConversation, removeParticipant,
   getInbox, getSent, getUnreadCount, getUnreadConversationIds,
-  searchMessages, getThread, markMessageRead, archiveConversation,
+  searchMessages, getThread, markMessageRead,
   softDeleteMessage, getUsersForUnreadDigest,
   assertConversationParticipant, getParticipantUserIds,
   addParticipant,
