@@ -49,6 +49,66 @@ function mapThreadMessage(row) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Schema guard — ensures archived_at / left_at / rejoined_at columns exist on
+// first use. Uses batch() because ALTER TABLE cannot run in a parameterised
+// request.
+// ─────────────────────────────────────────────────────────────────────────────
+
+let _archiveColReady;
+
+async function ensureParticipantArchiveColumn() {
+  if (!_archiveColReady) {
+    _archiveColReady = (async () => {
+      const pool = await getPool();
+      await pool.request().batch(`
+        -- Remove the old archive columns — the archive feature was removed
+        -- from the frontend UI; these are now dead weight and were causing
+        -- confusion by sharing a name with the unrelated group/thread
+        -- disable feature.
+        IF EXISTS (
+          SELECT 1 FROM sys.columns
+          WHERE object_id = OBJECT_ID('comm_participants') AND name = 'archived_at'
+        )
+          ALTER TABLE comm_participants DROP COLUMN archived_at;
+
+        IF EXISTS (
+          SELECT 1 FROM sys.columns
+          WHERE object_id = OBJECT_ID('comm_participants') AND name = 'is_archived'
+        )
+          ALTER TABLE comm_participants DROP COLUMN is_archived;
+
+        -- Ensure the columns that ARE needed exist.
+        IF NOT EXISTS (
+          SELECT 1 FROM sys.columns
+          WHERE object_id = OBJECT_ID('comm_participants') AND name = 'left_at'
+        )
+          ALTER TABLE comm_participants ADD left_at DATETIMEOFFSET;
+
+        IF NOT EXISTS (
+          SELECT 1 FROM sys.columns
+          WHERE object_id = OBJECT_ID('comm_participants') AND name = 'joined_at'
+        )
+          ALTER TABLE comm_participants ADD joined_at DATETIMEOFFSET;
+
+        IF NOT EXISTS (
+          SELECT 1 FROM sys.columns
+          WHERE object_id = OBJECT_ID('comm_participants') AND name = 'rejoined_at'
+        )
+          ALTER TABLE comm_participants ADD rejoined_at DATETIMEOFFSET;
+      `);
+    })().catch(err => {
+      // FIX Bug 7: if the ALTER TABLE fails (e.g. permissions error on
+      // first run), reset the singleton so the next call retries instead
+      // of permanently returning the same rejected promise forever. Without
+      // this reset, every subsequent call to any function that calls
+      // ensureParticipantArchiveColumn() throws the original error even
+      // if the column was manually added in the interim.
+      _archiveColReady = null;
+      throw err;
+    });
+  }
+  await _archiveColReady;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Access guards
@@ -240,17 +300,13 @@ async function addParticipants(reqFn, conversationId, userIds, participantType =
         WHEN MATCHED THEN UPDATE SET
           is_deleted       = 0,
           participant_type = source.participant_type,
-          -- Re-adding someone who was previously removed (target.is_deleted
-          -- = 1): deliberately do NOT touch left_at — it's preserved as the
-          -- boundary marking the end of their ORIGINAL window (everything
-          -- they could see before they were removed). rejoined_at is
-          -- stamped as the start of their NEW window (everything from now
-          -- on). getThread() then shows messages from either window while
-          -- excluding the gap between left_at and rejoined_at — i.e. the
-          -- time they were actually removed. joined_at is left untouched
-          -- here on purpose: it's the absolute original join time and
-          -- should never change again after the very first insert.
-          rejoined_at      = CASE WHEN target.is_deleted = 1 THEN SYSDATETIMEOFFSET() ELSE target.rejoined_at END
+          -- On re-add: stamp rejoined_at (start of new window) if this
+          -- person was previously removed (left_at IS NOT NULL), then clear
+          -- left_at so the NEXT removal cycle starts fresh. Without clearing
+          -- it, left_at would stay set from the prior removal, making the
+          -- gap window logic see stale boundaries on a third remove/re-add.
+          rejoined_at      = CASE WHEN target.left_at IS NOT NULL THEN SYSDATETIMEOFFSET() ELSE target.rejoined_at END,
+          left_at          = NULL
         WHEN NOT MATCHED THEN INSERT (conversation_id, user_id, participant_type, joined_at)
           VALUES (source.conversation_id, source.user_id, source.participant_type, SYSDATETIMEOFFSET());
       `);
@@ -292,6 +348,7 @@ async function linkAttachmentsToMessage(reqFn, messageId, attachmentIds, uploade
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function sendMessage(senderUserId, payload) {
+  await ensureParticipantArchiveColumn();
 
   const {
     recipientIds         = [],
@@ -470,6 +527,7 @@ async function sendMessage(senderUserId, payload) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function removeParticipant(conversationId, targetUserId, actorUserId) {
+  await ensureParticipantArchiveColumn();
   const pool = await getPool();
   const res  = await pool.request()
     .input('convId', sql.Int, conversationId)
@@ -502,6 +560,7 @@ async function removeParticipant(conversationId, targetUserId, actorUserId) {
 }
 
 async function addParticipant(conversationId, userIds, actorUserId, actorUserType) {
+  await ensureParticipantArchiveColumn();
   const pool = await getPool();
   const res  = await pool.request()
     .input('convId', sql.Int, conversationId)
@@ -560,6 +619,7 @@ async function addParticipant(conversationId, userIds, actorUserId, actorUserTyp
 async function replyToConversation(conversationId, senderUserId, payload) {
   const { bodyHtml, attachmentIds = [], parentMessageId = null } = payload;
   await assertConversationParticipant(conversationId, senderUserId);
+  await ensureParticipantArchiveColumn();
 
   const pool = await getPool();
   const convRes = await pool.request()
@@ -656,6 +716,7 @@ async function replyToConversation(conversationId, senderUserId, payload) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function getInbox(userId, page = 1, limit = 30) {
+  await ensureParticipantArchiveColumn();
   const pool   = await getPool();
   const offset = (Math.max(page, 1) - 1) * limit;
 
@@ -697,17 +758,7 @@ async function getInbox(userId, page = 1, limit = 30) {
           WHERE um.conversation_id = c.conversation_id
             AND um.is_deleted = 0
             AND um.sent_at > COALESCE(p.joined_at, '1753-01-01')
-            -- For active members (is_deleted=0) never cap at left_at — it may be
-            -- a stale timestamp from a prior removal cycle. Removed members are
-            -- excluded by the outer JOIN (p.is_deleted = 0), so this branch only
-            -- ever runs for currently-active participants.
-            -- Gap exclusion: if the member was re-added after a prior removal,
-            -- skip messages that fell inside that gap (left_at..rejoined_at).
-            AND (
-              p.left_at IS NULL OR p.rejoined_at IS NULL
-              OR um.sent_at <= p.left_at
-              OR um.sent_at > p.rejoined_at
-            )
+            AND um.sent_at <= COALESCE(p.left_at, '9999-12-31')
             AND um.sender_id <> @userId
             AND NOT EXISTS (
               SELECT 1 FROM comm_read_receipts rr
@@ -723,12 +774,7 @@ async function getInbox(userId, page = 1, limit = 30) {
         FROM comm_messages
         WHERE conversation_id = c.conversation_id AND is_deleted = 0
           AND sent_at > COALESCE(p.joined_at, '1753-01-01')
-          -- Same gap exclusion for the preview snippet
-          AND (
-            p.left_at IS NULL OR p.rejoined_at IS NULL
-            OR sent_at <= p.left_at
-            OR sent_at > p.rejoined_at
-          )
+          AND sent_at <= COALESCE(p.left_at, '9999-12-31')
         ORDER BY sent_at DESC
       ) lm
       LEFT JOIN auth_users su ON su.user_id = lm.sender_id
@@ -806,6 +852,7 @@ async function getSent(userId, page = 1, limit = 30) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function getUnreadCount(userId) {
+  await ensureParticipantArchiveColumn();
   const pool = await getPool();
   const result = await pool.request()
     .input('userId', sql.UniqueIdentifier, userId)
@@ -819,13 +866,7 @@ async function getUnreadCount(userId) {
         ON c.conversation_id = m.conversation_id AND c.is_deleted = 0
       WHERE m.is_deleted = 0 AND m.sender_id <> @userId
         AND m.sent_at > COALESCE(p.joined_at, '1753-01-01')
-        -- Active members (is_deleted=0): never cap at left_at (stale from prior
-        -- removal cycle). Gap exclusion: skip messages in [left_at, rejoined_at].
-        AND (
-          p.left_at IS NULL OR p.rejoined_at IS NULL
-          OR m.sent_at <= p.left_at
-          OR m.sent_at > p.rejoined_at
-        )
+        AND m.sent_at <= COALESCE(p.left_at, '9999-12-31')
         AND NOT EXISTS (
           SELECT 1 FROM comm_read_receipts rr
           WHERE rr.message_id = m.message_id AND rr.user_id = @userId
@@ -835,6 +876,7 @@ async function getUnreadCount(userId) {
 }
 
 async function getUnreadConversationIds(userId) {
+  await ensureParticipantArchiveColumn();
   const pool = await getPool();
   const result = await pool.request()
     .input('userId', sql.UniqueIdentifier, userId)
@@ -848,11 +890,7 @@ async function getUnreadConversationIds(userId) {
         ON c.conversation_id = m.conversation_id AND c.is_deleted = 0
       WHERE m.is_deleted = 0 AND m.sender_id <> @userId
         AND m.sent_at > COALESCE(p.joined_at, '1753-01-01')
-        AND (
-          p.left_at IS NULL OR p.rejoined_at IS NULL
-          OR m.sent_at <= p.left_at
-          OR m.sent_at > p.rejoined_at
-        )
+        AND m.sent_at <= COALESCE(p.left_at, '9999-12-31')
         AND NOT EXISTS (
           SELECT 1 FROM comm_read_receipts rr
           WHERE rr.message_id = m.message_id AND rr.user_id = @userId
@@ -866,6 +904,7 @@ async function getUnreadConversationIds(userId) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function searchMessages(userId, query) {
+  await ensureParticipantArchiveColumn();
   const pool = await getPool();
   const result = await pool.request()
     .input('userId', sql.UniqueIdentifier, userId)
@@ -882,11 +921,7 @@ async function searchMessages(userId, query) {
       LEFT JOIN comm_messages m
         ON m.conversation_id = c.conversation_id AND m.is_deleted = 0
         AND m.sent_at > COALESCE(p.joined_at, '1753-01-01')
-        AND (
-          p.left_at IS NULL OR p.rejoined_at IS NULL
-          OR m.sent_at <= p.left_at
-          OR m.sent_at > p.rejoined_at
-        )
+        AND m.sent_at <= COALESCE(p.left_at, '9999-12-31')
       WHERE c.is_deleted = 0 AND (c.subject LIKE @search OR m.body_html LIKE @search)
       ORDER BY c.last_message_at DESC
       OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY
@@ -900,6 +935,7 @@ async function searchMessages(userId, query) {
 
 async function getThread(conversationId, userId) {
   await assertConversationParticipant(conversationId, userId);
+  await ensureParticipantArchiveColumn();
 
   const pool = await getPool();
 
@@ -1102,10 +1138,15 @@ async function getThread(conversationId, userId) {
         AND m.is_deleted = 0
         AND m.sent_at > @visibleFrom
         AND (
-      @leftAt IS NULL
-      OR m.sent_at <= @leftAt
-      OR m.sent_at > @rejoinedAt
-    )
+          -- No gap window (never removed, or currently removed but not yet
+          -- re-added): just apply the visibility floor, no extra restriction.
+          @rejoinedAt IS NULL
+          -- Gap window: was removed and re-added. Show messages from their
+          -- original window (sent_at <= left_at) OR after they came back
+          -- (sent_at > rejoinedAt). The gap between left_at and rejoinedAt
+          -- is excluded by not matching either branch.
+          OR (m.sent_at <= @leftAt OR m.sent_at > @rejoinedAt)
+        )
       ORDER BY m.sent_at ASC
     `);
 
@@ -1430,5 +1471,6 @@ module.exports = {
   isThreadAdminOrSuperAdmin, assertThreadAdmin,
   listAllThreadsForAdmin, disableThread, enableThread,
   deleteThreadForActor, hideDisabledThreadForUser,
-  editMessage
+  editMessage,
+  ensureParticipantArchiveColumn,
 };
