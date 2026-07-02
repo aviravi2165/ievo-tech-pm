@@ -327,16 +327,11 @@ async function addMembers(groupId, actorUserId, userIds) {
           ON (target.conversation_id = source.conversation_id AND target.user_id = source.user_id)
           WHEN MATCHED THEN UPDATE SET
             is_deleted       = 0,
-            is_archived      = 0,
-            archived_at      = NULL,
             participant_type = 'to',
-            -- See messageService.addParticipants() for the full rationale.
-            -- left_at is deliberately left untouched here (preserved as the
-            -- end of their original pre-removal window); rejoined_at is
-            -- stamped only on a genuine re-add (target.is_deleted = 1).
-            -- joined_at (the absolute original join time) is never touched
-            -- after its initial insert.
-            rejoined_at      = CASE WHEN target.is_deleted = 1 THEN SYSDATETIMEOFFSET() ELSE target.rejoined_at END
+            -- On re-add: stamp rejoined_at if previously removed (left_at IS
+            -- NOT NULL), then clear left_at so the NEXT removal cycle is fresh.
+            rejoined_at      = CASE WHEN target.left_at IS NOT NULL THEN SYSDATETIMEOFFSET() ELSE target.rejoined_at END,
+            left_at          = NULL
           WHEN NOT MATCHED THEN INSERT (conversation_id, user_id, participant_type, joined_at)
             VALUES (source.conversation_id, source.user_id, source.participant_type, SYSDATETIMEOFFSET());
         `);
@@ -396,8 +391,8 @@ async function removeMember(groupId, actorUserId, memberUserId) {
       .input('memberUserId', sql.UniqueIdentifier, memberUserId)
       .query(`
         UPDATE p
-        SET left_at    = SYSDATETIMEOFFSET(),
-            is_deleted = 1
+        SET is_deleted = 1,
+            left_at    = SYSDATETIMEOFFSET()
         FROM comm_participants p
         INNER JOIN comm_conversations c ON c.conversation_id = p.conversation_id
         WHERE c.group_id = @groupId
