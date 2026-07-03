@@ -114,18 +114,20 @@ async function ensureParticipantArchiveColumn() {
 // Access guards
 // ─────────────────────────────────────────────────────────────────────────────
 
+// assertReadAccess — allows removed participants to open their history window.
+// Used by getThread only.
 async function assertConversationParticipant(conversationId, userId) {
   const pool = await getPool();
   const result = await pool.request()
     .input('convId', sql.Int,              conversationId)
     .input('userId', sql.UniqueIdentifier, userId)
     .query(`
-      -- Direct participant (BCC / CC threads)
+      -- Ever a participant (active OR removed) — lets removed users read history
       SELECT 1 AS ok
       FROM comm_participants p
-      WHERE p.conversation_id = @convId AND p.user_id = @userId AND p.is_deleted = 0
+      WHERE p.conversation_id = @convId AND p.user_id = @userId
       UNION ALL
-      -- Conversation creator (covers missing participant rows from data migration)
+      -- Conversation creator
       SELECT 1
       FROM comm_conversations c
       WHERE c.conversation_id = @convId AND c.created_by = @userId AND c.is_deleted = 0
@@ -148,6 +150,36 @@ async function assertConversationParticipant(conversationId, userId) {
     `);
   if (!result.recordset[0]) {
     const e = new Error('Conversation not found or access denied');
+    e.statusCode = 403; throw e;
+  }
+}
+
+// assertActiveParticipant — only ACTIVE (not removed) participants can write.
+// Used by replyToConversation and markMessageRead.
+async function assertActiveParticipant(conversationId, userId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('convId', sql.Int,              conversationId)
+    .input('userId', sql.UniqueIdentifier, userId)
+    .query(`
+      -- Must be an active (not removed) participant
+      SELECT 1 AS ok
+      FROM comm_participants p
+      WHERE p.conversation_id = @convId AND p.user_id = @userId AND p.is_deleted = 0
+      UNION ALL
+      -- Conversation creator always counts as active participant
+      SELECT 1
+      FROM comm_conversations c
+      WHERE c.conversation_id = @convId AND c.created_by = @userId AND c.is_deleted = 0
+      UNION ALL
+      -- Group thread member (group membership is separate from comm_participants)
+      SELECT 1
+      FROM comm_conversations c
+      INNER JOIN comm_group_members gm ON gm.group_id = c.group_id
+      WHERE c.conversation_id = @convId AND gm.user_id = @userId AND c.conv_type = 'group_thread'
+    `);
+  if (!result.recordset[0]) {
+    const e = new Error('You are not an active participant in this conversation');
     e.statusCode = 403; throw e;
   }
 }
@@ -300,13 +332,14 @@ async function addParticipants(reqFn, conversationId, userIds, participantType =
         WHEN MATCHED THEN UPDATE SET
           is_deleted       = 0,
           participant_type = source.participant_type,
-          -- On re-add: stamp rejoined_at (start of new window) if this
-          -- person was previously removed (left_at IS NOT NULL), then clear
-          -- left_at so the NEXT removal cycle starts fresh. Without clearing
-          -- it, left_at would stay set from the prior removal, making the
-          -- gap window logic see stale boundaries on a third remove/re-add.
-          rejoined_at      = CASE WHEN target.left_at IS NOT NULL THEN SYSDATETIMEOFFSET() ELSE target.rejoined_at END,
-          left_at          = NULL
+          -- On re-add: stamp rejoined_at as the start of their NEW window.
+          -- CRITICAL: left_at is deliberately NOT cleared here — it must be
+          -- preserved as the boundary marking the END of their original window.
+          -- getThread() uses (sent_at <= left_at OR sent_at > rejoinedAt) to
+          -- show messages from both windows while excluding the gap in between.
+          -- If we cleared left_at here, the gap exclusion would break entirely
+          -- because there would be no upper bound for the original window.
+          rejoined_at      = CASE WHEN target.is_deleted = 1 THEN SYSDATETIMEOFFSET() ELSE target.rejoined_at END
         WHEN NOT MATCHED THEN INSERT (conversation_id, user_id, participant_type, joined_at)
           VALUES (source.conversation_id, source.user_id, source.participant_type, SYSDATETIMEOFFSET());
       `);
@@ -618,7 +651,8 @@ async function addParticipant(conversationId, userIds, actorUserId, actorUserTyp
 
 async function replyToConversation(conversationId, senderUserId, payload) {
   const { bodyHtml, attachmentIds = [], parentMessageId = null } = payload;
-  await assertConversationParticipant(conversationId, senderUserId);
+  // Only active (non-removed) participants may reply
+  await assertActiveParticipant(conversationId, senderUserId);
   await ensureParticipantArchiveColumn();
 
   const pool = await getPool();
@@ -734,6 +768,9 @@ async function getInbox(userId, page = 1, limit = 30) {
         c.conv_type       AS convType,
         c.created_by      AS createdBy,
         c.group_id        AS groupId,
+        p.is_deleted      AS isRemoved,
+        p.left_at         AS leftAt,
+        p.rejoined_at     AS rejoinedAt,
         (
           SELECT CAST(COUNT(*) AS INT)
           FROM comm_participants cp
@@ -753,12 +790,14 @@ async function getInbox(userId, page = 1, limit = 30) {
             AND p2.user_id <> @userId AND p2.is_deleted = 0
         ) AS participantNames,
         (
+          -- Only count unread if user is currently active (not removed).
+          -- A removed user's history is read-only; no new unread can accumulate.
           SELECT CAST(COUNT(*) AS INT)
           FROM comm_messages um
           WHERE um.conversation_id = c.conversation_id
             AND um.is_deleted = 0
+            AND p.is_deleted = 0
             AND um.sent_at > COALESCE(p.joined_at, '1753-01-01')
-            AND um.sent_at <= COALESCE(p.left_at, '9999-12-31')
             AND um.sender_id <> @userId
             AND NOT EXISTS (
               SELECT 1 FROM comm_read_receipts rr
@@ -766,15 +805,24 @@ async function getInbox(userId, page = 1, limit = 30) {
             )
         ) AS unreadCount
       FROM comm_conversations c
+      -- Join WITHOUT is_deleted filter: removed participants still see their
+      -- history window. is_deleted=1 rows are included so the conversation
+      -- stays visible in their inbox (read-only) after removal.
       INNER JOIN comm_participants p
         ON p.conversation_id = c.conversation_id
-        AND p.user_id = @userId AND p.is_deleted = 0
+        AND p.user_id = @userId
       OUTER APPLY (
+        -- Preview: last visible message within this user's visibility window.
+        -- For removed users: up to left_at. For active users: all messages.
+        -- For re-added users (rejoined_at set): last message in either window.
         SELECT TOP 1 body_html, sender_id
         FROM comm_messages
         WHERE conversation_id = c.conversation_id AND is_deleted = 0
           AND sent_at > COALESCE(p.joined_at, '1753-01-01')
-          AND sent_at <= COALESCE(p.left_at, '9999-12-31')
+          AND (
+            p.rejoined_at IS NULL
+            OR (sent_at <= p.left_at OR sent_at > p.rejoined_at)
+          )
         ORDER BY sent_at DESC
       ) lm
       LEFT JOIN auth_users su ON su.user_id = lm.sender_id
@@ -861,12 +909,12 @@ async function getUnreadCount(userId) {
       FROM comm_messages m
       INNER JOIN comm_participants p
         ON p.conversation_id = m.conversation_id
-        AND p.user_id = @userId AND p.is_deleted = 0
+        AND p.user_id = @userId
+        AND p.is_deleted = 0   -- only count unread for active participants
       INNER JOIN comm_conversations c
         ON c.conversation_id = m.conversation_id AND c.is_deleted = 0
       WHERE m.is_deleted = 0 AND m.sender_id <> @userId
         AND m.sent_at > COALESCE(p.joined_at, '1753-01-01')
-        AND m.sent_at <= COALESCE(p.left_at, '9999-12-31')
         AND NOT EXISTS (
           SELECT 1 FROM comm_read_receipts rr
           WHERE rr.message_id = m.message_id AND rr.user_id = @userId
@@ -885,12 +933,12 @@ async function getUnreadConversationIds(userId) {
       FROM comm_messages m
       INNER JOIN comm_participants p
         ON p.conversation_id = m.conversation_id
-        AND p.user_id = @userId AND p.is_deleted = 0
+        AND p.user_id = @userId
+        AND p.is_deleted = 0   -- only active participants have unread
       INNER JOIN comm_conversations c
         ON c.conversation_id = m.conversation_id AND c.is_deleted = 0
       WHERE m.is_deleted = 0 AND m.sender_id <> @userId
         AND m.sent_at > COALESCE(p.joined_at, '1753-01-01')
-        AND m.sent_at <= COALESCE(p.left_at, '9999-12-31')
         AND NOT EXISTS (
           SELECT 1 FROM comm_read_receipts rr
           WHERE rr.message_id = m.message_id AND rr.user_id = @userId
@@ -1020,7 +1068,8 @@ async function getThread(conversationId, userId) {
     .input('convId', sql.Int,              conversationId)
     .input('userId', sql.UniqueIdentifier, userId)
     .query(`
-      SELECT left_at AS leftAt, joined_at AS joinedAt, rejoined_at AS rejoinedAt
+      SELECT left_at AS leftAt, joined_at AS joinedAt, rejoined_at AS rejoinedAt,
+             is_deleted AS isRemoved
       FROM comm_participants
       WHERE conversation_id = @convId AND user_id = @userId
     `);
@@ -1086,19 +1135,16 @@ async function getThread(conversationId, userId) {
   const leftAt     = curPartRes.recordset[0]?.leftAt     || null;
   const joinedAt   = curPartRes.recordset[0]?.joinedAt   || null;
   const rejoinedAt = curPartRes.recordset[0]?.rejoinedAt || null;
+  const isRemoved  = Boolean(curPartRes.recordset[0]?.isRemoved);
 
-  // joined_at is the absolute floor for what a participant can see — they
-  // can never see messages from before they first joined. DATETIMEOFFSET
-  // min value used as fallback so founding participants (joinedAt very
-  // close to conversation creation) don't accidentally miss early messages.
   const visibilityFloor = joinedAt || new Date('1753-01-01T00:00:00Z');
 
-
   const msgRes = await pool.request()
-    .input('convId',       sql.Int,            conversationId)
-    .input('visibleFrom',  sql.DateTimeOffset,  visibilityFloor)
-  .input('leftAt', sql.DateTimeOffset, leftAt)
-  .input('rejoinedAt', sql.DateTimeOffset, rejoinedAt)
+    .input('convId',      sql.Int,           conversationId)
+    .input('visibleFrom', sql.DateTimeOffset, visibilityFloor)
+    .input('leftAt',      sql.DateTimeOffset, leftAt)
+    .input('rejoinedAt',  sql.DateTimeOffset, rejoinedAt)
+    .input('isRemoved',   sql.Bit,            isRemoved ? 1 : 0)
     .query(`
       SELECT
         m.message_id,
@@ -1131,21 +1177,28 @@ async function getThread(conversationId, userId) {
           FOR JSON PATH
         ) AS read_receipts
       FROM comm_messages m
-      LEFT JOIN auth_users  u  ON u.user_id  = m.sender_id
+      LEFT JOIN auth_users    u  ON u.user_id  = m.sender_id
       LEFT JOIN comm_messages pm ON pm.message_id = m.parent_message_id
-      LEFT JOIN auth_users  pu ON pu.user_id = pm.sender_id
+      LEFT JOIN auth_users    pu ON pu.user_id = pm.sender_id
       WHERE m.conversation_id = @convId
         AND m.is_deleted = 0
         AND m.sent_at > @visibleFrom
         AND (
-          -- No gap window (never removed, or currently removed but not yet
-          -- re-added): just apply the visibility floor, no extra restriction.
-          @rejoinedAt IS NULL
-          -- Gap window: was removed and re-added. Show messages from their
-          -- original window (sent_at <= left_at) OR after they came back
-          -- (sent_at > rejoinedAt). The gap between left_at and rejoinedAt
-          -- is excluded by not matching either branch.
-          OR (m.sent_at <= @leftAt OR m.sent_at > @rejoinedAt)
+          -- ── No gap (never been re-added after removal) ────────────────────
+          @rejoinedAt IS NULL AND (
+            @isRemoved = 0           -- currently active: see everything
+            OR m.sent_at <= @leftAt  -- currently removed: see up to removal
+          )
+
+          -- ── Gap window (was removed and re-added at least once) ───────────
+          -- Window 1: messages before the first removal  (sent_at <= leftAt)
+          -- Window 2: messages after re-add
+          --    - if currently active  (isRemoved=0): open-ended
+          --    - if removed again     (isRemoved=1): closes at leftAt
+          OR (@rejoinedAt IS NOT NULL AND (
+            m.sent_at <= @leftAt
+            OR (m.sent_at > @rejoinedAt AND (@isRemoved = 0 OR m.sent_at <= @leftAt))
+          ))
         )
       ORDER BY m.sent_at ASC
     `);

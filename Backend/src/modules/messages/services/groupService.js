@@ -328,10 +328,10 @@ async function addMembers(groupId, actorUserId, userIds) {
           WHEN MATCHED THEN UPDATE SET
             is_deleted       = 0,
             participant_type = 'to',
-            -- On re-add: stamp rejoined_at if previously removed (left_at IS
-            -- NOT NULL), then clear left_at so the NEXT removal cycle is fresh.
-            rejoined_at      = CASE WHEN target.left_at IS NOT NULL THEN SYSDATETIMEOFFSET() ELSE target.rejoined_at END,
-            left_at          = NULL
+            -- On re-add: stamp rejoined_at as start of new window.
+            -- CRITICAL: left_at is preserved (not cleared) — it marks the
+            -- END of the original window. getThread uses it for gap exclusion.
+            rejoined_at      = CASE WHEN target.is_deleted = 1 THEN SYSDATETIMEOFFSET() ELSE target.rejoined_at END
           WHEN NOT MATCHED THEN INSERT (conversation_id, user_id, participant_type, joined_at)
             VALUES (source.conversation_id, source.user_id, source.participant_type, SYSDATETIMEOFFSET());
         `);
