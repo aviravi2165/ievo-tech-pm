@@ -4,19 +4,21 @@
  * Uses the EXISTING Socket.io server instance created by the messages module.
  * Opens a separate /pm namespace on it — no new Server, no port conflict.
  *
- * Rooms:  project:{projectId}  — members join when they open a project page
- * Events: TASK_STATUS_CHANGED, ENTITY_UNBLOCKED
+ * Rooms:
+ *   project:{projectId}  — members join when they open a project page
+ *   user:{userId}        — each user's personal room for assignment requests
+ *
+ * Events emitted:
+ *   TASK_STATUS_CHANGED    — task/entity status update (all in room)
+ *   ENTITY_UNBLOCKED       — dependency resolved (all in room)
+ *   ASSIGNMENT_REQUEST     — task assignment request (user personal room)
+ *   PROGRESS_UPDATED       — progress % changed (all in room)
  */
 const { verifyToken } = require('../../../middleware/auth');
 
 let pmNamespace = null;
 
-/**
- * Called from the PM module index after the messages socket is already initialised.
- * Receives the shared io instance via getIo() from the messages module.
- */
 function initPmSocket() {
-  // Lazy-require to avoid circular dependency at module load time
   const { getIo } = require('../../messages/socket/socketHandler');
   const io = getIo();
 
@@ -37,6 +39,11 @@ function initPmSocket() {
   });
 
   pmNamespace.on('connection', (socket) => {
+    const userId = socket.data.user?.userId;
+
+    // Personal room — receives assignment requests
+    if (userId) socket.join(`user:${userId}`);
+
     socket.on('join_project', (data = {}) => {
       const projectId = parseInt(data.projectId, 10);
       if (!isNaN(projectId)) socket.join(`project:${projectId}`);
@@ -60,8 +67,26 @@ function broadcastUnblocked(projectId, payload) {
   pmNamespace.to(`project:${projectId}`).emit('ENTITY_UNBLOCKED', { projectId, ...payload });
 }
 
+/**
+ * Sends an ASSIGNMENT_REQUEST event to a specific user's personal room.
+ * The Dashboard module (connected later) listens for this to update its badge
+ * and requests list without polling.
+ *
+ * @param {string} targetUserId  — the user being assigned
+ * @param {object} payload       — { taskId, taskName, projectId, ... }
+ */
+function broadcastAssignmentRequest(targetUserId, payload) {
+  if (!pmNamespace) return;
+  pmNamespace.to(`user:${targetUserId}`).emit('ASSIGNMENT_REQUEST', payload);
+}
+
+function broadcastProgressUpdated(projectId, payload) {
+  if (!pmNamespace) return;
+  pmNamespace.to(`project:${projectId}`).emit('PROGRESS_UPDATED', { projectId, ...payload });
+}
+
 function closePmSocket() {
   pmNamespace = null;
 }
 
-module.exports = { initPmSocket, closePmSocket, broadcastStatusChanged, broadcastUnblocked };
+module.exports = { initPmSocket, closePmSocket, broadcastStatusChanged, broadcastUnblocked, broadcastAssignmentRequest, broadcastProgressUpdated };

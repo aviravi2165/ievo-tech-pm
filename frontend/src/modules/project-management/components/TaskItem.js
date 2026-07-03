@@ -5,7 +5,15 @@ import OverdueBadge from './OverdueBadge';
 import UserSearchInput from './UserSearchInput';
 import { taskApi } from '../api/projectApi';
 
-const STATUS_OPTIONS = ['To Do', 'In Progress', 'In Review', 'Done', 'Blocked'];
+// Statuses: To Do / Ongoing / Complete / Blocked (renamed from In Progress / Done)
+const STATUS_OPTIONS = ['To Do', 'Ongoing', 'Complete', 'Blocked'];
+
+// Badge shown per request status alongside an assignee's name
+const REQUEST_BADGE = {
+  Pending:  { color: '#a85f00', bg: '#fff3dc', label: 'Pending'  },
+  Accepted: { color: '#1a6e36', bg: '#e8faf0', label: 'Accepted' },
+  Declined: { color: '#7b1d1d', bg: '#fdecea', label: 'Declined' },
+};
 
 function parseLocalDate(d) {
   if (!d) return null;
@@ -18,12 +26,12 @@ function fmtDate(d) {
   return dt.toLocaleDateString([], { day: 'numeric', month: 'short' });
 }
 function toInput(d) { return d ? String(d).split('T')[0] : ''; }
-function initials(name = '') { return (name||'?').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
+function initials(name = '') { return (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(); }
 
 function DueDateBadge({ dueDate, status }) {
-  if (!dueDate || status === 'Done') return null;
+  if (!dueDate || status === 'Complete') return null;
   const dt   = parseLocalDate(dueDate);
-  const now  = new Date(); now.setHours(0,0,0,0);
+  const now  = new Date(); now.setHours(0, 0, 0, 0);
   const diff = Math.round((dt - now) / 86400000);
   if (diff < 0)  return <span className="pm-late-tag">⚠ {Math.abs(diff)}d late</span>;
   if (diff <= 2) return <span className="pm-due-soon">Due {diff === 0 ? 'today' : `in ${diff}d`}</span>;
@@ -35,7 +43,9 @@ function Avatars({ assignees = [] }) {
   return (
     <div className="pm-assignees">
       {assignees.slice(0, 4).map(a => (
-        <div key={a.userId} className="pm-avatar" title={a.name}>{initials(a.name)}</div>
+        <div key={a.userId} className="pm-avatar" title={`${a.name} (${a.requestStatus || 'Accepted'})`}>
+          {initials(a.name)}
+        </div>
       ))}
       {assignees.length > 4 && <div className="pm-avatar">+{assignees.length - 4}</div>}
     </div>
@@ -43,26 +53,21 @@ function Avatars({ assignees = [] }) {
 }
 
 /**
- * TaskItem — full functionality:
+ * TaskItem — aligned with the new assignment-request flow.
  *
- * Roles:
- *   Manager — all edit rights + delete + assign anyone + manage deps
- *   Member  — if assigned: edit dates, description, status; cannot assign others or delete
- *   Viewer  — read-only, can only change status (their own tasks)
- *
- * Features:
- *   - Description (view + edit)
- *   - Due date required on creation; editable with on-time/late badge
- *   - Assignee panel: searches ALL org users, not just current members
- *   - Dependency panel
- *   - Status change for assignees
+ * Assignment is now via requests (Pending → Accepted / Declined) not direct inserts.
+ * allRequests  — every request for this task (including Pending and Declined) for the manager's view
+ * assignees    — only Accepted requests (rendered as confirmed participants)
+ * activityMembers — members of the parent activity; task assignees are picked from this list
+ *                   (or a new user can be selected, which auto-adds them to the activity on accept)
  */
-export default function TaskItem({ task, myRole, myUserId, allTasks = [], onRefetch, onRefetchProject }) {
+export default function TaskItem({ task, myRole, myUserId, allTasks = [], activityMembers = [], onRefetch, onRefetchProject }) {
+  // Check if current user has an accepted request for this task
   const isAssigned = (task.assignees || []).some(a => String(a.userId) === String(myUserId));
   const canManager = myRole === 'Manager';
   const canMember  = myRole === 'Member' && isAssigned;
-  const canEdit    = canManager || canMember;   // edit description, dates
-  const canStatus  = canEdit || myRole === 'Member'; // any Member can change status of assigned tasks
+  const canEdit    = canManager || canMember;
+  const canStatus  = canEdit || (myRole === 'Member' && isAssigned);
 
   const [localStatus,  setLocalStatus]  = useState(task.status);
   const [panel,        setPanel]        = useState(null); // 'assign'|'deps'|'date'|'desc'|null
@@ -71,7 +76,8 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], onRefe
   const [editDue,      setEditDue]      = useState(toInput(task.dueDate));
   const [editDesc,     setEditDesc]     = useState(task.description || '');
   const [depError,     setDepError]     = useState('');
-  const [assignSearch, setAssignSearch] = useState(null); // selected user from search
+  const [assignSearch, setAssignSearch] = useState(null);
+  const [assignError,  setAssignError]  = useState('');
 
   useEffect(() => { setLocalStatus(task.status); }, [task.status]);
   useEffect(() => { setEditDue(toInput(task.dueDate)); }, [task.dueDate]);
@@ -79,7 +85,7 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], onRefe
 
   const togglePanel = (p) => setPanel(v => v === p ? null : p);
 
-  // Status change
+  // ── Status change ──────────────────────────────────────────────────────────
   const handleStatusChange = async (e) => {
     const s = e.target.value;
     const prev = localStatus;
@@ -90,47 +96,62 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], onRefe
     } catch { setLocalStatus(prev); }
   };
 
-  // Name edit
+  // ── Name edit ──────────────────────────────────────────────────────────────
   const handleNameSave = async () => {
     if (!editName.trim()) return;
     try { await taskApi.update(task.taskId, { name: editName }); onRefetch?.(); setEditingName(false); } catch {}
   };
 
-  // Due date save
+  // ── Due date save ──────────────────────────────────────────────────────────
   const handleDueSave = async () => {
-    if (!editDue) return; // date is required
+    if (!editDue) return;
     try { await taskApi.update(task.taskId, { dueDate: editDue }); onRefetch?.(); setPanel(null); } catch {}
   };
 
-  // Description save
+  // ── Description save ───────────────────────────────────────────────────────
   const handleDescSave = async () => {
     try { await taskApi.update(task.taskId, { description: editDesc }); onRefetch?.(); setPanel(null); } catch {}
   };
 
-  // Delete
+  // ── Delete ─────────────────────────────────────────────────────────────────
   const handleDelete = async () => {
     if (!window.confirm(`Delete task "${task.name}"?`)) return;
     try { await taskApi.delete(task.taskId); onRefetch?.(); onRefetchProject?.(); } catch {}
   };
 
-  // Assignees
-  const assignedIds = new Set((task.assignees || []).map(a => a.userId));
-  const handleAddAssignee = async () => {
+  // ── Assignment requests ────────────────────────────────────────────────────
+  // allRequests includes Pending, Accepted, Declined — so the manager can see
+  // who declined and re-assign. assignees (Accepted only) are the confirmed participants.
+  const allRequests = task.allRequests || [];
+  const requestedIds = new Set(allRequests.map(r => String(r.userId)));
+
+  // Activity member IDs for filtering the search to only show activity members
+  const activityMemberIds = new Set(activityMembers.map(m => String(m.userId)));
+
+  const handleSendRequest = async () => {
     if (!assignSearch) return;
-    try { await taskApi.addAssignee(task.taskId, assignSearch.userId); setAssignSearch(null); onRefetch?.(); } catch {}
-  };
-  const handleRemoveAssignee = async (uid) => {
-    try { await taskApi.removeAssignee(task.taskId, uid); onRefetch?.(); } catch {}
+    setAssignError('');
+    try {
+      await taskApi.sendRequest(task.taskId, assignSearch.userId);
+      setAssignSearch(null);
+      onRefetch?.();
+    } catch (err) {
+      setAssignError(err?.response?.data?.error || 'Failed to send request.');
+    }
   };
 
-  // Dependencies
+  const handleRemoveRequest = async (uid) => {
+    try { await taskApi.removeRequest(task.taskId, uid); onRefetch?.(); } catch {}
+  };
+
+  // ── Dependencies ───────────────────────────────────────────────────────────
   const currentDeps = new Set((task.dependsOn || []).map(Number));
   const otherTasks  = allTasks.filter(t => t.taskId !== task.taskId);
 
   const handleAddDep = async (depId) => {
     setDepError('');
     try { await taskApi.addDep(task.taskId, depId); onRefetch?.(); }
-    catch (err) { setDepError(err?.response?.data?.error || 'Failed to add dependency'); }
+    catch (err) { setDepError(err?.response?.data?.error || 'Cannot add dependency — would create a deadlock or cycle.'); }
   };
   const handleRemoveDep = async (depId) => {
     try { await taskApi.removeDep(task.taskId, depId); onRefetch?.(); } catch {}
@@ -147,12 +168,12 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], onRefe
               <input value={editName} onChange={e => setEditName(e.target.value)}
                 autoFocus
                 style={{ flex: 1, background: '#fff', border: '1px solid var(--gold)', borderRadius: 'var(--radius)', padding: '4px 8px', color: 'var(--light)', fontSize: 13, fontFamily: 'inherit', outline: 'none' }}
-                onKeyDown={e => { if(e.key==='Enter') handleNameSave(); if(e.key==='Escape') { setEditingName(false); setEditName(task.name); } }} />
-              <button className="pm-btn pm-btn-primary" style={{padding:'3px 10px',fontSize:11}} onClick={handleNameSave}>✓</button>
-              <button className="pm-btn pm-btn-ghost"   style={{padding:'3px 8px',fontSize:11}} onClick={() => { setEditingName(false); setEditName(task.name); }}>✕</button>
+                onKeyDown={e => { if (e.key === 'Enter') handleNameSave(); if (e.key === 'Escape') { setEditingName(false); setEditName(task.name); } }} />
+              <button className="pm-btn pm-btn-primary" style={{ padding: '3px 10px', fontSize: 11 }} onClick={handleNameSave}>✓</button>
+              <button className="pm-btn pm-btn-ghost"   style={{ padding: '3px 8px', fontSize: 11 }} onClick={() => { setEditingName(false); setEditName(task.name); }}>✕</button>
             </div>
           ) : (
-            <div className="pm-task-name" style={{ textDecoration: localStatus==='Done'?'line-through':'none', opacity: localStatus==='Done'?.5:1 }}>
+            <div className="pm-task-name" style={{ textDecoration: localStatus === 'Complete' ? 'line-through' : 'none', opacity: localStatus === 'Complete' ? 0.5 : 1 }}>
               {task.name}
             </div>
           )}
@@ -161,10 +182,10 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], onRefe
           <div className="pm-task-meta">
             <PriorityBadge priority={task.priority} />
             <DueDateBadge dueDate={task.dueDate} status={localStatus} />
-            {task.isOverdue && localStatus !== 'Done' && <OverdueBadge />}
+            {task.isOverdue && localStatus !== 'Complete' && <OverdueBadge />}
             {task.estimatedHours && <span>{task.estimatedHours}h est.</span>}
             <Avatars assignees={task.assignees} />
-            {(task.dependsOn?.length > 0) && (
+            {task.dependsOn?.length > 0 && (
               <span className="pm-dep-badge">
                 <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
                 {task.dependsOn.length} dep
@@ -175,7 +196,6 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], onRefe
             )}
           </div>
 
-          {/* Description preview (always visible when set) */}
           {task.description && panel !== 'desc' && (
             <div style={{ marginTop: 5, fontSize: 12, color: 'var(--muted)', lineHeight: 1.5, borderLeft: '2px solid var(--divider)', paddingLeft: 8 }}>
               {task.description}
@@ -185,32 +205,30 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], onRefe
 
         {/* Action area */}
         <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {/* Status */}
           {canStatus ? (
             <select value={localStatus} onChange={handleStatusChange}
-              style={{ background:'#fff', border:'1px solid var(--divider)', borderRadius:'var(--radius)', color:'var(--light)', fontSize:11, padding:'3px 6px', fontFamily:'inherit', outline:'none' }}>
+              style={{ background: '#fff', border: '1px solid var(--divider)', borderRadius: 'var(--radius)', color: 'var(--light)', fontSize: 11, padding: '3px 6px', fontFamily: 'inherit', outline: 'none' }}>
               {STATUS_OPTIONS.map(s => <option key={s}>{s}</option>)}
             </select>
           ) : <StatusBadge status={localStatus} />}
 
-          {/* Edit buttons — Managers get all; assigned Members get dates + desc */}
           {canEdit && (
             <>
-              <button className={`icon-btn ${panel==='desc'?'active':''}`} title="Description" onClick={() => togglePanel('desc')} style={{ width: 26, height: 26 }}>
+              <button className={`icon-btn ${panel === 'desc' ? 'active' : ''}`} title="Description" onClick={() => togglePanel('desc')} style={{ width: 26, height: 26 }}>
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
               </button>
-              <button className={`icon-btn ${panel==='date'?'active':''}`} title="Due date" onClick={() => togglePanel('date')} style={{ width: 26, height: 26 }}>
+              <button className={`icon-btn ${panel === 'date' ? 'active' : ''}`} title="Due date" onClick={() => togglePanel('date')} style={{ width: 26, height: 26 }}>
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
               </button>
             </>
           )}
           {canManager && (
             <>
-              <button className={`icon-btn ${panel==='assign'?'active':''}`} title="Assignees" onClick={() => togglePanel('assign')} style={{ width: 26, height: 26 }}>
+              <button className={`icon-btn ${panel === 'assign' ? 'active' : ''}`} title="Assign" onClick={() => togglePanel('assign')} style={{ width: 26, height: 26 }}>
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
               </button>
               {otherTasks.length > 0 && (
-                <button className={`icon-btn ${panel==='deps'?'active':''}`} title="Dependencies" onClick={() => togglePanel('deps')} style={{ width: 26, height: 26 }}>
+                <button className={`icon-btn ${panel === 'deps' ? 'active' : ''}`} title="Dependencies" onClick={() => togglePanel('deps')} style={{ width: 26, height: 26 }}>
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
                 </button>
               )}
@@ -229,11 +247,8 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], onRefe
       {panel === 'desc' && canEdit && (
         <div className="pm-sub-panel" style={{ marginTop: 8 }}>
           <div className="pm-sub-panel-title">Task Notes / Description</div>
-          <textarea
-            value={editDesc}
-            onChange={e => setEditDesc(e.target.value)}
-            placeholder="Add context, acceptance criteria, links, notes…"
-            rows={4}
+          <textarea value={editDesc} onChange={e => setEditDesc(e.target.value)}
+            placeholder="Add context, acceptance criteria, links, notes…" rows={4}
             style={{ width: '100%', background: '#fff', border: '1px solid var(--divider)', borderRadius: 'var(--radius)', padding: '8px 10px', color: 'var(--light)', fontSize: 12, fontFamily: 'inherit', outline: 'none', resize: 'vertical', lineHeight: 1.5 }}
           />
           <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
@@ -257,36 +272,72 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], onRefe
         </div>
       )}
 
-      {/* ── Assignee panel ── */}
+      {/* ── Assignee / request panel ── */}
       {panel === 'assign' && canManager && (
         <div className="pm-sub-panel" style={{ marginTop: 8 }}>
-          <div className="pm-sub-panel-title">Assignees</div>
-          <div className="pm-sub-panel-hint">Search any user in the organisation — they don't need to be a project member yet.</div>
-          {/* Search + add */}
+          <div className="pm-sub-panel-title">Task Assignees</div>
+          <div className="pm-sub-panel-hint">
+            Select from activity members below, or search any user — they'll be added to the activity automatically when they accept.
+          </div>
+
+          {/* Quick-pick from activity members */}
+          {activityMembers.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+              {activityMembers
+                .filter(m => !requestedIds.has(String(m.userId)))
+                .map(m => (
+                  <button key={m.userId} className="pm-btn pm-btn-ghost" style={{ fontSize: 11, padding: '3px 10px', display: 'flex', alignItems: 'center', gap: 5 }}
+                    onClick={async () => {
+                      setAssignError('');
+                      try { await taskApi.sendRequest(task.taskId, m.userId); onRefetch?.(); }
+                      catch (err) { setAssignError(err?.response?.data?.error || 'Failed'); }
+                    }}>
+                    <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--mid)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 700, color: 'var(--gold)' }}>
+                      {initials(m.name)}
+                    </span>
+                    {m.name}
+                    <span style={{ fontSize: 9, color: 'var(--muted)' }}>+ Request</span>
+                  </button>
+                ))
+              }
+            </div>
+          )}
+
+          {/* Search outside activity members */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
             <UserSearchInput
               selectedUser={assignSearch}
               onSelect={setAssignSearch}
-              excludeUserIds={[...assignedIds]}
-              placeholder="Search users to assign…"
+              excludeUserIds={[...requestedIds]}
+              placeholder="Search users outside activity…"
             />
             <button className="pm-btn pm-btn-primary" style={{ fontSize: 11, padding: '6px 12px', flexShrink: 0 }}
-              onClick={handleAddAssignee} disabled={!assignSearch}>
-              Assign
+              onClick={handleSendRequest} disabled={!assignSearch}>
+              Send Request
             </button>
           </div>
-          {/* Current assignees */}
-          {(task.assignees || []).map(a => (
-            <div key={a.userId} className="pm-member-row selected" style={{ marginBottom: 4 }}>
-              <div className="pm-avatar" style={{ flexShrink: 0 }}>{initials(a.name)}</div>
-              <span style={{ flex: 1, fontSize: 12, color: 'var(--light)' }}>{a.name}</span>
-              <button className="pm-btn pm-btn-ghost" style={{ fontSize: 11, padding: '2px 8px', color: '#aa1010', borderColor: 'rgba(170,16,16,.3)' }}
-                onClick={() => handleRemoveAssignee(a.userId)}>Remove</button>
-            </div>
-          ))}
-          {!(task.assignees?.length) && (
-            <div style={{ fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>No one assigned yet.</div>
+          {assignError && <div style={{ color: '#aa1010', fontSize: 11, marginBottom: 8 }}>{assignError}</div>}
+
+          {/* All requests with status badges */}
+          {allRequests.length === 0 && (
+            <div style={{ fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>No assignment requests sent yet.</div>
           )}
+          {allRequests.map(r => {
+            const badge = REQUEST_BADGE[r.requestStatus] || REQUEST_BADGE.Pending;
+            return (
+              <div key={r.userId} className="pm-member-row selected" style={{ marginBottom: 4 }}>
+                <div className="pm-avatar" style={{ flexShrink: 0 }}>{initials(r.name)}</div>
+                <span style={{ flex: 1, fontSize: 12, color: 'var(--light)' }}>{r.name}</span>
+                <span style={{ fontSize: 10, fontWeight: 600, color: badge.color, background: badge.bg, borderRadius: 8, padding: '2px 8px', flexShrink: 0 }}>
+                  {badge.label}
+                </span>
+                <button className="pm-btn pm-btn-ghost" style={{ fontSize: 11, padding: '2px 8px', color: '#aa1010', borderColor: 'rgba(170,16,16,.3)', flexShrink: 0 }}
+                  onClick={() => handleRemoveRequest(r.userId)}>
+                  Remove
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -294,7 +345,10 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], onRefe
       {panel === 'deps' && canManager && (
         <div className="pm-sub-panel" style={{ marginTop: 8 }}>
           <div className="pm-sub-panel-title">Task Dependencies</div>
-          <div className="pm-sub-panel-hint">This task will be <strong>Blocked</strong> until all selected predecessor tasks are Done.</div>
+          <div className="pm-sub-panel-hint">
+            This task will be <strong>Blocked</strong> until all predecessor tasks are marked <strong>Complete</strong>.
+            Circular dependencies are automatically prevented.
+          </div>
           {otherTasks.map(t => {
             const isSel = currentDeps.has(t.taskId);
             return (

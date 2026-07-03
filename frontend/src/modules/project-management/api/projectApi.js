@@ -3,18 +3,21 @@ import axiosInstance from '../../messages/api/axiosInstance';
 const BASE = '/api/projects';
 
 export const projectApi = {
-  list:         ()              => axiosInstance.get(BASE).then(r => r.data),
-  get:          (id)            => axiosInstance.get(`${BASE}/${id}`).then(r => r.data),
-  create:       (body)          => axiosInstance.post(BASE, body).then(r => r.data),
-  update:       (id, body)      => axiosInstance.patch(`${BASE}/${id}`, body).then(r => r.data),
-  delete:       (id)            => axiosInstance.delete(`${BASE}/${id}`).then(r => r.data),
-  getAudit:     (id)            => axiosInstance.get(`${BASE}/${id}/audit`).then(r => r.data),
-  getPhases:    (id)            => axiosInstance.get(`${BASE}/${id}/phases`).then(r => r.data),
-  createPhase:  (id, body)      => axiosInstance.post(`${BASE}/${id}/phases`, body).then(r => r.data),
-  getMembers:   (id)            => axiosInstance.get(`${BASE}/${id}/members`).then(r => r.data),
-  addMember:    (id, body)      => axiosInstance.post(`${BASE}/${id}/members`, body).then(r => r.data),
-  updateMember: (id, uid, body) => axiosInstance.patch(`${BASE}/${id}/members/${uid}`, body).then(r => r.data),
-  removeMember: (id, uid)       => axiosInstance.delete(`${BASE}/${id}/members/${uid}`).then(r => r.data),
+  list:              ()              => axiosInstance.get(BASE).then(r => r.data),
+  get:               (id)            => axiosInstance.get(`${BASE}/${id}`).then(r => r.data),
+  create:            (body)          => axiosInstance.post(BASE, body).then(r => r.data),
+  update:            (id, body)      => axiosInstance.patch(`${BASE}/${id}`, body).then(r => r.data),
+  delete:            (id)            => axiosInstance.delete(`${BASE}/${id}`).then(r => r.data),
+  getAudit:          (id)            => axiosInstance.get(`${BASE}/${id}/audit`).then(r => r.data),
+  getPhases:         (id)            => axiosInstance.get(`${BASE}/${id}/phases`).then(r => r.data),
+  createPhase:       (id, body)      => axiosInstance.post(`${BASE}/${id}/phases`, body).then(r => r.data),
+  // Flat member list (used internally by ProjectDetailPage header/sidebar)
+  getMembers:        (id)            => axiosInstance.get(`${BASE}/${id}/members`).then(r => r.data),
+  // Hierarchical member list (Members tab — project → phase → activity, deduplicated)
+  getMembersHierarchy: (id)          => axiosInstance.get(`${BASE}/${id}/members/hierarchy`).then(r => r.data),
+  addMember:         (id, body)      => axiosInstance.post(`${BASE}/${id}/members`, body).then(r => r.data),
+  updateMember:      (id, uid, body) => axiosInstance.patch(`${BASE}/${id}/members/${uid}`, body).then(r => r.data),
+  removeMember:      (id, uid)       => axiosInstance.delete(`${BASE}/${id}/members/${uid}`).then(r => r.data),
 };
 
 export const phaseApi = {
@@ -29,23 +32,40 @@ export const phaseApi = {
 };
 
 export const activityApi = {
+  // Task CRUD nested under activity
   getTasks:       (actId)           => axiosInstance.get(`/api/activities/${actId}/tasks`).then(r => r.data),
   createTask:     (actId, body)     => axiosInstance.post(`/api/activities/${actId}/tasks`, body).then(r => r.data),
+  // Activity CRUD
   update:         (id, body)        => axiosInstance.patch(`/api/activities/${id}`, body).then(r => r.data),
   updateStatus:   (id, status)      => axiosInstance.patch(`/api/activities/${id}/status`, { status }).then(r => r.data),
   delete:         (id)              => axiosInstance.delete(`/api/activities/${id}`).then(r => r.data),
   addDep:         (id, dependsOnId) => axiosInstance.post(`/api/activities/${id}/dependencies`, { dependsOnId }).then(r => r.data),
   removeDep:      (id, depId)       => axiosInstance.delete(`/api/activities/${id}/dependencies/${depId}`).then(r => r.data),
+  // Activity members
+  getMembers:     (id)              => axiosInstance.get(`/api/activities/${id}/members`).then(r => r.data),
+  addMember:      (id, userId)      => axiosInstance.post(`/api/activities/${id}/members`, { userId }).then(r => r.data),
+  removeMember:   (id, uid)         => axiosInstance.delete(`/api/activities/${id}/members/${uid}`).then(r => r.data),
 };
 
 export const taskApi = {
-  update:         (id, body)        => axiosInstance.patch(`/api/tasks/${id}`, body).then(r => r.data),
-  updateStatus:   (id, status)      => axiosInstance.patch(`/api/tasks/${id}/status`, { status }).then(r => r.data),
-  delete:         (id)              => axiosInstance.delete(`/api/tasks/${id}`).then(r => r.data),
-  addAssignee:    (id, userId)      => axiosInstance.post(`/api/tasks/${id}/assignees`, { userId }).then(r => r.data),
-  removeAssignee: (id, uid)         => axiosInstance.delete(`/api/tasks/${id}/assignees/${uid}`).then(r => r.data),
-  addDep:         (id, dependsOnId) => axiosInstance.post(`/api/tasks/${id}/dependencies`, { dependsOnId }).then(r => r.data),
-  removeDep:      (id, depId)       => axiosInstance.delete(`/api/tasks/${id}/dependencies/${depId}`).then(r => r.data),
+  update:       (id, body)      => axiosInstance.patch(`/api/tasks/${id}`, body).then(r => r.data),
+  updateStatus: (id, status)    => axiosInstance.patch(`/api/tasks/${id}/status`, { status }).then(r => r.data),
+  delete:       (id)            => axiosInstance.delete(`/api/tasks/${id}`).then(r => r.data),
+  addDep:       (id, dependsOnId) => axiosInstance.post(`/api/tasks/${id}/dependencies`, { dependsOnId }).then(r => r.data),
+  removeDep:    (id, depId)     => axiosInstance.delete(`/api/tasks/${id}/dependencies/${depId}`).then(r => r.data),
+  // Assignment requests (replaces old direct addAssignee)
+  sendRequest:   (id, userId)   => axiosInstance.post(`/api/tasks/${id}/requests`, { userId }).then(r => r.data),
+  removeRequest: (id, uid)      => axiosInstance.delete(`/api/tasks/${id}/requests/${uid}`).then(r => r.data),
+};
+
+// Assignment request management — called from the current user's perspective
+// (will be consumed by the Dashboard module when it is connected)
+export const requestApi = {
+  // Get all pending/responded requests for the current user
+  getMyRequests:   ()            => axiosInstance.get('/api/tasks/my-requests').then(r => r.data),
+  // Respond to a specific request
+  accept:          (requestId)   => axiosInstance.post(`/api/tasks/requests/${requestId}/accept`).then(r => r.data),
+  decline:         (requestId)   => axiosInstance.post(`/api/tasks/requests/${requestId}/decline`).then(r => r.data),
 };
 
 // User search — used by MemberManager and assignee picker

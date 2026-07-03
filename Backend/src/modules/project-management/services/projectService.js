@@ -130,6 +130,8 @@ async function deleteProject(projectId, userId) {
   await audit.log({ entityType:'project', entityId:projectId, projectId, userId, action:'deleted' });
 }
 
+// ── Flat member list (used by project header + progress sidebar) ──────────────
+
 async function getMembers(projectId) {
   const pool = await getPool();
   const result = await pool.request()
@@ -143,12 +145,130 @@ async function getMembers(projectId) {
   return result.recordset;
 }
 
+// ── Hierarchical member view (Members tab) ────────────────────────────────────
+//
+// Returns every unique member with their project-level role, then for each
+// member the list of phases they participate in (via pm_phase_members or any
+// activity in that phase) and the specific activities they are a member of.
+// A user can appear in multiple phases and multiple activities within each
+// phase but appears exactly ONCE at the top-level deduplicated list.
+//
+// Shape:
+// [
+//   {
+//     userId, name, email, projectRole,
+//     phases: [
+//       {
+//         phaseId, phaseName,
+//         activities: [{ activityId, activityName }]
+//       }
+//     ]
+//   }
+// ]
+
+async function getProjectMembersHierarchy(projectId) {
+  const pool = await getPool();
+
+  // 1. All project-level members
+  const membersResult = await pool.request()
+    .input('projectId', sql.Int, projectId)
+    .query(`
+      SELECT m.user_id AS userId, m.role AS projectRole,
+             COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''), u.email) AS name,
+             u.email
+      FROM pm_members m
+      INNER JOIN auth_users u ON u.user_id = m.user_id
+      WHERE m.project_id = @projectId
+      ORDER BY m.role, u.first_name
+    `);
+
+  // 2. All activity memberships for this project (includes phase context)
+  const activityMembersResult = await pool.request()
+    .input('projectId', sql.Int, projectId)
+    .query(`
+      SELECT am.user_id AS userId,
+             a.activity_id AS activityId,
+             a.name AS activityName,
+             ph.phase_id AS phaseId,
+             ph.name AS phaseName
+      FROM pm_activity_members am
+      INNER JOIN pm_activities a  ON a.activity_id = am.activity_id  AND a.is_deleted = 0
+      INNER JOIN pm_phases     ph ON ph.phase_id   = a.phase_id      AND ph.is_deleted = 0
+      WHERE ph.project_id = @projectId
+      ORDER BY ph.display_order, a.display_order
+    `);
+
+  // 3. Also capture phase-level memberships (pm_phase_members) for users who
+  //    are in a phase but may not have confirmed an activity membership yet.
+  const phaseMembersResult = await pool.request()
+    .input('projectId', sql.Int, projectId)
+    .query(`
+      SELECT pm2.user_id AS userId,
+             ph.phase_id AS phaseId,
+             ph.name AS phaseName
+      FROM pm_phase_members pm2
+      INNER JOIN pm_phases ph ON ph.phase_id = pm2.phase_id AND ph.is_deleted = 0
+      WHERE ph.project_id = @projectId
+      ORDER BY ph.display_order
+    `);
+
+  // Build the hierarchy in memory
+  const membersMap = new Map();
+  for (const m of membersResult.recordset) {
+    membersMap.set(String(m.userId), {
+      userId:      m.userId,
+      name:        m.name,
+      email:       m.email,
+      projectRole: m.projectRole,
+      phasesMap:   new Map(), // phaseId → { phaseId, phaseName, activitiesMap }
+    });
+  }
+
+  // Merge phase memberships
+  for (const pm of phaseMembersResult.recordset) {
+    const uid = String(pm.userId);
+    if (!membersMap.has(uid)) continue; // phase member not in project members (edge case)
+    const member = membersMap.get(uid);
+    if (!member.phasesMap.has(pm.phaseId)) {
+      member.phasesMap.set(pm.phaseId, { phaseId: pm.phaseId, phaseName: pm.phaseName, activitiesMap: new Map() });
+    }
+  }
+
+  // Merge activity memberships
+  for (const am of activityMembersResult.recordset) {
+    const uid = String(am.userId);
+    // Auto-add to top-level members list if accepted but somehow not in pm_members
+    if (!membersMap.has(uid)) {
+      membersMap.set(uid, { userId: am.userId, name: '', email: '', projectRole: 'Member', phasesMap: new Map() });
+    }
+    const member = membersMap.get(uid);
+    if (!member.phasesMap.has(am.phaseId)) {
+      member.phasesMap.set(am.phaseId, { phaseId: am.phaseId, phaseName: am.phaseName, activitiesMap: new Map() });
+    }
+    const phase = member.phasesMap.get(am.phaseId);
+    phase.activitiesMap.set(am.activityId, { activityId: am.activityId, activityName: am.activityName });
+  }
+
+  // Serialise
+  return [...membersMap.values()].map(m => ({
+    userId:      m.userId,
+    name:        m.name,
+    email:       m.email,
+    projectRole: m.projectRole,
+    phases: [...m.phasesMap.values()].map(ph => ({
+      phaseId:    ph.phaseId,
+      phaseName:  ph.phaseName,
+      activities: [...ph.activitiesMap.values()],
+    })),
+  }));
+}
+
 async function addMember(projectId, targetUserId, role, actorUserId) {
   const pool = await getPool();
   await pool.request()
-    .input('projectId',     sql.Int,              projectId)
-    .input('targetUserId',  sql.UniqueIdentifier, targetUserId)
-    .input('role',          sql.NVarChar(20),     role)
+    .input('projectId',    sql.Int,              projectId)
+    .input('targetUserId', sql.UniqueIdentifier, targetUserId)
+    .input('role',         sql.NVarChar(20),     role)
     .query(`
       IF EXISTS (SELECT 1 FROM pm_members WHERE project_id=@projectId AND user_id=@targetUserId)
         UPDATE pm_members SET role=@role WHERE project_id=@projectId AND user_id=@targetUserId
@@ -160,7 +280,6 @@ async function addMember(projectId, targetUserId, role, actorUserId) {
 
 async function updateMemberRole(projectId, targetUserId, role, actorUserId) {
   const pool = await getPool();
-  // Safety: if downgrading someone, ensure at least one other Manager remains
   if (role !== 'Manager') {
     const managersResult = await pool.request()
       .input('projectId', sql.Int, projectId)
@@ -182,7 +301,6 @@ async function updateMemberRole(projectId, targetUserId, role, actorUserId) {
 
 async function removeMember(projectId, targetUserId, actorUserId) {
   const pool = await getPool();
-  // Safety: prevent removing the last Manager
   const memberResult = await pool.request()
     .input('projectId',    sql.Int,              projectId)
     .input('targetUserId', sql.UniqueIdentifier, targetUserId)
@@ -203,4 +321,7 @@ async function removeMember(projectId, targetUserId, actorUserId) {
   await audit.log({ entityType:'project', entityId:projectId, projectId, userId:actorUserId, action:'member_removed' });
 }
 
-module.exports = { listProjects, getProject, createProject, updateProject, deleteProject, getMembers, addMember, updateMemberRole, removeMember };
+module.exports = {
+  listProjects, getProject, createProject, updateProject, deleteProject,
+  getMembers, getProjectMembersHierarchy, addMember, updateMemberRole, removeMember,
+};
