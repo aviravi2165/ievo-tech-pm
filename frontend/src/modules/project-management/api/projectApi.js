@@ -13,7 +13,8 @@ export const projectApi = {
   createPhase:       (id, body)      => axiosInstance.post(`${BASE}/${id}/phases`, body).then(r => r.data),
   // Flat member list (used internally by ProjectDetailPage header/sidebar)
   getMembers:        (id)            => axiosInstance.get(`${BASE}/${id}/members`).then(r => r.data),
-  // Hierarchical member list (Members tab — project → phase → activity, deduplicated)
+  // Hierarchical member list (Members tab — project → phase → activity, deduplicated,
+  // now includes each member's actual phaseRole / activityRole, not just names)
   getMembersHierarchy: (id)          => axiosInstance.get(`${BASE}/${id}/members/hierarchy`).then(r => r.data),
   addMember:         (id, body)      => axiosInstance.post(`${BASE}/${id}/members`, body).then(r => r.data),
   updateMember:      (id, uid, body) => axiosInstance.patch(`${BASE}/${id}/members/${uid}`, body).then(r => r.data),
@@ -29,6 +30,11 @@ export const phaseApi = {
   addDep:         (id, dependsOnId) => axiosInstance.post(`/api/phases/${id}/dependencies`, { dependsOnId }).then(r => r.data),
   removeDep:      (id, depId)       => axiosInstance.delete(`/api/phases/${id}/dependencies/${depId}`).then(r => r.data),
   reorder:        (id, direction)   => axiosInstance.patch(`/api/phases/${id}/reorder`, { direction }).then(r => r.data),
+  // Phase members — role: 'Manager' | 'Employee' | 'Viewer'
+  getMembers:     (id)              => axiosInstance.get(`/api/phases/${id}/members`).then(r => r.data),
+  addMember:      (id, userId, role = 'Employee') => axiosInstance.post(`/api/phases/${id}/members`, { userId, role }).then(r => r.data),
+  updateMemberRole: (id, uid, role) => axiosInstance.patch(`/api/phases/${id}/members/${uid}`, { role }).then(r => r.data),
+  removeMember:   (id, uid)         => axiosInstance.delete(`/api/phases/${id}/members/${uid}`).then(r => r.data),
 };
 
 export const activityApi = {
@@ -41,10 +47,13 @@ export const activityApi = {
   delete:         (id)              => axiosInstance.delete(`/api/activities/${id}`).then(r => r.data),
   addDep:         (id, dependsOnId) => axiosInstance.post(`/api/activities/${id}/dependencies`, { dependsOnId }).then(r => r.data),
   removeDep:      (id, depId)       => axiosInstance.delete(`/api/activities/${id}/dependencies/${depId}`).then(r => r.data),
-  // Activity members
+  // Activity members — role: 'Manager' | 'Employee' | 'Viewer'
   getMembers:     (id)              => axiosInstance.get(`/api/activities/${id}/members`).then(r => r.data),
-  addMember:      (id, userId)      => axiosInstance.post(`/api/activities/${id}/members`, { userId }).then(r => r.data),
+  addMember:      (id, userId, role = 'Employee') => axiosInstance.post(`/api/activities/${id}/members`, { userId, role }).then(r => r.data),
+  updateMemberRole: (id, uid, role) => axiosInstance.patch(`/api/activities/${id}/members/${uid}`, { role }).then(r => r.data),
   removeMember:   (id, uid)         => axiosInstance.delete(`/api/activities/${id}/members/${uid}`).then(r => r.data),
+  // Activity group chat — returns { conversationId }, auto-creating the thread if needed
+  getChat:        (id)              => axiosInstance.get(`/api/activities/${id}/chat`).then(r => r.data),
 };
 
 export const taskApi = {
@@ -56,6 +65,8 @@ export const taskApi = {
   // Assignment requests (replaces old direct addAssignee)
   sendRequest:   (id, userId)   => axiosInstance.post(`/api/tasks/${id}/requests`, { userId }).then(r => r.data),
   removeRequest: (id, uid)      => axiosInstance.delete(`/api/tasks/${id}/requests/${uid}`).then(r => r.data),
+  // Task Shared/CC chat — returns { conversationId }, auto-creating the thread if needed
+  getChat:       (id)           => axiosInstance.get(`/api/tasks/${id}/chat`).then(r => r.data),
 };
 
 // Assignment request management — called from the current user's perspective

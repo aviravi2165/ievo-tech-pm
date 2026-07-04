@@ -4,6 +4,7 @@ import ProgressBar from './ProgressBar';
 import OverdueBadge from './OverdueBadge';
 import TaskItem from './TaskItem';
 import UserSearchInput from './UserSearchInput';
+import ChatButton from './ChatButton';
 import { activityApi } from '../api/projectApi';
 
 const ACTIVITY_STATUSES = ['To Do', 'In Progress', 'Completed', 'Blocked'];
@@ -215,6 +216,12 @@ export default function ActivityRow({
         {activity.ownerName && (
           <span style={{ fontSize: 10, color: 'var(--muted)', background: 'var(--mid)', padding: '1px 7px', borderRadius: 8, border: '1px solid var(--divider)', flexShrink: 0 }}>
             {activity.ownerName}
+          </span>
+        )}
+
+        {(canEdit || canMember) && (
+          <span onClick={e => e.stopPropagation()}>
+            <ChatButton kind="activity" id={activity.activityId} label="Group Chat" />
           </span>
         )}
 

@@ -4,6 +4,7 @@ const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
 const { resolveUnblocked, blockIfNeeded } = require('./dependencyService');
 const { broadcastStatusChanged, broadcastUnblocked, broadcastAssignmentRequest } = require('../socket/socketHandler');
+const pmChatService = require('./pmChatService');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -61,7 +62,12 @@ async function getTasksForActivity(activityId) {
              (
                SELECT STRING_AGG(CAST(depends_on_task_id AS VARCHAR(20)), ',')
                FROM pm_task_deps WHERE task_id = t.task_id
-             ) AS dependsOn
+             ) AS dependsOn,
+             -- Whether a chat thread already exists for this task (frontend uses this
+             -- to decide whether to show "Open Chat" vs "Chat available once assigned")
+             (
+               SELECT CAST(CASE WHEN EXISTS (SELECT 1 FROM pm_task_threads WHERE task_id = t.task_id) THEN 1 ELSE 0 END AS BIT)
+             ) AS hasThread
       FROM pm_tasks t
       WHERE t.activity_id = @activityId AND t.is_deleted = 0
       ORDER BY t.created_at
@@ -82,6 +88,11 @@ async function getTasksForActivity(activityId) {
 // pm_task_assignees. The request appears on the assignee's Dashboard.
 // pm_task_assignees is no longer written here; accepted requests populate
 // pm_activity_members (via acceptAssignmentRequest below).
+//
+// A task's Shared/CC chat thread is created immediately, seeded with the
+// creator + the Activity's Manager(s) — assignees are added to it (and to
+// the Activity's group thread) once they actually accept, in
+// acceptAssignmentRequest.
 
 async function createTask(activityId, projectId, userId, body) {
   const { name, description, priority = 'Medium', dueDate, estimatedHours, assigneeIds = [] } = body;
@@ -127,6 +138,11 @@ async function createTask(activityId, projectId, userId, body) {
   }
 
   await audit.log({ entityType:'task', entityId:task.taskId, projectId, userId, action:'created', fieldChanged:'name', newValue:name.trim() });
+
+  // Seed the task's chat thread now (creator + Activity Manager(s)). Assignees
+  // join once they accept — see acceptAssignmentRequest.
+  await pmChatService.ensureTaskThread(task.taskId);
+
   return { ...task, allRequests: assigneeIds.map(uid => ({ userId: uid, requestStatus: 'Pending' })) };
 }
 
@@ -220,13 +236,14 @@ async function acceptAssignmentRequest(requestId, userId) {
           INSERT INTO pm_task_assignees (task_id, user_id) VALUES (@taskId, @userId)
       `);
 
-    // Auto-add accepted user to the activity's member roster
+    // Auto-add accepted user to the activity's member roster (default Employee —
+    // never downgrades if they already hold a higher role there)
     await req()
       .input('activityId', sql.Int,              row.activity_id)
       .input('userId',     sql.UniqueIdentifier, userId)
       .query(`
         IF NOT EXISTS (SELECT 1 FROM pm_activity_members WHERE activity_id = @activityId AND user_id = @userId)
-          INSERT INTO pm_activity_members (activity_id, user_id) VALUES (@activityId, @userId)
+          INSERT INTO pm_activity_members (activity_id, user_id, role) VALUES (@activityId, @userId, 'Employee')
       `);
 
     // Also ensure they're in pm_members as a project Member (so they can see the project)
@@ -240,6 +257,11 @@ async function acceptAssignmentRequest(requestId, userId) {
   });
 
   await audit.log({ entityType:'task', entityId:row.task_id, projectId:row.project_id, userId, action:'assignment_accepted' });
+
+  // Fully auto-sync: they now show up in both the task's Shared chat and
+  // the Activity's group chat.
+  await pmChatService.onAssigneeAccepted(row.task_id, row.activity_id);
+
   return { requestId, status: 'Accepted', taskId: row.task_id };
 }
 
@@ -272,6 +294,7 @@ async function declineAssignmentRequest(requestId, userId) {
     `);
 
   await audit.log({ entityType:'task', entityId:row.task_id, projectId:row.project_id, userId, action:'assignment_declined' });
+  // Nothing to sync in chat — a Pending request was never added to either thread.
   return { requestId, status: 'Declined', taskId: row.task_id };
 }
 
@@ -341,6 +364,8 @@ async function deleteTask(taskId, projectId, userId) {
     .input('taskId', sql.Int, taskId)
     .query(`UPDATE pm_tasks SET is_deleted=1 WHERE task_id=@taskId`);
   await audit.log({ entityType:'task', entityId:taskId, projectId, userId, action:'deleted' });
+  // The task's chat thread (if any) is left intact for history — it simply
+  // stops appearing as "linked to an open task" in the UI. Nothing to sync.
 }
 
 // ── Send a new assignment request (post-creation) ─────────────────────────────
@@ -370,6 +395,12 @@ async function sendAssignmentRequest(taskId, targetUserId, projectId, actorUserI
 
 async function removeAssignmentRequest(taskId, targetUserId, projectId, actorUserId) {
   const pool = await getPool();
+
+  const taskResult = await pool.request()
+    .input('taskId', sql.Int, taskId)
+    .query(`SELECT activity_id AS activityId FROM pm_tasks WHERE task_id=@taskId`);
+  const activityId = taskResult.recordset[0]?.activityId;
+
   await pool.request()
     .input('taskId',     sql.Int,              taskId)
     .input('assigneeId', sql.UniqueIdentifier, targetUserId)
@@ -380,6 +411,10 @@ async function removeAssignmentRequest(taskId, targetUserId, projectId, actorUse
     .input('userId', sql.UniqueIdentifier, targetUserId)
     .query(`DELETE FROM pm_task_assignees WHERE task_id=@taskId AND user_id=@userId`);
   await audit.log({ entityType:'task', entityId:taskId, projectId, userId:actorUserId, action:'assignee_removed', oldValue:targetUserId });
+
+  // Fully auto-sync: drop them from the task thread, and from the Activity
+  // thread too if this was their last accepted task in that activity.
+  if (activityId) await pmChatService.onAssigneeRemoved(taskId, activityId);
 }
 
 // ── Dependency management ─────────────────────────────────────────────────────
@@ -407,6 +442,12 @@ async function removeTaskDep(taskId, dependsOnId, projectId, userId) {
   await audit.log({ entityType:'task', entityId:taskId, projectId, userId, action:'dependency_removed', oldValue:dependsOnId });
 }
 
+// ── Chat thread lookup (used by taskRoutes GET /:id/chat) ──────────────────────
+
+async function getOrCreateTaskThread(taskId) {
+  return pmChatService.ensureTaskThread(taskId);
+}
+
 module.exports = {
   getTasksForActivity,
   createTask,
@@ -420,4 +461,5 @@ module.exports = {
   declineAssignmentRequest,
   addTaskDep,
   removeTaskDep,
+  getOrCreateTaskThread,
 };

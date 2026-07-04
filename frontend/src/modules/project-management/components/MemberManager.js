@@ -1,24 +1,52 @@
 import { useState, useEffect, useCallback } from 'react';
-import { projectApi } from '../api/projectApi';
+import { projectApi, phaseApi, activityApi } from '../api/projectApi';
 import UserSearchInput from './UserSearchInput';
 
 const ROLES = ['Manager', 'Member', 'Viewer'];
+const ENTITY_ROLES = ['Manager', 'Employee', 'Viewer']; // Phase / Activity vocabulary
 
 function initials(name = '') {
   return (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
 const ROLE_PILL = {
-  Manager: { bg: '#fff4dc', color: '#8a5a00' },
-  Member:  { bg: '#e8f5e9', color: '#1a5e2a' },
-  Viewer:  { bg: '#f0f0f0', color: '#555'     },
+  Manager:  { bg: '#fff4dc', color: '#8a5a00' },
+  Member:   { bg: '#e8f5e9', color: '#1a5e2a' },
+  Employee: { bg: '#e8f5e9', color: '#1a5e2a' },
+  Viewer:   { bg: '#f0f0f0', color: '#555'     },
 };
+
+// ── Small inline role pill / editable select for a Phase or Activity row ──────
+function EntityRolePill({ role, isManager, onChange }) {
+  const pill = ROLE_PILL[role] || { bg: '#f0f0f0', color: 'var(--muted)' };
+  if (!isManager) {
+    return (
+      <span style={{ fontSize: 9, fontWeight: 700, color: pill.color, background: pill.bg, borderRadius: 8, padding: '1px 7px' }}>
+        {role || 'Inherited'}
+      </span>
+    );
+  }
+  return (
+    <select
+      value={role || ''}
+      onChange={e => onChange(e.target.value || null)}
+      onClick={e => e.stopPropagation()}
+      style={{ fontSize: 9, fontWeight: 700, color: pill.color, background: pill.bg, border: 'none', borderRadius: 8, padding: '1px 5px', fontFamily: 'inherit', outline: 'none' }}
+    >
+      <option value="">Inherited</option>
+      {ENTITY_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+    </select>
+  );
+}
 
 // ── Hierarchical member card ─────────────────────────────────────────────────
 // Each top-level card = one deduplicated user.
-// Expanding shows which phases they're in, and within each phase, which activities.
+// Expanding shows which phases they're in (with their Phase role, if any is
+// explicitly set), and within each phase, which activities (with their
+// Activity role). A Manager can change either role inline, or clear it back
+// to "Inherited" (removes the explicit row, falling back to the level above).
 
-function MemberCard({ m, onRoleChange, onRemove, roleError, isManager }) {
+function MemberCard({ m, onRoleChange, onRemove, roleError, isManager, onPhaseRoleChange, onActivityRoleChange }) {
   const [expanded, setExpanded] = useState(false);
   const pill = ROLE_PILL[m.projectRole] || ROLE_PILL.Member;
   const hasPhases = m.phases?.length > 0;
@@ -85,7 +113,7 @@ function MemberCard({ m, onRoleChange, onRemove, roleError, isManager }) {
         <div style={{ color: '#aa1010', fontSize: 11, padding: '0 14px 10px 52px' }}>{roleError}</div>
       )}
 
-      {/* Expanded: phase → activity hierarchy */}
+      {/* Expanded: phase → activity hierarchy, each with its own role */}
       {expanded && hasPhases && (
         <div style={{ borderTop: '1px solid var(--divider)', padding: '10px 14px 10px 52px' }}>
           {m.phases.map(ph => (
@@ -96,19 +124,30 @@ function MemberCard({ m, onRoleChange, onRemove, roleError, isManager }) {
                   <rect x="3" y="3" width="18" height="18" rx="2"/>
                 </svg>
                 <span style={{ fontSize: 12, color: 'var(--light)', fontWeight: 600 }}>{ph.phaseName}</span>
+                <EntityRolePill
+                  role={ph.phaseRole}
+                  isManager={isManager}
+                  onChange={(role) => onPhaseRoleChange(ph.phaseId, m.userId, role)}
+                />
                 {ph.activities.length > 0 && (
                   <span style={{ fontSize: 10, color: 'var(--muted)' }}>({ph.activities.length} {ph.activities.length === 1 ? 'activity' : 'activities'})</span>
                 )}
               </div>
-              {/* Activity chips */}
+              {/* Activity chips, each with its own role */}
               {ph.activities.length > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, paddingLeft: 16 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, paddingLeft: 16 }}>
                   {ph.activities.map(act => (
                     <span key={act.activityId} style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 5,
                       fontSize: 10, color: 'var(--muted)', background: 'var(--mid)',
                       border: '1px solid var(--divider)', borderRadius: 8, padding: '1px 8px',
                     }}>
                       {act.activityName}
+                      <EntityRolePill
+                        role={act.activityRole}
+                        isManager={isManager}
+                        onChange={(role) => onActivityRoleChange(act.activityId, m.userId, role)}
+                      />
                     </span>
                   ))}
                 </div>
@@ -183,6 +222,27 @@ export default function MemberManager({ projectId, members: flatMembers = [], my
     }
   };
 
+  // Setting role to null removes the explicit row (falls back to inherited access).
+  const handlePhaseRoleChange = async (phaseId, userId, role) => {
+    try {
+      if (role) await phaseApi.addMember(phaseId, userId, role);
+      else await phaseApi.removeMember(phaseId, userId);
+      fetchHierarchy();
+    } catch (err) {
+      setRoleErrors(e => ({ ...e, [userId]: err?.response?.data?.error || 'Failed to update phase role' }));
+    }
+  };
+
+  const handleActivityRoleChange = async (activityId, userId, role) => {
+    try {
+      if (role) await activityApi.addMember(activityId, userId, role);
+      else await activityApi.removeMember(activityId, userId);
+      fetchHierarchy();
+    } catch (err) {
+      setRoleErrors(e => ({ ...e, [userId]: err?.response?.data?.error || 'Failed to update activity role' }));
+    }
+  };
+
   // Source for the list: use hierarchy if loaded, fall back to flat list with empty phases
   const membersToShow = (hierarchy || flatMembers.map(m => ({ ...m, projectRole: m.role, phases: [] })))
     .filter(m => !search.trim() || (m.name || '').toLowerCase().includes(search.toLowerCase()) || (m.email || '').toLowerCase().includes(search.toLowerCase()));
@@ -213,8 +273,9 @@ export default function MemberManager({ projectId, members: flatMembers = [], my
           </div>
           {addError && <div style={{ color: '#aa1010', fontSize: 12, marginTop: 6 }}>{addError}</div>}
           <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
-            <strong>Roles:</strong> Manager = full project access · Member = edit assigned tasks · Viewer = read-only<br/>
-            Expand any member card to see which phases and activities they belong to.
+            <strong>Project roles:</strong> Manager = full project access · Member = edit assigned tasks · Viewer = read-only<br/>
+            <strong>Phase / Activity roles:</strong> Manager = manage that phase/activity + its roster · Employee = update its tasks/status · Viewer = read-only.<br/>
+            Expand any member card to see (and, as a Manager, change) their role at each phase and activity — leaving it "Inherited" falls back to their role at the level above.
           </div>
         </div>
       )}
@@ -251,6 +312,8 @@ export default function MemberManager({ projectId, members: flatMembers = [], my
           roleError={roleErrors[m.userId]}
           onRoleChange={handleRoleChange}
           onRemove={handleRemove}
+          onPhaseRoleChange={handlePhaseRoleChange}
+          onActivityRoleChange={handleActivityRoleChange}
         />
       ))}
       {!loading && membersToShow.length === 0 && (

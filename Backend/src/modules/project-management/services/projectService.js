@@ -148,10 +148,16 @@ async function getMembers(projectId) {
 // ── Hierarchical member view (Members tab) ────────────────────────────────────
 //
 // Returns every unique member with their project-level role, then for each
-// member the list of phases they participate in (via pm_phase_members or any
-// activity in that phase) and the specific activities they are a member of.
-// A user can appear in multiple phases and multiple activities within each
-// phase but appears exactly ONCE at the top-level deduplicated list.
+// member the list of phases they participate in — WITH their actual Phase
+// role if one is explicitly set — and within each phase, the activities
+// they belong to, WITH their actual Activity role.
+//
+// A phase/activity role of null means "no explicit row there — access is
+// inherited from the level above" (see roleService.getEffective*Role for
+// how that inheritance resolves at request time). This is deliberately
+// surfaced as null rather than pre-computed/inherited here, so the Members
+// tab can show e.g. "Employee (inherited from Project)" distinctly from an
+// explicit per-level assignment.
 //
 // Shape:
 // [
@@ -159,8 +165,8 @@ async function getMembers(projectId) {
 //     userId, name, email, projectRole,
 //     phases: [
 //       {
-//         phaseId, phaseName,
-//         activities: [{ activityId, activityName }]
+//         phaseId, phaseName, phaseRole,   // phaseRole: 'Manager'|'Employee'|'Viewer'|null
+//         activities: [{ activityId, activityName, activityRole }]
 //       }
 //     ]
 //   }
@@ -182,11 +188,12 @@ async function getProjectMembersHierarchy(projectId) {
       ORDER BY m.role, u.first_name
     `);
 
-  // 2. All activity memberships for this project (includes phase context)
+  // 2. All activity memberships for this project (includes phase context + role)
   const activityMembersResult = await pool.request()
     .input('projectId', sql.Int, projectId)
     .query(`
       SELECT am.user_id AS userId,
+             am.role AS activityRole,
              a.activity_id AS activityId,
              a.name AS activityName,
              ph.phase_id AS phaseId,
@@ -198,12 +205,14 @@ async function getProjectMembersHierarchy(projectId) {
       ORDER BY ph.display_order, a.display_order
     `);
 
-  // 3. Also capture phase-level memberships (pm_phase_members) for users who
-  //    are in a phase but may not have confirmed an activity membership yet.
+  // 3. Explicit phase-level memberships (pm_phase_members) — for users who
+  //    hold a Phase role directly (e.g. Phase Manager) whether or not they
+  //    also happen to be in one of that phase's activities.
   const phaseMembersResult = await pool.request()
     .input('projectId', sql.Int, projectId)
     .query(`
       SELECT pm2.user_id AS userId,
+             pm2.role AS phaseRole,
              ph.phase_id AS phaseId,
              ph.name AS phaseName
       FROM pm_phase_members pm2
@@ -220,33 +229,35 @@ async function getProjectMembersHierarchy(projectId) {
       name:        m.name,
       email:       m.email,
       projectRole: m.projectRole,
-      phasesMap:   new Map(), // phaseId → { phaseId, phaseName, activitiesMap }
+      phasesMap:   new Map(), // phaseId → { phaseId, phaseName, phaseRole, activitiesMap }
     });
   }
 
-  // Merge phase memberships
+  // Merge explicit phase memberships
   for (const pm of phaseMembersResult.recordset) {
     const uid = String(pm.userId);
     if (!membersMap.has(uid)) continue; // phase member not in project members (edge case)
     const member = membersMap.get(uid);
     if (!member.phasesMap.has(pm.phaseId)) {
-      member.phasesMap.set(pm.phaseId, { phaseId: pm.phaseId, phaseName: pm.phaseName, activitiesMap: new Map() });
+      member.phasesMap.set(pm.phaseId, { phaseId: pm.phaseId, phaseName: pm.phaseName, phaseRole: pm.phaseRole, activitiesMap: new Map() });
+    } else {
+      member.phasesMap.get(pm.phaseId).phaseRole = pm.phaseRole;
     }
   }
 
   // Merge activity memberships
   for (const am of activityMembersResult.recordset) {
     const uid = String(am.userId);
-    // Auto-add to top-level members list if accepted but somehow not in pm_members
+    // Auto-add to top-level members list if somehow not yet in pm_members
     if (!membersMap.has(uid)) {
       membersMap.set(uid, { userId: am.userId, name: '', email: '', projectRole: 'Member', phasesMap: new Map() });
     }
     const member = membersMap.get(uid);
     if (!member.phasesMap.has(am.phaseId)) {
-      member.phasesMap.set(am.phaseId, { phaseId: am.phaseId, phaseName: am.phaseName, activitiesMap: new Map() });
+      member.phasesMap.set(am.phaseId, { phaseId: am.phaseId, phaseName: am.phaseName, phaseRole: null, activitiesMap: new Map() });
     }
     const phase = member.phasesMap.get(am.phaseId);
-    phase.activitiesMap.set(am.activityId, { activityId: am.activityId, activityName: am.activityName });
+    phase.activitiesMap.set(am.activityId, { activityId: am.activityId, activityName: am.activityName, activityRole: am.activityRole });
   }
 
   // Serialise
@@ -258,6 +269,7 @@ async function getProjectMembersHierarchy(projectId) {
     phases: [...m.phasesMap.values()].map(ph => ({
       phaseId:    ph.phaseId,
       phaseName:  ph.phaseName,
+      phaseRole:  ph.phaseRole ?? null,
       activities: [...ph.activitiesMap.values()],
     })),
   }));

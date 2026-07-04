@@ -39,6 +39,10 @@ router.patch('/:id',        resolveTaskProject, requireRole('Member'),  ctrl.upd
 router.delete('/:id',       resolveTaskProject, requireRole('Manager'), ctrl.remove);
 router.patch('/:id/status', resolveTaskProject, requireRole('Member'),  ctrl.updateStatus);
 
+// ── Task chat ────────────────────────────────────────────────────────────────
+// Returns { conversationId } for the task's auto-managed Shared/CC thread.
+router.get('/:id/chat', resolveTaskProject, requireRole('Member'), ctrl.getChat);
+
 // Assignment requests (manager sends, assignee responds above)
 router.post('/:id/requests',         resolveTaskProject, requireRole('Manager'), ctrl.sendRequest);
 router.delete('/:id/requests/:uid',  resolveTaskProject, requireRole('Manager'), ctrl.removeRequest);

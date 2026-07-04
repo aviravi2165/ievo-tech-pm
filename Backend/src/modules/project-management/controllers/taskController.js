@@ -19,7 +19,10 @@ const declineRequest = async (req,res,next) => { try { res.json(await svc.declin
 // Fetch all pending/responded requests for the logged-in user (Dashboard)
 const getMyRequests  = async (req,res,next) => { try { res.json(await svc.getMyAssignmentRequests(req.user.userId)); } catch(e){next(e);} };
 
+// Chat — returns the (auto-created if needed) task Shared/CC thread's conversationId
+const getChat = async (req,res,next) => { try { res.json({ conversationId: await svc.getOrCreateTaskThread(req.params.id) }); } catch(e){next(e);} };
+
 const addDep         = async (req,res,next) => { try { await svc.addTaskDep(req.params.id, req.body.dependsOnId, req.pmProjectId, req.user.userId); res.json({ok:true}); } catch(e){next(e);} };
 const removeDep      = async (req,res,next) => { try { await svc.removeTaskDep(req.params.id, req.params.depId, req.pmProjectId, req.user.userId); res.json({ok:true}); } catch(e){next(e);} };
 
-module.exports = { list, create, update, updateStatus, remove, sendRequest, removeRequest, acceptRequest, declineRequest, getMyRequests, addDep, removeDep };
+module.exports = { list, create, update, updateStatus, remove, sendRequest, removeRequest, acceptRequest, declineRequest, getMyRequests, getChat, addDep, removeDep };

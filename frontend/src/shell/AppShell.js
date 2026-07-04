@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import TopBanner      from './components/TopBanner';
 import ModuleDrawer   from './components/ModuleDrawer';
 import MessagePanel   from './components/MessagePanel';
@@ -10,6 +10,16 @@ import { MessagingProvider } from '../modules/messages/context/MessagingContext'
 export default function AppShell({ currentUser }) {
   const [activeModuleId, setActiveModuleId] = useState(DEFAULT_MODULE_ID);
   const [messagesOpen,   setMessagesOpen]   = useState(true);
+
+  // Lets any module open the Messages rail programmatically (e.g. the
+  // Project Management module's ChatButton, after it resolves a Task's or
+  // Activity's conversationId and calls setActiveConversationId on it).
+  // Same lightweight window-event pattern already used for 'groups-updated'.
+  useEffect(() => {
+    const openPanel = () => setMessagesOpen(true);
+    window.addEventListener('open-messages-panel', openPanel);
+    return () => window.removeEventListener('open-messages-panel', openPanel);
+  }, []);
 
   const activeModule = useMemo(
     () => ERP_MODULES.find(m => m.id === activeModuleId) ?? ERP_MODULES[0],

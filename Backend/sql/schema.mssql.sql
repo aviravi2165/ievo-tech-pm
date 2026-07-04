@@ -148,6 +148,7 @@ CREATE TABLE [ievo-tech-pm].dbo.comm_messages (
 	is_edited BIT NOT NULL DEFAULT 0,
 	edited_at datetimeoffset NULL,
 	is_system BIT NOT NULL DEFAULT 0,
+	sender_id uniqueidentifier NULL,
 	CONSTRAINT PK__comm_mes__0BBF6EE68D1986E9 PRIMARY KEY (message_id),
 	CONSTRAINT FK__comm_mess__conve__04E4BC85 FOREIGN KEY (conversation_id) REFERENCES [ievo-tech-pm].dbo.comm_conversations(conversation_id),
 	CONSTRAINT FK__comm_mess__paren__06CD04F7 FOREIGN KEY (parent_message_id) REFERENCES [ievo-tech-pm].dbo.comm_messages(message_id),
@@ -591,3 +592,416 @@ CREATE INDEX IX_pm_audit_log_project ON dbo.pm_audit_log(project_id, changed_at 
 
 
 
+
+
+
+
+
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Migration: remove archived_at / is_archived from comm_participants
+--            and ensure left_at / joined_at / rejoined_at exist
+--
+-- Compatible with SSMS, sqlcmd, mssql Node driver (.batch()), Azure Data Studio
+-- No GO statements — uses EXEC for dynamic DDL, all in a single batch.
+-- Safe to re-run; every step is guarded by IF EXISTS / IF NOT EXISTS.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Step 1: drop DEFAULT constraint on is_archived (must go before DROP COLUMN)
+DECLARE @df1 SYSNAME;
+SELECT @df1 = dc.name
+FROM   sys.default_constraints dc
+JOIN   sys.columns c
+       ON dc.parent_object_id = c.object_id
+      AND dc.parent_column_id = c.column_id
+WHERE  c.object_id = OBJECT_ID('dbo.comm_participants')
+  AND  c.name = 'is_archived';
+IF @df1 IS NOT NULL
+  EXEC('ALTER TABLE dbo.comm_participants DROP CONSTRAINT [' + @df1 + ']');
+
+-- Step 2: drop is_archived column
+IF EXISTS (
+  SELECT 1 FROM sys.columns
+  WHERE object_id = OBJECT_ID('dbo.comm_participants') AND name = 'is_archived'
+)
+  ALTER TABLE dbo.comm_participants DROP COLUMN is_archived;
+
+-- Step 3: drop DEFAULT constraint on archived_at
+DECLARE @df2 SYSNAME;
+SELECT @df2 = dc.name
+FROM   sys.default_constraints dc
+JOIN   sys.columns c
+       ON dc.parent_object_id = c.object_id
+      AND dc.parent_column_id = c.column_id
+WHERE  c.object_id = OBJECT_ID('dbo.comm_participants')
+  AND  c.name = 'archived_at';
+IF @df2 IS NOT NULL
+  EXEC('ALTER TABLE dbo.comm_participants DROP CONSTRAINT [' + @df2 + ']');
+
+-- Step 4: drop archived_at column
+IF EXISTS (
+  SELECT 1 FROM sys.columns
+  WHERE object_id = OBJECT_ID('dbo.comm_participants') AND name = 'archived_at'
+)
+  ALTER TABLE dbo.comm_participants DROP COLUMN archived_at;
+
+-- Step 5: add left_at
+IF NOT EXISTS (
+  SELECT 1 FROM sys.columns
+  WHERE object_id = OBJECT_ID('dbo.comm_participants') AND name = 'left_at'
+)
+  ALTER TABLE dbo.comm_participants ADD left_at DATETIMEOFFSET NULL;
+
+-- Step 6: add joined_at
+IF NOT EXISTS (
+  SELECT 1 FROM sys.columns
+  WHERE object_id = OBJECT_ID('dbo.comm_participants') AND name = 'joined_at'
+)
+  ALTER TABLE dbo.comm_participants ADD joined_at DATETIMEOFFSET NULL;
+
+-- Step 7: add rejoined_at
+IF NOT EXISTS (
+  SELECT 1 FROM sys.columns
+  WHERE object_id = OBJECT_ID('dbo.comm_participants') AND name = 'rejoined_at'
+)
+  ALTER TABLE dbo.comm_participants ADD rejoined_at DATETIMEOFFSET NULL;
+
+
+
+
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Migration: fix participant visibility columns
+--
+-- Run ONCE manually in SSMS or via sqlcmd before deploying the updated
+-- messageService.js / groupService.js. Safe to re-run (IF NOT EXISTS guards).
+-- No GO statements — compatible with mssql Node driver and sqlcmd alike.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Step 1: add left_at if missing
+IF NOT EXISTS (
+  SELECT 1 FROM sys.columns
+  WHERE object_id = OBJECT_ID('dbo.comm_participants') AND name = 'left_at'
+)
+  ALTER TABLE dbo.comm_participants ADD left_at DATETIMEOFFSET NULL;
+
+-- Step 2: add joined_at if missing
+IF NOT EXISTS (
+  SELECT 1 FROM sys.columns
+  WHERE object_id = OBJECT_ID('dbo.comm_participants') AND name = 'joined_at'
+)
+  ALTER TABLE dbo.comm_participants ADD joined_at DATETIMEOFFSET NULL;
+
+-- Step 3: add rejoined_at if missing
+IF NOT EXISTS (
+  SELECT 1 FROM sys.columns
+  WHERE object_id = OBJECT_ID('dbo.comm_participants') AND name = 'rejoined_at'
+)
+  ALTER TABLE dbo.comm_participants ADD rejoined_at DATETIMEOFFSET NULL;
+
+-- Step 4: backfill joined_at for existing rows that have none.
+-- Use the conversation's created_at as a conservative floor — this means
+-- founding participants can see all messages from the start, which is correct.
+UPDATE dbo.comm_participants
+SET    joined_at = c.created_at
+FROM   dbo.comm_participants p
+INNER  JOIN dbo.comm_conversations c ON c.conversation_id = p.conversation_id
+WHERE  p.joined_at IS NULL;
+
+-- Step 5: for currently-removed participants (is_deleted = 1) who have no
+-- left_at, backfill left_at using the conversation's last_message_at as a
+-- best-effort timestamp. This is conservative — they'll see everything up
+-- to the last known message before their row was soft-deleted.
+-- In practice this only affects rows created before left_at was added.
+UPDATE dbo.comm_participants
+SET    left_at = c.last_message_at
+FROM   dbo.comm_participants p
+INNER  JOIN dbo.comm_conversations c ON c.conversation_id = p.conversation_id
+WHERE  p.is_deleted = 1 AND p.left_at IS NULL;
+
+
+
+
+-- ============================================================
+-- I.EVO ERP — Project Management Module — Migration 002
+-- Run AFTER the base schema.mssql.sql (which already created
+-- pm_projects, pm_phases, pm_activities, pm_tasks, etc.)
+--
+-- Adds:
+--   1. pm_activity_members  — per-activity roster (selected when
+--      creating an activity; task assignees auto-added on accept)
+--   2. pm_task_assignment_requests — assignment requests that appear
+--      on the user's future Dashboard module (accept / decline)
+--   3. Renames task statuses:
+--        In Progress  → Ongoing
+--        Done         → Complete
+--      (removes In Review — three states only: To Do / Ongoing / Complete
+--       plus system-managed Blocked)
+-- ============================================================
+
+-- ────────────────────────────────────────────────────────────
+-- 1. pm_activity_members
+-- ────────────────────────────────────────────────────────────
+IF OBJECT_ID('dbo.pm_activity_members', 'U') IS NULL
+CREATE TABLE dbo.pm_activity_members (
+    activity_id int              NOT NULL,
+    user_id     uniqueidentifier NOT NULL,
+    added_at    datetimeoffset   DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_pm_activity_members   PRIMARY KEY (activity_id, user_id),
+    CONSTRAINT FK_pm_act_mem_activity   FOREIGN KEY (activity_id) REFERENCES dbo.pm_activities(activity_id) ON DELETE CASCADE,
+    CONSTRAINT FK_pm_act_mem_user       FOREIGN KEY (user_id)     REFERENCES dbo.auth_users(user_id)
+);
+
+-- ────────────────────────────────────────────────────────────
+-- 2. pm_task_assignment_requests
+-- ────────────────────────────────────────────────────────────
+IF OBJECT_ID('dbo.pm_task_assignment_requests', 'U') IS NULL
+CREATE TABLE dbo.pm_task_assignment_requests (
+    request_id    int IDENTITY(1,1) NOT NULL,
+    task_id       int              NOT NULL,
+    assignee_id   uniqueidentifier NOT NULL,   -- user being requested
+    requested_by  uniqueidentifier NOT NULL,   -- project manager who assigned
+    status        varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT 'Pending' NOT NULL,
+    responded_at  datetimeoffset NULL,
+    created_at    datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_pm_task_req       PRIMARY KEY (request_id),
+    CONSTRAINT UQ_pm_task_req       UNIQUE (task_id, assignee_id),   -- one pending/accepted per task per user
+    CONSTRAINT FK_pm_task_req_task  FOREIGN KEY (task_id)      REFERENCES dbo.pm_tasks(task_id) ON DELETE CASCADE,
+    CONSTRAINT FK_pm_task_req_user  FOREIGN KEY (assignee_id)  REFERENCES dbo.auth_users(user_id),
+    CONSTRAINT FK_pm_task_req_reqby FOREIGN KEY (requested_by) REFERENCES dbo.auth_users(user_id)
+);
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_task_req_status')
+ALTER TABLE dbo.pm_task_assignment_requests WITH NOCHECK
+    ADD CONSTRAINT CK_pm_task_req_status CHECK (status IN ('Pending','Accepted','Declined'));
+
+-- ────────────────────────────────────────────────────────────
+-- 3. Task status rename: In Progress→Ongoing, Done→Complete
+--    Drop the old check constraint and recreate it with the new values.
+--    Migrate any existing rows first so the constraint can be enabled.
+-- ────────────────────────────────────────────────────────────
+
+-- 3a. Migrate existing data
+UPDATE dbo.pm_tasks SET status = 'Ongoing'   WHERE status = 'In Progress';
+UPDATE dbo.pm_tasks SET status = 'Complete'  WHERE status = 'Done';
+UPDATE dbo.pm_tasks SET status = 'Ongoing'   WHERE status = 'In Review';  -- reclassify
+
+-- 3b. Drop old constraint
+IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_tasks_status')
+    ALTER TABLE dbo.pm_tasks DROP CONSTRAINT CK_pm_tasks_status;
+
+-- 3c. Add new constraint
+ALTER TABLE dbo.pm_tasks WITH NOCHECK
+    ADD CONSTRAINT CK_pm_tasks_status
+    CHECK (status IN ('To Do','Ongoing','Complete','Blocked'));
+
+-- 3d. Validate (enable CHECK)
+ALTER TABLE dbo.pm_tasks WITH CHECK CHECK CONSTRAINT CK_pm_tasks_status;
+
+-- ────────────────────────────────────────────────────────────
+-- Indexes
+-- ────────────────────────────────────────────────────────────
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_pm_task_req_assignee')
+    CREATE INDEX IX_pm_task_req_assignee
+        ON dbo.pm_task_assignment_requests(assignee_id, status);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_pm_act_members_activity')
+    CREATE INDEX IX_pm_act_members_activity
+        ON dbo.pm_activity_members(activity_id);
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- ============================================================
+-- I.EVO ERP — Project Management — Members & Chat-Linking
+-- ============================================================
+-- Run this AFTER schema.mssql.sql (including the pm_* additions
+-- block at the bottom of that file) has already been applied.
+--
+-- This version deliberately avoids GO batch separators. GO is not
+-- real T-SQL — it's a convention specific tools (SSMS, sqlcmd, Azure
+-- Data Studio) parse client-side and strip before sending anything
+-- to the server. Not every client does that (DataGrip's console, a
+-- raw JDBC/ODBC connection, this project's own migration runner if
+-- it ever gets one) — sent as-is, the server sees the literal word
+-- GO and throws a syntax error, which is exactly what happened here.
+--
+-- Instead, every statement that needs to see a column a previous
+-- statement just added is wrapped in dynamic SQL (EXEC(N'...')).
+-- Dynamic SQL is parsed at the moment it executes, not when the
+-- whole script is compiled — so it always sees current, live
+-- metadata, with zero dependence on batch boundaries. This is safe
+-- to paste into any SQL client and just run top to bottom, or to
+-- run statement-by-statement, or as a full script — all give the
+-- same result.
+--
+-- This migration was written after confirming against the live
+-- DB's ER diagram that pm_activity_members and
+-- pm_task_assignment_requests do NOT exist yet, even though
+-- activityService.js / taskService.js already query them. Those
+-- two tables are created here for the first time — this is not
+-- a "re-sync the schema file" script, it is a real schema change.
+-- ============================================================
+
+-- ────────────────────────────────────────────────────────────
+-- pm_activity_members: create table if missing (bare — role added next)
+-- ────────────────────────────────────────────────────────────
+IF OBJECT_ID('dbo.pm_activity_members', 'U') IS NULL
+CREATE TABLE dbo.pm_activity_members (
+    activity_id int NOT NULL,
+    user_id     uniqueidentifier NOT NULL,
+    added_at    datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_pm_activity_members PRIMARY KEY (activity_id, user_id),
+    CONSTRAINT FK_pm_activity_members_activity FOREIGN KEY (activity_id) REFERENCES dbo.pm_activities(activity_id) ON DELETE CASCADE,
+    CONSTRAINT FK_pm_activity_members_user     FOREIGN KEY (user_id)     REFERENCES dbo.auth_users(user_id)
+);
+
+-- Add role column if missing (self-healing: covers the table already
+-- existing on this server, from an earlier attempt or manually, without one)
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_activity_members') AND name = 'role')
+ALTER TABLE dbo.pm_activity_members ADD role varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS NULL;
+
+-- Everything below this point references the role column above, so it
+-- runs via dynamic SQL — parsed fresh at execution time, always seeing
+-- the column that was just added, regardless of client batching.
+--
+-- Manager  = manage the activity + its member roster (CSV: "Manage Activity/Members")
+-- Employee = update tasks/status inside the activity      (CSV: "Update Tasks/Status")
+-- Viewer   = read only
+EXEC(N'UPDATE dbo.pm_activity_members SET role = ''Employee'' WHERE role IS NULL');
+EXEC(N'ALTER TABLE dbo.pm_activity_members ALTER COLUMN role varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL');
+
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_activity_members_role')
+EXEC(N'ALTER TABLE dbo.pm_activity_members WITH NOCHECK ADD CONSTRAINT CK_pm_activity_members_role
+    CHECK (role IN (''Manager'',''Employee'',''Viewer''))');
+
+IF NOT EXISTS (SELECT 1 FROM sys.default_constraints dc
+               INNER JOIN sys.columns c ON c.object_id = dc.parent_object_id AND c.column_id = dc.parent_column_id
+               WHERE dc.parent_object_id = OBJECT_ID('dbo.pm_activity_members') AND c.name = 'role')
+EXEC(N'ALTER TABLE dbo.pm_activity_members ADD CONSTRAINT DF_pm_activity_members_role DEFAULT ''Employee'' FOR role');
+
+-- ────────────────────────────────────────────────────────────
+-- pm_phase_members role vocabulary alignment.
+-- pm_members (project-level) already has its own 'role' column —
+-- that one is untouched by this migration. This section is about
+-- pm_phase_members, a DIFFERENT table, which may exist on this
+-- server without a role column at all, or with one already using
+-- ('Manager','Member','Viewer'). Either way, we end up with
+-- role IN ('Manager','Employee','Viewer'), matching the Phase row
+-- of the CSV and pm_activity_members' vocabulary above.
+-- ────────────────────────────────────────────────────────────
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_phase_members') AND name = 'role')
+ALTER TABLE dbo.pm_phase_members ADD role varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS NULL;
+
+EXEC(N'UPDATE dbo.pm_phase_members SET role = ''Employee'' WHERE role IS NULL OR role = ''Member''');
+EXEC(N'ALTER TABLE dbo.pm_phase_members ALTER COLUMN role varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL');
+
+IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_phase_members_role')
+EXEC(N'ALTER TABLE dbo.pm_phase_members DROP CONSTRAINT CK_pm_phase_members_role');
+
+EXEC(N'ALTER TABLE dbo.pm_phase_members WITH NOCHECK ADD CONSTRAINT CK_pm_phase_members_role
+    CHECK (role IN (''Manager'',''Employee'',''Viewer''))');
+
+IF NOT EXISTS (SELECT 1 FROM sys.default_constraints dc
+               INNER JOIN sys.columns c ON c.object_id = dc.parent_object_id AND c.column_id = dc.parent_column_id
+               WHERE dc.parent_object_id = OBJECT_ID('dbo.pm_phase_members') AND c.name = 'role')
+EXEC(N'ALTER TABLE dbo.pm_phase_members ADD CONSTRAINT DF_pm_phase_members_role DEFAULT ''Employee'' FOR role');
+
+-- ────────────────────────────────────────────────────────────
+-- pm_task_assignment_requests
+-- taskService.js already implements the full accept/decline flow
+-- against this table (createTask, getMyAssignmentRequests,
+-- acceptAssignmentRequest, declineAssignmentRequest,
+-- sendAssignmentRequest, removeAssignmentRequest) — it is simply
+-- missing from the database. Created here to match exactly what
+-- that service already expects. (No column-ordering issue here —
+-- it's a single CREATE TABLE with everything already on it, so no
+-- dynamic SQL needed.)
+-- ────────────────────────────────────────────────────────────
+IF OBJECT_ID('dbo.pm_task_assignment_requests', 'U') IS NULL
+CREATE TABLE dbo.pm_task_assignment_requests (
+    request_id   int IDENTITY(1,1) NOT NULL,
+    task_id      int NOT NULL,
+    assignee_id  uniqueidentifier NOT NULL,
+    requested_by uniqueidentifier NOT NULL,
+    status       varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT 'Pending' NOT NULL,
+    created_at   datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    responded_at datetimeoffset NULL,
+    CONSTRAINT PK_pm_task_assignment_requests PRIMARY KEY (request_id),
+    CONSTRAINT UQ_pm_task_assignment_requests UNIQUE (task_id, assignee_id),
+    CONSTRAINT FK_pm_tar_task         FOREIGN KEY (task_id)      REFERENCES dbo.pm_tasks(task_id) ON DELETE CASCADE,
+    CONSTRAINT FK_pm_tar_assignee     FOREIGN KEY (assignee_id)  REFERENCES dbo.auth_users(user_id),
+    CONSTRAINT FK_pm_tar_requestedby  FOREIGN KEY (requested_by) REFERENCES dbo.auth_users(user_id)
+);
+
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_tar_status')
+ALTER TABLE dbo.pm_task_assignment_requests WITH NOCHECK ADD CONSTRAINT CK_pm_tar_status
+    CHECK (status IN ('Pending','Accepted','Declined'));
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_pm_tar_assignee_status')
+CREATE INDEX IX_pm_tar_assignee_status ON dbo.pm_task_assignment_requests(assignee_id, status);
+
+-- ────────────────────────────────────────────────────────────
+-- pm_task_threads / pm_activity_threads
+-- Link tables tying a Task or Activity to exactly one auto-
+-- managed comm_conversations row. Kept separate from the
+-- generic comm_groups concept — these threads are system-
+-- managed (membership auto-syncs to assignment state), not
+-- user-curated groups.
+--   Task thread     → comm_conversations.conv_type = 'cc'          ("Shared")
+--   Activity thread → comm_conversations.conv_type = 'group_thread' with group_id = NULL
+-- ────────────────────────────────────────────────────────────
+IF OBJECT_ID('dbo.pm_task_threads', 'U') IS NULL
+CREATE TABLE dbo.pm_task_threads (
+    task_id         int NOT NULL,
+    conversation_id int NOT NULL,
+    created_at      datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_pm_task_threads PRIMARY KEY (task_id),
+    CONSTRAINT UQ_pm_task_threads_conv UNIQUE (conversation_id),
+    CONSTRAINT FK_pm_task_threads_task FOREIGN KEY (task_id)         REFERENCES dbo.pm_tasks(task_id) ON DELETE CASCADE,
+    CONSTRAINT FK_pm_task_threads_conv FOREIGN KEY (conversation_id) REFERENCES dbo.comm_conversations(conversation_id)
+);
+
+IF OBJECT_ID('dbo.pm_activity_threads', 'U') IS NULL
+CREATE TABLE dbo.pm_activity_threads (
+    activity_id     int NOT NULL,
+    conversation_id int NOT NULL,
+    created_at      datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_pm_activity_threads PRIMARY KEY (activity_id),
+    CONSTRAINT UQ_pm_activity_threads_conv UNIQUE (conversation_id),
+    CONSTRAINT FK_pm_activity_threads_activity FOREIGN KEY (activity_id)     REFERENCES dbo.pm_activities(activity_id) ON DELETE CASCADE,
+    CONSTRAINT FK_pm_activity_threads_conv     FOREIGN KEY (conversation_id) REFERENCES dbo.comm_conversations(conversation_id)
+);
+
+-- ────────────────────────────────────────────────────────────
+-- Backfill: seed pm_activity_members with a Manager row for every
+-- activity's existing owner_id, so effective-role lookups have a
+-- starting point immediately after migration. Dynamic SQL again,
+-- since it depends on the role column added earlier in this script.
+-- ────────────────────────────────────────────────────────────
+EXEC(N'
+INSERT INTO dbo.pm_activity_members (activity_id, user_id, role)
+SELECT a.activity_id, a.owner_id, ''Manager''
+FROM dbo.pm_activities a
+WHERE a.owner_id IS NOT NULL
+  AND a.is_deleted = 0
+  AND NOT EXISTS (
+    SELECT 1 FROM dbo.pm_activity_members m
+    WHERE m.activity_id = a.activity_id AND m.user_id = a.owner_id
+  )');
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_pm_activity_members_user')
+CREATE INDEX IX_pm_activity_members_user ON dbo.pm_activity_members(user_id);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_pm_phase_members_user')
+CREATE INDEX IX_pm_phase_members_user ON dbo.pm_phase_members(user_id);

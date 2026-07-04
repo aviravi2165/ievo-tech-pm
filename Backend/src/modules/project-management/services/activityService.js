@@ -5,6 +5,7 @@ const audit = require('./auditService');
 const { resolveUnblocked, blockIfNeeded } = require('./dependencyService');
 const { getActivityProgress } = require('./progressService');
 const { broadcastStatusChanged, broadcastUnblocked } = require('../socket/socketHandler');
+const pmChatService = require('./pmChatService');
 
 function parseIdList(val) {
   if (!val) return [];
@@ -36,7 +37,14 @@ async function getActivitiesForPhase(phaseId) {
              -- Activity member count for display
              (
                SELECT COUNT(*) FROM pm_activity_members WHERE activity_id = a.activity_id
-             ) AS memberCount
+             ) AS memberCount,
+             -- Activity Manager names, for a quick "who to ping" chip
+             (
+               SELECT STRING_AGG(COALESCE(NULLIF(TRIM(CONCAT(mu.first_name,' ',mu.last_name)),''), mu.email), ', ')
+               FROM pm_activity_members mgr
+               INNER JOIN auth_users mu ON mu.user_id = mgr.user_id
+               WHERE mgr.activity_id = a.activity_id AND mgr.role = 'Manager'
+             ) AS managerNames
       FROM pm_activities a
       LEFT JOIN auth_users u ON u.user_id = a.owner_id
       WHERE a.phase_id = @phaseId AND a.is_deleted = 0
@@ -56,27 +64,35 @@ async function getActivityMembers(activityId) {
     .input('activityId', sql.Int, activityId)
     .query(`
       SELECT am.user_id AS userId,
+             am.role AS role,
              am.added_at AS addedAt,
              COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''), u.email) AS name,
              u.email
       FROM pm_activity_members am
       INNER JOIN auth_users u ON u.user_id = am.user_id
       WHERE am.activity_id = @activityId
-      ORDER BY u.first_name, u.last_name
+      ORDER BY CASE am.role WHEN 'Manager' THEN 0 WHEN 'Employee' THEN 1 ELSE 2 END, u.first_name, u.last_name
     `);
   return result.recordset;
 }
 
-async function addActivityMember(activityId, targetUserId, actorUserId, projectId) {
+const ACTIVITY_MEMBER_ROLES = ['Manager', 'Employee', 'Viewer'];
+
+async function addActivityMember(activityId, targetUserId, role, actorUserId, projectId) {
+  const finalRole = ACTIVITY_MEMBER_ROLES.includes(role) ? role : 'Employee';
   const pool = await getPool();
   await pool.request()
     .input('activityId', sql.Int,              activityId)
     .input('userId',     sql.UniqueIdentifier, targetUserId)
+    .input('role',       sql.NVarChar(20),     finalRole)
     .query(`
-      IF NOT EXISTS (SELECT 1 FROM pm_activity_members WHERE activity_id=@activityId AND user_id=@userId)
-        INSERT INTO pm_activity_members (activity_id, user_id) VALUES (@activityId, @userId)
+      IF EXISTS (SELECT 1 FROM pm_activity_members WHERE activity_id=@activityId AND user_id=@userId)
+        UPDATE pm_activity_members SET role=@role WHERE activity_id=@activityId AND user_id=@userId
+      ELSE
+        INSERT INTO pm_activity_members (activity_id, user_id, role) VALUES (@activityId, @userId, @role)
     `);
-  // Ensure they're a project member too
+
+  // Ensure they're a project member too (as a baseline Member, never downgrades an existing role)
   const phResult = await pool.request()
     .input('activityId', sql.Int, activityId)
     .query(`SELECT ph.project_id FROM pm_activities a INNER JOIN pm_phases ph ON ph.phase_id=a.phase_id WHERE a.activity_id=@activityId`);
@@ -90,7 +106,24 @@ async function addActivityMember(activityId, targetUserId, actorUserId, projectI
           INSERT INTO pm_members (project_id, user_id, role) VALUES (@projectId, @userId, 'Member')
       `);
   }
-  await audit.log({ entityType:'activity', entityId:activityId, projectId:pid, userId:actorUserId, action:'member_added', newValue:targetUserId });
+  await audit.log({ entityType:'activity', entityId:activityId, projectId:pid, userId:actorUserId, action:'member_added', fieldChanged:'role', newValue:finalRole });
+
+  if (finalRole === 'Manager') await pmChatService.onActivityManagersChanged(activityId);
+  else await pmChatService.syncActivityThreadParticipants(activityId);
+}
+
+async function updateActivityMemberRole(activityId, targetUserId, role, actorUserId, projectId) {
+  if (!ACTIVITY_MEMBER_ROLES.includes(role)) { const e = new Error('Invalid role'); e.statusCode = 400; throw e; }
+  const pool = await getPool();
+  const updateResult = await pool.request()
+    .input('activityId', sql.Int,              activityId)
+    .input('userId',     sql.UniqueIdentifier, targetUserId)
+    .input('role',       sql.NVarChar(20),     role)
+    .query(`UPDATE pm_activity_members SET role=@role WHERE activity_id=@activityId AND user_id=@userId`);
+  if (!updateResult.rowsAffected[0]) { const e = new Error('Activity member not found'); e.statusCode = 404; throw e; }
+
+  await audit.log({ entityType:'activity', entityId:activityId, projectId, userId:actorUserId, action:'member_role_changed', fieldChanged:'role', newValue:role });
+  await pmChatService.onActivityManagersChanged(activityId);
 }
 
 async function removeActivityMember(activityId, targetUserId, actorUserId, projectId) {
@@ -100,6 +133,7 @@ async function removeActivityMember(activityId, targetUserId, actorUserId, proje
     .input('userId',     sql.UniqueIdentifier, targetUserId)
     .query(`DELETE FROM pm_activity_members WHERE activity_id=@activityId AND user_id=@userId`);
   await audit.log({ entityType:'activity', entityId:activityId, projectId, userId:actorUserId, action:'member_removed', oldValue:targetUserId });
+  await pmChatService.onActivityManagersChanged(activityId);
 }
 
 // ── Create activity (optionally seed initial activity members) ─────────────────
@@ -130,19 +164,39 @@ async function createActivity(phaseId, projectId, userId, body) {
       `);
     row = result.recordset[0];
 
-    // Seed activity members if provided
-    for (const uid of [...new Set(memberIds)]) {
+    // The chosen owner (if any) becomes the activity's first Manager.
+    if (ownerId) {
+      await req()
+        .input('activityId', sql.Int,              row.activityId)
+        .input('uid',        sql.UniqueIdentifier, ownerId)
+        .query(`
+          IF NOT EXISTS (SELECT 1 FROM pm_activity_members WHERE activity_id=@activityId AND user_id=@uid)
+            INSERT INTO pm_activity_members (activity_id, user_id, role) VALUES (@activityId, @uid, 'Manager')
+        `);
+    }
+
+    // Seed additional activity members (default role: Employee)
+    for (const raw of [...new Set(memberIds)]) {
+      const uid  = typeof raw === 'object' ? raw.userId : raw;
+      const role = (typeof raw === 'object' && ACTIVITY_MEMBER_ROLES.includes(raw.role)) ? raw.role : 'Employee';
+      if (!uid || String(uid) === String(ownerId)) continue; // owner already seeded as Manager above
       await req()
         .input('activityId', sql.Int,              row.activityId)
         .input('uid',        sql.UniqueIdentifier, uid)
+        .input('role',       sql.NVarChar(20),     role)
         .query(`
           IF NOT EXISTS (SELECT 1 FROM pm_activity_members WHERE activity_id=@activityId AND user_id=@uid)
-            INSERT INTO pm_activity_members (activity_id, user_id) VALUES (@activityId, @uid)
+            INSERT INTO pm_activity_members (activity_id, user_id, role) VALUES (@activityId, @uid, @role)
         `);
     }
   });
 
   await audit.log({ entityType:'activity', entityId:row.activityId, projectId, userId, action:'created', fieldChanged:'name', newValue:name.trim() });
+
+  // Seed the Activity chat thread now that Managers exist (safe no-op if none yet).
+  await pmChatService.ensureActivityThread(row.activityId);
+  await pmChatService.syncActivityThreadParticipants(row.activityId);
+
   return row;
 }
 
@@ -174,6 +228,22 @@ async function updateActivity(activityId, projectId, userId, body) {
   await req.query(`UPDATE pm_activities SET ${set} WHERE activity_id=@activityId`);
 
   for (const key of keys) await audit.log({ entityType:'activity', entityId:activityId, projectId, userId, action:'updated', fieldChanged:key, newValue:fields[key] });
+
+  // A new owner is folded into pm_activity_members as a Manager, keeping
+  // the legacy owner_id field and the role-based roster in step.
+  if (body.ownerId !== undefined && body.ownerId) {
+    await pool.request()
+      .input('activityId', sql.Int,              activityId)
+      .input('uid',        sql.UniqueIdentifier, body.ownerId)
+      .query(`
+        IF EXISTS (SELECT 1 FROM pm_activity_members WHERE activity_id=@activityId AND user_id=@uid)
+          UPDATE pm_activity_members SET role='Manager' WHERE activity_id=@activityId AND user_id=@uid
+        ELSE
+          INSERT INTO pm_activity_members (activity_id, user_id, role) VALUES (@activityId, @uid, 'Manager')
+      `);
+    await pmChatService.onActivityManagersChanged(activityId);
+  }
+
   return { activityId, ...fields };
 }
 
@@ -206,6 +276,9 @@ async function deleteActivity(activityId, projectId, userId) {
     .input('activityId', sql.Int, activityId)
     .query(`UPDATE pm_activities SET is_deleted=1 WHERE activity_id=@activityId`);
   await audit.log({ entityType:'activity', entityId:activityId, projectId, userId, action:'deleted' });
+  // Thread history is preserved (comm_conversations rows are never deleted here) —
+  // only the pm_* rows are marked deleted, matching how everything else in this
+  // module soft-deletes rather than destroying data.
 }
 
 // ── Activity dependencies ─────────────────────────────────────────────────────
@@ -233,10 +306,19 @@ async function removeActivityDep(activityId, dependsOnId, projectId, userId) {
   await audit.log({ entityType:'activity', entityId:activityId, projectId, userId, action:'dependency_removed', oldValue:dependsOnId });
 }
 
+// ── Chat thread lookup (used by activityRoutes GET /:id/chat) ──────────────────
+
+async function getOrCreateActivityThread(activityId) {
+  return pmChatService.ensureActivityThread(activityId);
+}
+
 module.exports = {
+  ACTIVITY_MEMBER_ROLES,
+  getOrCreateActivityThread,
   getActivitiesForPhase,
   getActivityMembers,
   addActivityMember,
+  updateActivityMemberRole,
   removeActivityMember,
   createActivity,
   updateActivity,

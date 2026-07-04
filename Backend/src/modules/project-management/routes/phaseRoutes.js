@@ -3,6 +3,7 @@
 const router = require('express').Router();
 const { authenticate } = require('../../../middleware/auth');
 const { requireRole }  = require('../middleware/projectRole');
+const { requireEntityRole } = require('../middleware/entityRole');
 const { checkCircular }= require('../middleware/circularDepCheck');
 const { getPool, sql } = require('../../../config/db');
 const ctrl = require('../controllers/phaseController');
@@ -29,6 +30,14 @@ router.patch('/:id/status',  resolvePhaseProject, requireRole('Manager'), ctrl.u
 router.patch('/:id/reorder', resolvePhaseProject, requireRole('Manager'), ctrl.reorder);
 router.post('/:id/dependencies',              resolvePhaseProject, requireRole('Manager'), checkCircular('phase'), ctrl.addDep);
 router.delete('/:id/dependencies/:depId',     resolvePhaseProject, requireRole('Manager'), ctrl.removeDep);
+
+// ── Phase members ──────────────────────────────────────────────────────────────
+// Read: anyone with at least Viewer-level effective access to the phase.
+// Write: the Phase's own Manager(s), OR a project-level Manager.
+router.get('/:id/members',         resolvePhaseProject, requireEntityRole('phase', 'Viewer'),  ctrl.listMembers);
+router.post('/:id/members',        resolvePhaseProject, requireEntityRole('phase', 'Manager'), ctrl.addMember);
+router.patch('/:id/members/:uid',  resolvePhaseProject, requireEntityRole('phase', 'Manager'), ctrl.updateMemberRole);
+router.delete('/:id/members/:uid', resolvePhaseProject, requireEntityRole('phase', 'Manager'), ctrl.removeMember);
 
 // Activities for a phase
 router.get('/:phaseId/activities',  async (req, res, next) => { try { res.json(await require('../services/activityService').getActivitiesForPhase(req.params.phaseId)); } catch (e) { next(e); } });

@@ -3,6 +3,7 @@ import StatusBadge from './StatusBadge';
 import PriorityBadge from './PriorityBadge';
 import OverdueBadge from './OverdueBadge';
 import UserSearchInput from './UserSearchInput';
+import ChatButton from './ChatButton';
 import { taskApi } from '../api/projectApi';
 
 // Statuses: To Do / Ongoing / Complete / Blocked (renamed from In Progress / Done)
@@ -185,6 +186,7 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
             {task.isOverdue && localStatus !== 'Complete' && <OverdueBadge />}
             {task.estimatedHours && <span>{task.estimatedHours}h est.</span>}
             <Avatars assignees={task.assignees} />
+            {(canEdit || isAssigned) && <ChatButton kind="task" id={task.taskId} />}
             {task.dependsOn?.length > 0 && (
               <span className="pm-dep-badge">
                 <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
