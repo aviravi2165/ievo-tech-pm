@@ -19,6 +19,7 @@ export default function MessagingPage({ currentUser }) {
     unreadCount, inboxUnreadCount, groupUnreadCount, decrement,
     setActiveConversationId, activeConvIdRef,
     pendingOpenConv, setPendingOpenConv,
+    pendingOpenGroup, setPendingOpenGroup,
   } = useMessaging();
 
   const { socket } = useSocket();
@@ -45,6 +46,19 @@ export default function MessagingPage({ currentUser }) {
     clearUnreadDot(conversationId);
     setPendingOpenConv(null);
   }, [pendingOpenConv, setPendingOpenConv, setActiveConversationId, clearUnreadDot]);
+
+  // ── Handle cross-module open-group requests (from ChatButton for activities) ─
+  useEffect(() => {
+    if (!pendingOpenGroup) return;
+    const { conversationId, subject } = pendingOpenGroup;
+    const conv = { conversationId, subject: subject || '', convType: 'group_thread' };
+    setTab('groups');
+    setActiveConvSource('groups');
+    setActiveConv(conv);
+    setActiveConversationId(conversationId);
+    clearUnreadDot(conversationId);
+    setPendingOpenGroup(null);
+  }, [pendingOpenGroup, setPendingOpenGroup, setActiveConversationId, clearUnreadDot]);
 
   const {
     threads: adminThreads, loading: adminThreadsLoading,

@@ -248,9 +248,9 @@
 }
 
 .erp-message-panel.open {
-  width: clamp(340px, 34vw, 560px);
-  min-width: 340px;
-  max-width: 560px;
+  width: clamp(420px, 42vw, 680px);
+  min-width: 420px;
+  max-width: 680px;
 }
 
 .erp-message-panel.collapsed {

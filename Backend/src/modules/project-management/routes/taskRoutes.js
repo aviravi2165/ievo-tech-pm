@@ -27,7 +27,11 @@ async function resolveTaskProject(req, res, next) {
 router.use(authenticate);
 
 // ── My assignment requests (for Dashboard, no project context needed) ────────
-router.get('/my-requests', ctrl.getMyRequests);
+router.get('/my-requests',     ctrl.getMyRequests);
+// ── My active tasks (accepted, non-complete) across all projects ─────────────
+router.get('/my-active-tasks', ctrl.getMyActiveTasks);
+// ── My recent project audit feed ─────────────────────────────────────────────
+router.get('/my-recent-audit', ctrl.getMyRecentAudit);
 
 // ── Per-request respond endpoints (assignee only, no projectRole check) ───────
 // The assignee may not be a pm_member yet (they become one on accept)

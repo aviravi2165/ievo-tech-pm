@@ -3,7 +3,7 @@ import { activityApi, taskApi } from '../api/projectApi';
 import { useMessaging } from '../../messages/context/MessagingContext';
 
 export default function ChatButton({ kind, id, label }) {
-  const { requestOpenConversation } = useMessaging();
+  const { requestOpenConversation, requestOpenGroup } = useMessaging();
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
 
@@ -15,12 +15,22 @@ export default function ChatButton({ kind, id, label }) {
       const data = kind === 'activity'
         ? await activityApi.getChat(id)
         : await taskApi.getChat(id);
-      // Pass full conversation info so MessagingPage can open ChatWindow correctly
-      requestOpenConversation({
-        conversationId: data.conversationId,
-        subject:        data.subject || '',
-        convType:       data.convType || 'cc',
-      });
+
+      if (kind === 'activity') {
+        // Activity chats are group_thread conversations — open in Groups tab
+        requestOpenGroup({
+          conversationId: data.conversationId,
+          groupId:        data.groupId  || null,
+          subject:        data.subject  || '',
+        });
+      } else {
+        // Task chats are cc/Shared — open in Inbox tab
+        requestOpenConversation({
+          conversationId: data.conversationId,
+          subject:        data.subject  || '',
+          convType:       data.convType || 'cc',
+        });
+      }
       window.dispatchEvent(new CustomEvent('open-messages-panel'));
     } catch (err) {
       setError(err?.response?.data?.error || 'Chat not available yet');

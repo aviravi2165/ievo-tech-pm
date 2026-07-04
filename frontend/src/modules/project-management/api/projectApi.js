@@ -67,6 +67,9 @@ export const taskApi = {
   removeRequest: (id, uid)      => axiosInstance.delete(`/api/tasks/${id}/requests/${uid}`).then(r => r.data),
   // Task Shared/CC chat — returns { conversationId }, auto-creating the thread if needed
   getChat:       (id)           => axiosInstance.get(`/api/tasks/${id}/chat`).then(r => r.data),
+  // Dashboard data — no project context needed
+  getMyActiveTasks: ()          => axiosInstance.get('/api/tasks/my-active-tasks').then(r => r.data),
+  getMyRecentAudit: ()          => axiosInstance.get('/api/tasks/my-recent-audit').then(r => r.data),
 };
 
 // Assignment request management — called from the current user's perspective

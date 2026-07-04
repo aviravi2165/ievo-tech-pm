@@ -442,6 +442,41 @@ async function removeTaskDep(taskId, dependsOnId, projectId, userId) {
   await audit.log({ entityType:'task', entityId:taskId, projectId, userId, action:'dependency_removed', oldValue:dependsOnId });
 }
 
+// ── My Active Tasks — accepted Ongoing tasks with project/activity context ──────
+
+async function getMyActiveTasks(userId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('userId', sql.UniqueIdentifier, userId)
+    .query(`
+      SELECT
+        t.task_id        AS taskId,
+        t.name           AS taskName,
+        t.description    AS taskDescription,
+        t.priority       AS priority,
+        t.status         AS status,
+        t.due_date       AS dueDate,
+        t.estimated_hours AS estimatedHours,
+        a.activity_id    AS activityId,
+        a.name           AS activityName,
+        ph.phase_id      AS phaseId,
+        ph.name          AS phaseName,
+        pr.project_id    AS projectId,
+        pr.name          AS projectName
+      FROM pm_task_assignees ta
+      INNER JOIN pm_tasks       t   ON t.task_id       = ta.task_id     AND t.is_deleted  = 0
+      INNER JOIN pm_activities  a   ON a.activity_id   = t.activity_id  AND a.is_deleted  = 0
+      INNER JOIN pm_phases      ph  ON ph.phase_id      = a.phase_id    AND ph.is_deleted = 0
+      INNER JOIN pm_projects    pr  ON pr.project_id    = ph.project_id AND pr.is_deleted = 0
+      WHERE ta.user_id = @userId
+        AND t.status NOT IN ('Complete')
+      ORDER BY
+        CASE t.priority WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 ELSE 4 END,
+        t.due_date ASC
+    `);
+  return result.recordset;
+}
+
 // ── Chat thread lookup (used by taskRoutes GET /:id/chat) ──────────────────────
 
 async function getOrCreateTaskThread(taskId) {
@@ -457,6 +492,7 @@ module.exports = {
   sendAssignmentRequest,
   removeAssignmentRequest,
   getMyAssignmentRequests,
+  getMyActiveTasks,
   acceptAssignmentRequest,
   declineAssignmentRequest,
   addTaskDep,

@@ -77,6 +77,15 @@ export function MessagingProvider({ children }) {
     setPendingOpenConv(convInfo);
   }, []);
 
+  // ── Cross-module open-group request ───────────────────────────────────────
+  // ChatButton calls this for activity (group_thread) chats. MessagingPage
+  // switches to the groups tab and opens the matching group conversation.
+  // Value is { groupId, conversationId, subject? }.
+  const [pendingOpenGroup, setPendingOpenGroup] = useState(null);
+  const requestOpenGroup = useCallback((groupInfo) => {
+    setPendingOpenGroup(groupInfo);
+  }, []);
+
   // ── Inbox conversations (bcc / cc only) ───────────────────────────────────
   const [conversations,    setConversations]    = useState([]);
   const [inboxLoading,     setInboxLoading]     = useState(true);
@@ -234,6 +243,7 @@ export function MessagingProvider({ children }) {
     inboxLoading, inboxError, fetchInbox, clearUnreadDot,
     activeConversationId, setActiveConversationId, activeConvIdRef,
     pendingOpenConv, setPendingOpenConv, requestOpenConversation,
+    pendingOpenGroup, setPendingOpenGroup, requestOpenGroup,
   };
 
   return (
