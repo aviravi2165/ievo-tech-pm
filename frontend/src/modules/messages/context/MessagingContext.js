@@ -67,6 +67,16 @@ export function MessagingProvider({ children }) {
     _setActiveConvId(id ?? null);
   }, []);
 
+  // ── Cross-module open-conversation request ─────────────────────────────────
+  // ChatButton (in PM module) calls this to open a specific conversation in
+  // the messages rail. MessagingPage listens to it via useEffect and sets its
+  // own local activeConv state accordingly — avoiding prop-drilling or a shared
+  // global store. The value is { conversationId, subject?, convType? }.
+  const [pendingOpenConv, setPendingOpenConv] = useState(null);
+  const requestOpenConversation = useCallback((convInfo) => {
+    setPendingOpenConv(convInfo);
+  }, []);
+
   // ── Inbox conversations (bcc / cc only) ───────────────────────────────────
   const [conversations,    setConversations]    = useState([]);
   const [inboxLoading,     setInboxLoading]     = useState(true);
@@ -223,6 +233,7 @@ export function MessagingProvider({ children }) {
     conversations, groupConversations, groupConvsLoading,
     inboxLoading, inboxError, fetchInbox, clearUnreadDot,
     activeConversationId, setActiveConversationId, activeConvIdRef,
+    pendingOpenConv, setPendingOpenConv, requestOpenConversation,
   };
 
   return (

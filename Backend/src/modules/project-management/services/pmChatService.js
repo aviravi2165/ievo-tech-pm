@@ -122,11 +122,28 @@ async function ensureTaskThread(taskId) {
   if (existing) return existing;
 
   const pool = await getPool();
+  // Fetch task + full hierarchy names for the subject
   const taskResult = await pool.request()
     .input('taskId', sql.Int, taskId)
-    .query(`SELECT t.name, t.activity_id AS activityId, t.created_by AS createdBy FROM pm_tasks t WHERE t.task_id=@taskId`);
+    .query(`
+      SELECT
+        t.name            AS taskName,
+        t.activity_id     AS activityId,
+        t.created_by      AS createdBy,
+        a.name            AS activityName,
+        ph.name           AS phaseName,
+        pr.name           AS projectName
+      FROM pm_tasks       t
+      INNER JOIN pm_activities a  ON a.activity_id  = t.activity_id
+      INNER JOIN pm_phases     ph ON ph.phase_id     = a.phase_id
+      INNER JOIN pm_projects   pr ON pr.project_id   = ph.project_id
+      WHERE t.task_id = @taskId
+    `);
   const task = taskResult.recordset[0];
   if (!task) return null;
+
+  // Hierarchical subject: Project / Phase / Activity / Task
+  const subject = `${task.projectName} / ${task.phaseName} / ${task.activityName} / ${task.taskName}`;
 
   const managerIds = await resolveActivityManagerIds(task.activityId);
   const seedIds = [...new Set([...(task.createdBy ? [String(task.createdBy)] : []), ...managerIds])];
@@ -134,7 +151,7 @@ async function ensureTaskThread(taskId) {
   let conversationId;
   await withTransaction(async (req) => {
     conversationId = await createSystemConversation(req, {
-      subject:   `Task: ${task.name}`,
+      subject,
       createdBy: task.createdBy || managerIds[0],
       convType:  'cc',
     });
@@ -192,27 +209,38 @@ async function ensureActivityThread(activityId) {
   if (existing) return existing;
 
   const pool = await getPool();
+  // Fetch activity + hierarchy for subject
   const actResult = await pool.request()
     .input('activityId', sql.Int, activityId)
-    .query(`SELECT name FROM pm_activities WHERE activity_id=@activityId`);
+    .query(`
+      SELECT
+        a.name          AS activityName,
+        ph.name         AS phaseName,
+        pr.name         AS projectName
+      FROM pm_activities  a
+      INNER JOIN pm_phases   ph ON ph.phase_id   = a.phase_id
+      INNER JOIN pm_projects pr ON pr.project_id = ph.project_id
+      WHERE a.activity_id = @activityId
+    `);
   const activity = actResult.recordset[0];
-  if (!activity) return null; // activity itself doesn't exist — nothing to do
+  if (!activity) return null;
 
-  // Always resolves to at least one person: activity members, else the
-  // Activity Manager/owner, else the project's Manager(s) — a project is
-  // guaranteed to have a Manager from the moment it's created, so this
-  // never comes back empty. A brand-new Activity with nobody added yet
-  // still gets a real, open-able thread instead of failing.
+  // Hierarchical subject: Project / Phase / Activity
+  const subject = `${activity.projectName} / ${activity.phaseName} / ${activity.activityName}`;
+
   const seedIds = await resolveActivityThreadSeedIds(activityId);
   const creatorId = seedIds[0];
-  if (!creatorId) return null; // only possible if the project itself has no Manager — shouldn't happen
+  if (!creatorId) return null;
 
   let conversationId;
   await withTransaction(async (req) => {
+    // Use 'cc' (Shared) so the thread appears naturally in the inbox
+    // and participants can see each other — same as task threads.
+    // group_thread with group_id=NULL was invisible in the messaging UI.
     conversationId = await createSystemConversation(req, {
-      subject:   `Activity: ${activity.name}`,
+      subject,
       createdBy: creatorId,
-      convType:  'group_thread',
+      convType:  'cc',
     });
     await upsertParticipants(req, conversationId, seedIds, 'to');
     await req()

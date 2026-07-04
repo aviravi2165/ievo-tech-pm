@@ -18,6 +18,7 @@ export default function MessagingPage({ currentUser }) {
     inboxLoading, inboxError, fetchInbox, clearUnreadDot,
     unreadCount, inboxUnreadCount, groupUnreadCount, decrement,
     setActiveConversationId, activeConvIdRef,
+    pendingOpenConv, setPendingOpenConv,
   } = useMessaging();
 
   const { socket } = useSocket();
@@ -30,6 +31,20 @@ export default function MessagingPage({ currentUser }) {
   const [activeConvSource, setActiveConvSource] = useState(null);
 
   const layoutRef = useRef(null);
+
+  // ── Handle cross-module open-conversation requests (from ChatButton) ────────
+  useEffect(() => {
+    if (!pendingOpenConv) return;
+    const { conversationId, subject, convType } = pendingOpenConv;
+    const conv = { conversationId, subject: subject || '', convType: convType || 'cc' };
+    // All PM-linked threads (task+activity) are 'cc', so they live in inbox
+    setTab('inbox');
+    setActiveConvSource('inbox');
+    setActiveConv(conv);
+    setActiveConversationId(conversationId);
+    clearUnreadDot(conversationId);
+    setPendingOpenConv(null);
+  }, [pendingOpenConv, setPendingOpenConv, setActiveConversationId, clearUnreadDot]);
 
   const {
     threads: adminThreads, loading: adminThreadsLoading,

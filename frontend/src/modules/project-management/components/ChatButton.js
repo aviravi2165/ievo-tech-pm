@@ -2,27 +2,8 @@ import { useState } from 'react';
 import { activityApi, taskApi } from '../api/projectApi';
 import { useMessaging } from '../../messages/context/MessagingContext';
 
-/**
- * ChatButton — drop this into TaskItem / ActivityRow (or anywhere else that
- * has a taskId or activityId available) to open that entity's auto-managed
- * chat thread in the Messages rail.
- *
- *   <ChatButton kind="task" id={task.taskId} />
- *   <ChatButton kind="activity" id={activity.activityId} />
- *
- * The thread is created on first use if it doesn't exist yet (e.g. an
- * Activity with no Manager assigned yet has nothing to seed a thread with,
- * so this can occasionally 404 — the button surfaces that inline rather
- * than failing silently).
- *
- * Requires <MessagingProvider> to be mounted above it in the tree, which it
- * already is (AppShell.js wraps the whole app). Opening the panel itself is
- * done via a window event (see AppShell.js) rather than prop-drilling
- * messagesOpen/setMessagesOpen down into this module — same pattern this
- * codebase already uses for 'groups-updated'.
- */
 export default function ChatButton({ kind, id, label }) {
-  const { setActiveConversationId } = useMessaging();
+  const { requestOpenConversation } = useMessaging();
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
 
@@ -31,10 +12,15 @@ export default function ChatButton({ kind, id, label }) {
     if (!id) return;
     setLoading(true); setError('');
     try {
-      const { conversationId } = kind === 'activity'
+      const data = kind === 'activity'
         ? await activityApi.getChat(id)
         : await taskApi.getChat(id);
-      setActiveConversationId(conversationId);
+      // Pass full conversation info so MessagingPage can open ChatWindow correctly
+      requestOpenConversation({
+        conversationId: data.conversationId,
+        subject:        data.subject || '',
+        convType:       data.convType || 'cc',
+      });
       window.dispatchEvent(new CustomEvent('open-messages-panel'));
     } catch (err) {
       setError(err?.response?.data?.error || 'Chat not available yet');
@@ -47,7 +33,7 @@ export default function ChatButton({ kind, id, label }) {
       className="pm-btn pm-btn-ghost"
       onClick={handleClick}
       disabled={loading}
-      title={error || (kind === 'activity' ? 'Open activity group chat' : 'Open task chat')}
+      title={error || (kind === 'activity' ? 'Open activity chat' : 'Open task chat')}
       style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11 }}
     >
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
