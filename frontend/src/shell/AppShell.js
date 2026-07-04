@@ -11,14 +11,23 @@ export default function AppShell({ currentUser }) {
   const [activeModuleId, setActiveModuleId] = useState(DEFAULT_MODULE_ID);
   const [messagesOpen,   setMessagesOpen]   = useState(true);
 
-  // Lets any module open the Messages rail programmatically (e.g. the
-  // Project Management module's ChatButton, after it resolves a Task's or
-  // Activity's conversationId and calls setActiveConversationId on it).
-  // Same lightweight window-event pattern already used for 'groups-updated'.
+  // Open Messages rail programmatically (e.g. PM module's ChatButton)
   useEffect(() => {
     const openPanel = () => setMessagesOpen(true);
     window.addEventListener('open-messages-panel', openPanel);
     return () => window.removeEventListener('open-messages-panel', openPanel);
+  }, []);
+
+  // Navigate to any module by id — fired by Dashboard task-click etc.
+  useEffect(() => {
+    const handler = (e) => {
+      const id = e.detail?.moduleId;
+      if (id && ERP_MODULES.some(m => m.id === id)) {
+        setActiveModuleId(id);
+      }
+    };
+    window.addEventListener('navigate-to-module', handler);
+    return () => window.removeEventListener('navigate-to-module', handler);
   }, []);
 
   const activeModule = useMemo(

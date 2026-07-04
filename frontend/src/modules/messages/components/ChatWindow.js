@@ -989,15 +989,45 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
           }}
         >
           {loading && <div className="loader-wrap"><div className="spinner"/></div>}
-          {error && (
-            <div style={{ color: 'var(--danger)', padding: 16, fontSize: 13 }}>
-              Failed to load.{' '}
-              <button onClick={refetch}
-                style={{ color: 'var(--gold)', background: 'none', border: 'none', cursor: 'pointer' }}>
-                Retry
-              </button>
-            </div>
-          )}
+          {error && (() => {
+            // "access denied" / "not a participant" errors come from assertConversationParticipant
+            // in messageService.getThread — they mean the user is not (yet) a member of this
+            // chat thread. Show a clear, non-alarming message instead of "Failed to load. Retry".
+            const isAccessDenied =
+              /access denied|not a participant|not an active participant/i.test(error);
+            return (
+              <div style={{ padding: '28px 20px', display: 'flex', flexDirection: 'column',
+                alignItems: 'center', gap: 10, textAlign: 'center' }}>
+                {isAccessDenied ? (
+                  <>
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none"
+                      stroke="var(--muted)" strokeWidth="1.6">
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                    <span style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.5 }}>
+                      You don't have access to this conversation.<br/>
+                      <span style={{ fontSize: 12 }}>
+                        Ask a Manager to add you to the activity.
+                      </span>
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span style={{ fontSize: 13, color: 'var(--danger)' }}>
+                      Failed to load.
+                    </span>
+                    <button onClick={refetch}
+                      style={{ fontSize: 12, color: 'var(--gold)', background: 'none',
+                        border: '1px solid var(--gold)', borderRadius: 4,
+                        padding: '4px 14px', cursor: 'pointer' }}>
+                      Retry
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })()}
           {!loading && messages.map(msg => (
             <div key={msg.messageId}>
               {msg.messageId === dividerId && (

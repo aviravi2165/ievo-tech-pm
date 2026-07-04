@@ -313,7 +313,8 @@ export default function DashboardModule({ currentUser }) {
   const [loading,     setLoading]     = useState(true);
   const [acting,      setActing]      = useState(null);
   const [error,       setError]       = useState('');
-  const [filter,      setFilter]      = useState('Pending');
+  // Default tab is 'All' — shows everything at a glance on load
+  const [filter,      setFilter]      = useState('All');
 
   const fetchAll = useCallback(async () => {
     setLoading(true); setError('');
@@ -359,11 +360,12 @@ export default function DashboardModule({ currentUser }) {
   const displayName  = [currentUser?.firstName, currentUser?.lastName].filter(Boolean).join(' ')
                      || currentUser?.username || 'there';
 
+  // Tab order: All | Accepted | Declined | Pending
   const reqTabs = [
-    { key:'Pending',  label:'Pending',  count:requests.filter(r=>r.status==='Pending').length },
+    { key:'All',      label:'All' },
     { key:'Accepted', label:'Accepted', count:requests.filter(r=>r.status==='Accepted').length },
     { key:'Declined', label:'Declined', count:requests.filter(r=>r.status==='Declined').length },
-    { key:'All',      label:'All' },
+    { key:'Pending',  label:'Pending',  count:requests.filter(r=>r.status==='Pending').length  },
   ];
 
   // ── Layout: the outer wrapper fills erp-main exactly, no outer scroll ─────
@@ -408,8 +410,8 @@ export default function DashboardModule({ currentUser }) {
                 pill={pendingCount > 0 ? pendingCount : null} />
               <TabBar tabs={reqTabs} active={filter} onChange={setFilter} />
               {filtered.length === 0
-                ? <Empty text={filter === 'Pending'
-                    ? 'No pending requests — all caught up.'
+                ? <Empty text={filter === 'All'
+                    ? 'No requests yet.'
                     : `No ${filter.toLowerCase()} requests.`} />
                 : filtered.map(req => (
                     <RequestCard key={req.requestId} req={req}

@@ -9,6 +9,7 @@ import TimelineView from '../components/TimelineView';
 import { useProject } from '../hooks/useProject';
 import { projectApi, phaseApi } from '../api/projectApi';
 
+// Audit tab is visible to ALL members (Managers see full log, others read-only)
 const TABS = ['Phases', 'Timeline', 'Members', 'Audit'];
 
 function parseLocalDate(d) {
@@ -113,15 +114,13 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
 
       {/* ── Tabs ── */}
       <div className="pm-detail-tabs">
-        {TABS
-          .filter(t => t !== 'Audit' || canEdit)
-          .map(t => (
-            <button key={t} className={`pm-tab ${tab===t?'active':''}`} onClick={() => setTab(t)}>
-              {t}
-              {t === 'Phases'  && <span style={{ marginLeft:5, opacity:.6, fontSize:11 }}>({phases.length})</span>}
-              {t === 'Members' && <span style={{ marginLeft:5, opacity:.6, fontSize:11 }}>({project.members?.length||0})</span>}
-            </button>
-          ))}
+        {TABS.map(t => (
+          <button key={t} className={`pm-tab ${tab===t?'active':''}`} onClick={() => setTab(t)}>
+            {t}
+            {t === 'Phases'  && <span style={{ marginLeft:5, opacity:.6, fontSize:11 }}>({phases.length})</span>}
+            {t === 'Members' && <span style={{ marginLeft:5, opacity:.6, fontSize:11 }}>({project.members?.length||0})</span>}
+          </button>
+        ))}
       </div>
 
       {/* ── Body ── */}
@@ -227,8 +226,8 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
             )
         )}
 
-        {/* ── Audit tab ── */}
-        {tab === 'Audit' && canEdit && <AuditLog projectId={projectId} />}
+        {/* ── Audit tab — visible to all members ── */}
+        {tab === 'Audit' && <AuditLog projectId={projectId} />}
       </div>
     </div>
   );

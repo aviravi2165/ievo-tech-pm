@@ -28,10 +28,10 @@ function DueBadge({ start, end, status }) {
   const dt  = parseLocalDate(end);
   const now = new Date(); now.setHours(0, 0, 0, 0);
   const diff = Math.round((dt - now) / 86400000);
-  if (diff < 0)  return <span className="pm-late-tag">⚠ {Math.abs(diff)}d late</span>;
-  if (diff <= 3) return <span className="pm-due-soon">Ends {diff === 0 ? 'today' : `in ${diff}d`}</span>;
+  if (diff < 0)  return <span className="pm-late-tag" style={{ whiteSpace:'nowrap' }}>⚠ {Math.abs(diff)}d late</span>;
+  if (diff <= 3) return <span className="pm-due-soon" style={{ whiteSpace:'nowrap' }}>Ends {diff === 0 ? 'today' : `in ${diff}d`}</span>;
   return (
-    <span style={{ fontSize: 10, color: 'var(--muted)' }}>
+    <span style={{ fontSize: 10, color: 'var(--muted)', whiteSpace: 'nowrap' }}>
       {fmtDate(start)} → {fmtDate(end)}
     </span>
   );
@@ -65,16 +65,23 @@ export default function ActivityRow({
   const [newTaskPrio,  setNewTaskPrio]  = useState('Medium');
   const [newTaskDue,   setNewTaskDue]   = useState('');
   const [newTaskDesc,  setNewTaskDesc]  = useState('');
-  const [newTaskDeps,  setNewTaskDeps]  = useState([]); // selected dependency taskIds
-  // Task assignees chosen at creation (picked from actMembers or searched fresh)
-  const [taskAssignees, setTaskAssignees] = useState([]); // [{ userId, name }]
+  const [newTaskDeps,  setNewTaskDeps]  = useState([]);
+  const [taskAssignees, setTaskAssignees] = useState([]);
   const [taskAssignSearch, setTaskAssignSearch] = useState(null);
   const [addErrors,    setAddErrors]    = useState({});
-
   const [depError, setDepError] = useState('');
 
   const canEdit   = myRole === 'Manager';
   const canMember = myRole === 'Member';
+
+  // After actMembers load, know if this user belongs to this activity
+  const isUserActivityMember = actMembers.some(m => String(m.userId) === String(myUserId));
+
+  // ── Chat visibility ──────────────────────────────────────────────────────────
+  // Manager: always sees chat (full access).
+  // Member:  when collapsed we don't know yet → show button (ChatButton handles 403 gracefully).
+  //          when expanded & members loaded → show only if confirmed member.
+  const showChatButton = canEdit || (canMember && (!open || isUserActivityMember));
 
   useEffect(() => { setLocalStatus(activity.status); }, [activity.status]);
   useEffect(() => {
@@ -99,12 +106,8 @@ export default function ActivityRow({
     finally { setMemberLoading(false); }
   }, [activity.activityId]);
 
-  // Fetch both when opened
   useEffect(() => {
-    if (open) {
-      fetchTasks();
-      fetchMembers();
-    }
+    if (open) { fetchTasks(); fetchMembers(); }
   }, [open, fetchTasks, fetchMembers]);
 
   const togglePanel = (p) => setPanel(v => v === p ? null : p);
@@ -157,7 +160,6 @@ export default function ActivityRow({
   };
 
   // ── Add task ─────────────────────────────────────────────────────────────────
-  // Assignees selected at task creation → each gets a Pending assignment request.
   const handleAddTask = async () => {
     const errs = {};
     if (!newTaskName.trim()) errs.name = 'Task name required';
@@ -169,7 +171,6 @@ export default function ActivityRow({
         priority:    newTaskPrio,
         dueDate:     newTaskDue,
         description: newTaskDesc || null,
-        // Send assignment requests to all chosen assignees immediately on creation
         assigneeIds: taskAssignees.map(a => a.userId),
       });
       setNewTaskName(''); setNewTaskDue(''); setNewTaskDesc('');
@@ -198,35 +199,36 @@ export default function ActivityRow({
     <div className="pm-activity">
       {/* ── Header ── */}
       <div className="pm-activity-header" onClick={() => setOpen(v => !v)}>
+
+        {/* Chevron */}
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
           style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s', flexShrink: 0, color: 'var(--muted)' }}>
           <polyline points="9 18 15 12 9 6"/>
         </svg>
 
+        {/* Name */}
         <span className="pm-activity-name" style={{ opacity: isBlocked ? 0.5 : 1 }}>
           {activity.name}
         </span>
 
+        {/* Member count */}
         {activity.memberCount > 0 && (
           <span style={{ fontSize: 10, color: 'var(--muted)', background: 'var(--mid)', padding: '1px 7px', borderRadius: 8, border: '1px solid var(--divider)', flexShrink: 0 }}>
             {activity.memberCount} {activity.memberCount === 1 ? 'member' : 'members'}
           </span>
         )}
 
-        {activity.ownerName && (
-          <span style={{ fontSize: 10, color: 'var(--muted)', background: 'var(--mid)', padding: '1px 7px', borderRadius: 8, border: '1px solid var(--divider)', flexShrink: 0 }}>
-            {activity.ownerName}
-          </span>
-        )}
-
-        {(canEdit || canMember) && (
+        {/* Chat button — compact (icon-only) to save header space */}
+        {showChatButton && (
           <span onClick={e => e.stopPropagation()}>
-            <ChatButton kind="activity" id={activity.activityId} label="Group Chat" />
+            <ChatButton kind="activity" id={activity.activityId} compact />
           </span>
         )}
 
+        {/* Dates — nowrap prevents multi-line stacking */}
         <DueBadge start={activity.plannedStart} end={activity.plannedEnd} status={activity.status} />
 
+        {/* Dependency badge */}
         {activity.dependsOn?.length > 0 && (
           <span className="pm-dep-badge" title={`Depends on ${activity.dependsOn.length} activity`}>
             <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
@@ -235,10 +237,12 @@ export default function ActivityRow({
         )}
         {activity.isOverdue && <OverdueBadge />}
 
-        <div style={{ minWidth: 140, flexShrink: 0 }}>
+        {/* Progress bar — tightened width */}
+        <div style={{ minWidth: 90, maxWidth: 140, flex: '1 1 90px' }}>
           <ProgressBar value={activity.progress || 0} />
         </div>
 
+        {/* Status */}
         {(canEdit || canMember) ? (
           <select value={localStatus} onClick={e => e.stopPropagation()} onChange={handleStatusChange}
             style={{ background: '#fff', border: '1px solid var(--divider)', borderRadius: 'var(--radius)', color: 'var(--light)', fontSize: 11, padding: '3px 6px', fontFamily: 'inherit', outline: 'none', flexShrink: 0 }}>
@@ -246,19 +250,17 @@ export default function ActivityRow({
           </select>
         ) : <StatusBadge status={localStatus} />}
 
+        {/* Manager action buttons */}
         {canEdit && (
           <div style={{ display: 'flex', gap: 3, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-            {/* Edit dates/desc */}
             <button className={`icon-btn ${panel === 'edit' ? 'active' : ''}`} title="Edit activity"
               onClick={() => togglePanel('edit')} style={{ width: 26, height: 26 }}>
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             </button>
-            {/* Members */}
             <button className={`icon-btn ${panel === 'members' ? 'active' : ''}`} title="Activity members"
               onClick={() => { togglePanel('members'); if (panel !== 'members') fetchMembers(); }} style={{ width: 26, height: 26 }}>
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
             </button>
-            {/* Dependencies */}
             {otherActivities.length > 0 && (
               <button className={`icon-btn ${panel === 'deps' ? 'active' : ''}`} title="Dependencies"
                 onClick={() => togglePanel('deps')} style={{ width: 26, height: 26 }}>
@@ -315,7 +317,6 @@ export default function ActivityRow({
             These users can be assigned to tasks within this activity. Task assignees are automatically added here on acceptance.
           </div>
 
-          {/* Quick-pick from project members */}
           {projectMembers.length > 0 && (
             <div style={{ marginBottom: 10 }}>
               <div style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase', marginBottom: 5 }}>Add from project members</div>
@@ -335,7 +336,6 @@ export default function ActivityRow({
             </div>
           )}
 
-          {/* Search users outside project */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
             <UserSearchInput selectedUser={memberSearch} onSelect={setMemberSearch}
               excludeUserIds={actMembers.map(m => m.userId)}
@@ -347,7 +347,6 @@ export default function ActivityRow({
           </div>
           {memberError && <div style={{ color: '#aa1010', fontSize: 11, marginBottom: 8 }}>{memberError}</div>}
 
-          {/* Current members */}
           {memberLoading && <div style={{ fontSize: 12, color: 'var(--muted)' }}>Loading…</div>}
           {!memberLoading && actMembers.map(m => (
             <div key={m.userId} className="pm-member-row selected" style={{ marginBottom: 4 }}>
@@ -405,6 +404,19 @@ export default function ActivityRow({
             </div>
           )}
 
+          {/* Non-member notice — shown to Members who aren't in this activity */}
+          {canMember && !memberLoading && !isUserActivityMember && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 12px', marginBottom: 8,
+              background: '#f8f5f0', border: '1px solid var(--divider)', borderRadius: 'var(--radius)',
+              fontSize: 12, color: 'var(--muted)' }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              You are not a member of this activity — contact a Manager to be added.
+            </div>
+          )}
+
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '8px 0 6px' }}>
             <span style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.06em' }}>
               Tasks ({tasks.length})
@@ -447,13 +459,11 @@ export default function ActivityRow({
                 </div>
               </div>
 
-              {/* Assignee picker — quick-pick from activity members + search */}
+              {/* Assignee picker */}
               <div style={{ marginBottom: 8 }}>
                 <label style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase', display: 'block', marginBottom: 5 }}>
                   Assign To (optional — sends assignment request)
                 </label>
-
-                {/* Quick-pick chips from activity members */}
                 {actMembers.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 6 }}>
                     {actMembers.map(m => {
@@ -472,8 +482,6 @@ export default function ActivityRow({
                     })}
                   </div>
                 )}
-
-                {/* Also allow searching outside activity members */}
                 <div style={{ display: 'flex', gap: 8 }}>
                   <UserSearchInput selectedUser={taskAssignSearch} onSelect={setTaskAssignSearch}
                     excludeUserIds={taskAssignees.map(a => a.userId)}
@@ -487,8 +495,6 @@ export default function ActivityRow({
                     + Add
                   </button>
                 </div>
-
-                {/* Show selected assignees */}
                 {taskAssignees.length > 0 && (
                   <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 6 }}>
                     {taskAssignees.map(a => (

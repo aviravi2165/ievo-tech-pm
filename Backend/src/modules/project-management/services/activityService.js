@@ -311,12 +311,17 @@ async function removeActivityDep(activityId, dependsOnId, projectId, userId) {
 async function getOrCreateActivityThread(activityId) {
   // Returns { conversationId, groupId } — groupId is used by ChatButton
   // to open the Groups tab to the correct group, not the inbox.
-  const existing = await pmChatService.getActivityThreadId(activityId);
-  if (existing) return existing;
-  const conversationId = await pmChatService.ensureActivityThread(activityId);
-  // Re-fetch so we always return the full { conversationId, groupId } shape
+  //
+  // Always ensure + sync on every call, not just at creation time.
+  // This covers the common case where the thread already exists but a
+  // new activity member was added after it was first seeded — they would
+  // be in pm_activity_members but not yet in comm_participants or
+  // comm_group_members, causing assertConversationParticipant (called by
+  // messageService.getThread) to reject them with a 403.
+  await pmChatService.ensureActivityThread(activityId);
+  await pmChatService.syncActivityThreadParticipants(activityId);
   const thread = await pmChatService.getActivityThreadId(activityId);
-  return thread || { conversationId, groupId: null };
+  return thread || { conversationId: null, groupId: null };
 }
 
 module.exports = {

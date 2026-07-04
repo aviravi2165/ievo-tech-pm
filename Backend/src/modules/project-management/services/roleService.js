@@ -143,11 +143,23 @@ async function getProjectManagerIdsForActivity(activityId) {
  * (if momentarily one-person) chat rather than failing to create one.
  */
 async function resolveActivityThreadSeedIds(activityId) {
-  const members = await getAllActivityMemberIds(activityId);
-  if (members.length) return members;
-  const managers = await resolveActivityManagerIds(activityId);
-  if (managers.length) return managers;
-  return getProjectManagerIdsForActivity(activityId);
+  // Project Managers are ALWAYS included — they hold project-wide oversight and
+  // must never be locked out of an activity group chat regardless of whether
+  // they appear in pm_activity_members.
+  // Bug that was here: project managers were only a last-resort fallback and got
+  // skipped the moment a single pm_activity_members row existed, causing project
+  // Managers (including the project owner) to fail assertConversationParticipant
+  // and see "Failed to load" when opening any activity chat they weren't
+  // explicitly listed in.
+  const [members, projectManagers] = await Promise.all([
+    getAllActivityMemberIds(activityId),
+    getProjectManagerIdsForActivity(activityId),
+  ]);
+  const seed = new Set([...members, ...projectManagers]);
+  if (seed.size) return [...seed];
+  // Final fallback only when the project itself has no Managers yet (edge case
+  // during initial setup): use the activity-level manager / owner_id column.
+  return resolveActivityManagerIds(activityId);
 }
 
 module.exports = {

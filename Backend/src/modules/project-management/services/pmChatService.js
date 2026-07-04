@@ -335,9 +335,13 @@ async function syncActivityThreadParticipants(activityId) {
     if (toAdd.length)    await upsertParticipants(req, conversationId, toAdd, 'to');
     if (toRemove.length) await removeParticipantsSoft(req, conversationId, toRemove);
 
-    // Keep comm_group_members in sync so the Groups tab shows correct membership
+    // Keep comm_group_members in sync so the Groups tab shows correct membership.
+    // IMPORTANT: sync ALL desired members, not just `toAdd`.
+    // A user already in comm_participants (read access) from a previous sync would
+    // not be in toAdd and would therefore miss the comm_group_members insert, leaving
+    // them able to READ but not WRITE (userCanReply checks comm_group_members).
     if (groupId) {
-      for (const uid of toAdd) {
+      for (const uid of desiredIds) {
         await req()
           .input('groupId', sql.Int,              groupId)
           .input('userId',  sql.UniqueIdentifier, uid)
