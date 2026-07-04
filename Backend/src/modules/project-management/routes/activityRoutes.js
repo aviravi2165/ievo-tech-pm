@@ -31,7 +31,6 @@ router.use(authenticate);
 // ── Activity CRUD ─────────────────────────────────────────────────────────────
 router.patch('/:id',        resolveActivityProject, requireRole('Member'),  ctrl.update);
 router.delete('/:id',       resolveActivityProject, requireRole('Manager'), ctrl.remove);
-router.patch('/:id/status', resolveActivityProject, requireEntityRole('activity', 'Manager'), ctrl.updateStatus);
 
 // ── Activity members ──────────────────────────────────────────────────────────
 // Read: anyone with at least Viewer-level effective access to the activity.

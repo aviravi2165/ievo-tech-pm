@@ -2,12 +2,12 @@ import { useState, useEffect, useCallback } from 'react';
 import StatusBadge from './StatusBadge';
 import ProgressBar from './ProgressBar';
 import OverdueBadge from './OverdueBadge';
+import DelayBadge from './DelayBadge';
 import TaskItem from './TaskItem';
 import UserSearchInput from './UserSearchInput';
 import ChatButton from './ChatButton';
 import { activityApi } from '../api/projectApi';
 
-const ACTIVITY_STATUSES = ['To Do', 'In Progress', 'Completed', 'Blocked'];
 const PRIORITY_OPTS = ['Low', 'Medium', 'High', 'Critical'];
 
 function toInput(d) { return d ? String(d).split('T')[0] : ''; }
@@ -44,7 +44,6 @@ export default function ActivityRow({
   const [tasks,            setTasks]            = useState([]);
   const [loadingTasks,     setLoadingTasks]     = useState(false);
   const [panel,            setPanel]            = useState(null); // 'edit'|'deps'|'addtask'|'members'
-  const [localStatus,      setLocalStatus]      = useState(activity.status);
 
   // Activity members state
   const [actMembers,       setActMembers]       = useState([]);
@@ -83,7 +82,6 @@ export default function ActivityRow({
   //          when expanded & members loaded → show only if confirmed member.
   const showChatButton = canEdit || (canMember && (!open || isUserActivityMember));
 
-  useEffect(() => { setLocalStatus(activity.status); }, [activity.status]);
   useEffect(() => {
     setEditStart(toInput(activity.plannedStart));
     setEditEnd(toInput(activity.plannedEnd));
@@ -111,15 +109,6 @@ export default function ActivityRow({
   }, [open, fetchTasks, fetchMembers]);
 
   const togglePanel = (p) => setPanel(v => v === p ? null : p);
-
-  // ── Status change ────────────────────────────────────────────────────────────
-  const handleStatusChange = async (e) => {
-    if (!canEdit && !canMember) return;
-    const s = e.target.value, prev = localStatus;
-    setLocalStatus(s);
-    try { await activityApi.updateStatus(activity.activityId, s); onRefetchProject?.(); }
-    catch { setLocalStatus(prev); }
-  };
 
   // ── Edit activity save ───────────────────────────────────────────────────────
   const handleEditSave = async () => {
@@ -236,19 +225,16 @@ export default function ActivityRow({
           </span>
         )}
         {activity.isOverdue && <OverdueBadge />}
+        <DelayBadge days={activity.delayDays} label="Late by" />
 
         {/* Progress bar — tightened width */}
         <div style={{ minWidth: 90, maxWidth: 140, flex: '1 1 90px' }}>
           <ProgressBar value={activity.progress || 0} />
         </div>
 
-        {/* Status */}
-        {(canEdit || canMember) ? (
-          <select value={localStatus} onClick={e => e.stopPropagation()} onChange={handleStatusChange}
-            style={{ background: '#fff', border: '1px solid var(--divider)', borderRadius: 'var(--radius)', color: 'var(--light)', fontSize: 11, padding: '3px 6px', fontFamily: 'inherit', outline: 'none', flexShrink: 0 }}>
-            {ACTIVITY_STATUSES.map(s => <option key={s}>{s}</option>)}
-          </select>
-        ) : <StatusBadge status={localStatus} />}
+        {/* Status — always computed from child task progress (Blocked comes from
+            unresolved dependencies); nobody sets this by hand anymore */}
+        <StatusBadge status={activity.status} />
 
         {/* Manager action buttons */}
         {canEdit && (

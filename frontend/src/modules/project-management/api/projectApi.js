@@ -25,7 +25,6 @@ export const phaseApi = {
   getActivities:  (phaseId)         => axiosInstance.get(`/api/phases/${phaseId}/activities`).then(r => r.data),
   createActivity: (phaseId, body)   => axiosInstance.post(`/api/phases/${phaseId}/activities`, body).then(r => r.data),
   update:         (id, body)        => axiosInstance.patch(`/api/phases/${id}`, body).then(r => r.data),
-  updateStatus:   (id, status)      => axiosInstance.patch(`/api/phases/${id}/status`, { status }).then(r => r.data),
   delete:         (id)              => axiosInstance.delete(`/api/phases/${id}`).then(r => r.data),
   addDep:         (id, dependsOnId) => axiosInstance.post(`/api/phases/${id}/dependencies`, { dependsOnId }).then(r => r.data),
   removeDep:      (id, depId)       => axiosInstance.delete(`/api/phases/${id}/dependencies/${depId}`).then(r => r.data),
@@ -43,7 +42,6 @@ export const activityApi = {
   createTask:     (actId, body)     => axiosInstance.post(`/api/activities/${actId}/tasks`, body).then(r => r.data),
   // Activity CRUD
   update:         (id, body)        => axiosInstance.patch(`/api/activities/${id}`, body).then(r => r.data),
-  updateStatus:   (id, status)      => axiosInstance.patch(`/api/activities/${id}/status`, { status }).then(r => r.data),
   delete:         (id)              => axiosInstance.delete(`/api/activities/${id}`).then(r => r.data),
   addDep:         (id, dependsOnId) => axiosInstance.post(`/api/activities/${id}/dependencies`, { dependsOnId }).then(r => r.data),
   removeDep:      (id, depId)       => axiosInstance.delete(`/api/activities/${id}/dependencies/${depId}`).then(r => r.data),

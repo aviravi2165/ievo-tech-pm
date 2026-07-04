@@ -2,9 +2,9 @@
 
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
-const { resolveUnblocked, blockIfNeeded } = require('./dependencyService');
-const { getActivityProgress } = require('./progressService');
-const { broadcastStatusChanged, broadcastUnblocked } = require('../socket/socketHandler');
+const { blockIfNeeded } = require('./dependencyService');
+const { getActivityProgress, deriveStatus } = require('./progressService');
+const { getActivityDelayDays } = require('./delayService');
 const pmChatService = require('./pmChatService');
 
 function parseIdList(val) {
@@ -52,7 +52,11 @@ async function getActivitiesForPhase(phaseId) {
     `);
 
   const rows = result.recordset.map(r => ({ ...r, dependsOn: parseIdList(r.dependsOn) }));
-  for (const act of rows) act.progress = await getActivityProgress(act.activityId);
+  for (const act of rows) {
+    act.progress = await getActivityProgress(act.activityId);
+    act.status = deriveStatus(act.progress, act.status);
+    act.delayDays = act.status === 'Completed' ? 0 : await getActivityDelayDays(act.activityId, act.plannedEnd);
+  }
   return rows;
 }
 
@@ -247,29 +251,6 @@ async function updateActivity(activityId, projectId, userId, body) {
   return { activityId, ...fields };
 }
 
-async function updateActivityStatus(activityId, projectId, userId, newStatus) {
-  const pool = await getPool();
-  const cur  = await pool.request()
-    .input('activityId', sql.Int, activityId)
-    .query(`SELECT status FROM pm_activities WHERE activity_id=@activityId AND is_deleted=0`);
-  if (!cur.recordset[0]) { const e = new Error('Activity not found'); e.statusCode = 404; throw e; }
-  const oldStatus = cur.recordset[0].status;
-
-  let unblockedIds = [];
-  await withTransaction(async (req) => {
-    await req()
-      .input('status',     sql.NVarChar(30), newStatus)
-      .input('activityId', sql.Int,          activityId)
-      .query(`UPDATE pm_activities SET status=@status, status_override=1 WHERE activity_id=@activityId`);
-    unblockedIds = newStatus === 'Completed' ? await resolveUnblocked(req, 'activity', activityId) : [];
-  });
-
-  await audit.log({ entityType:'activity', entityId:activityId, projectId, userId, action:'status_changed', fieldChanged:'status', oldValue:oldStatus, newValue:newStatus });
-  broadcastStatusChanged(projectId, { entityType:'activity', entityId:activityId, status:newStatus });
-  if (unblockedIds.length) broadcastUnblocked(projectId, { entityType:'activity', unblockedIds });
-  return { activityId, status:newStatus, unblockedActivityIds:unblockedIds };
-}
-
 async function deleteActivity(activityId, projectId, userId) {
   const pool = await getPool();
   await pool.request()
@@ -334,7 +315,6 @@ module.exports = {
   removeActivityMember,
   createActivity,
   updateActivity,
-  updateActivityStatus,
   deleteActivity,
   addActivityDep,
   removeActivityDep,

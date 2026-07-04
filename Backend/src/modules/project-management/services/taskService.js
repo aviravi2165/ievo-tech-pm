@@ -3,6 +3,7 @@
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
 const { resolveUnblocked, blockIfNeeded } = require('./dependencyService');
+const { getActivityProgress, getPhaseProgress } = require('./progressService');
 const { broadcastStatusChanged, broadcastUnblocked, broadcastAssignmentRequest } = require('../socket/socketHandler');
 const pmChatService = require('./pmChatService');
 
@@ -332,16 +333,18 @@ async function updateTaskStatus(taskId, projectId, userId, newStatus, projectRol
     .input('taskId', sql.Int,              taskId)
     .input('userId', sql.UniqueIdentifier, userId)
     .query(`
-      SELECT t.status,
+      SELECT t.status, t.activity_id AS activityId, a.phase_id AS phaseId,
         CAST(CASE WHEN EXISTS(SELECT 1 FROM pm_task_assignees WHERE task_id=@taskId AND user_id=@userId)
              THEN 1 ELSE 0 END AS BIT) AS isAssigned
-      FROM pm_tasks t WHERE t.task_id=@taskId AND t.is_deleted=0
+      FROM pm_tasks t
+      INNER JOIN pm_activities a ON a.activity_id = t.activity_id
+      WHERE t.task_id=@taskId AND t.is_deleted=0
     `);
   if (!cur.recordset[0]) { const e = new Error('Task not found'); e.statusCode = 404; throw e; }
   if (projectRole === 'Member' && !cur.recordset[0].isAssigned) {
     const e = new Error('Members can only update their own assigned tasks'); e.statusCode = 403; throw e;
   }
-  const oldStatus = cur.recordset[0].status;
+  const { status: oldStatus, activityId, phaseId } = cur.recordset[0];
 
   let unblockedIds = [];
   await withTransaction(async (req) => {
@@ -355,6 +358,29 @@ async function updateTaskStatus(taskId, projectId, userId, newStatus, projectRol
   await audit.log({ entityType:'task', entityId:taskId, projectId, userId, action:'status_changed', fieldChanged:'status', oldValue:oldStatus, newValue:newStatus });
   broadcastStatusChanged(projectId, { entityType:'task', entityId:taskId, status:newStatus });
   if (unblockedIds.length) broadcastUnblocked(projectId, { entityType:'task', unblockedIds });
+
+  // Activity/Phase status is now purely computed from child progress — there's
+  // no manual "mark Completed" action left to hang resolveUnblocked off of at
+  // those levels. So: every time a task completes, check right here whether
+  // that just pushed its parent Activity (and in turn Phase) to 100%, and if
+  // so run the same unblock check those levels used to only get on a manual
+  // status change. Read AFTER the transaction commits, so progress reflects
+  // the update above. resolveUnblocked accepts a plain pool-request factory
+  // for non-transactional use — no separate transaction needed here.
+  if (newStatus === DONE_STATUS) {
+    const activityProgress = await getActivityProgress(activityId);
+    if (activityProgress >= 100) {
+      const unblockedActivityIds = await resolveUnblocked(() => pool.request(), 'activity', activityId);
+      if (unblockedActivityIds.length) broadcastUnblocked(projectId, { entityType:'activity', unblockedIds: unblockedActivityIds });
+
+      const phaseProgress = await getPhaseProgress(phaseId);
+      if (phaseProgress >= 100) {
+        const unblockedPhaseIds = await resolveUnblocked(() => pool.request(), 'phase', phaseId);
+        if (unblockedPhaseIds.length) broadcastUnblocked(projectId, { entityType:'phase', unblockedIds: unblockedPhaseIds });
+      }
+    }
+  }
+
   return { taskId, status:newStatus, unblockedTaskIds:unblockedIds };
 }
 

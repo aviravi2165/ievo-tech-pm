@@ -194,7 +194,10 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
               </span>
             )}
             {task.description && (
-              <span style={{ fontSize: 10, color: 'var(--muted)', border: '1px solid var(--divider)', borderRadius: 8, padding: '0 5px' }}>note</span>
+              <span style={{ fontSize: 10, color: 'var(--muted)', border: '1px solid var(--divider)', borderRadius: 8, padding: '0 6px', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                title={task.description}>
+                {task.description.length > 28 ? `${task.description.slice(0, 28)}…` : task.description}
+              </span>
             )}
           </div>
 

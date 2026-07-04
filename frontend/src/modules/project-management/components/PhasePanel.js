@@ -2,10 +2,9 @@ import { useState, useEffect, useCallback } from 'react';
 import StatusBadge from './StatusBadge';
 import ProgressBar from './ProgressBar';
 import OverdueBadge from './OverdueBadge';
+import DelayBadge from './DelayBadge';
 import ActivityRow from './ActivityRow';
 import { phaseApi } from '../api/projectApi';
-
-const PHASE_STATUSES = ['To Do', 'In Progress', 'Completed', 'Blocked'];
 
 function toInput(d) { return d ? String(d).split('T')[0] : ''; }
 function parseLocalDate(d) {
@@ -35,7 +34,6 @@ export default function PhasePanel({ phase, myRole, projectId, allPhases = [], p
   const [activities,  setActivities]  = useState([]);
   const [loading,     setLoading]     = useState(false);
   const [panel,       setPanel]       = useState(null); // 'dates'|'deps'|'addact'
-  const [localStatus, setLocalStatus] = useState(phase.status);
 
   // Date edit
   const [editStart,   setEditStart]   = useState(toInput(phase.plannedStart));
@@ -54,7 +52,6 @@ export default function PhasePanel({ phase, myRole, projectId, allPhases = [], p
 
   const canEdit = myRole === 'Manager';
 
-  useEffect(() => { setLocalStatus(phase.status); }, [phase.status]);
   useEffect(() => {
     setEditStart(toInput(phase.plannedStart));
     setEditEnd(toInput(phase.plannedEnd));
@@ -70,13 +67,6 @@ export default function PhasePanel({ phase, myRole, projectId, allPhases = [], p
   useEffect(() => { if (open) fetchActivities(); }, [open, fetchActivities]);
 
   const togglePanel = (p) => setPanel(v => v === p ? null : p);
-
-  const handleStatusChange = async (e) => {
-    const s = e.target.value, prev = localStatus;
-    setLocalStatus(s);
-    try { await phaseApi.updateStatus(phase.phaseId, s); onRefetchProject?.(); }
-    catch { setLocalStatus(prev); }
-  };
 
   const handleDateSave = async () => {
     const errs = {};
@@ -151,6 +141,7 @@ export default function PhasePanel({ phase, myRole, projectId, allPhases = [], p
           </span>
         )}
         {phase.isOverdue && <OverdueBadge />}
+        <DelayBadge days={phase.delayDays} label="Late by" />
 
         {canEdit && onReorder && (
           <div style={{ display:'flex', gap:2 }} onClick={e => e.stopPropagation()}>
@@ -163,12 +154,9 @@ export default function PhasePanel({ phase, myRole, projectId, allPhases = [], p
           <ProgressBar value={phase.progress || 0} />
         </div>
 
-        {canEdit ? (
-          <select value={localStatus} onClick={e => e.stopPropagation()} onChange={handleStatusChange}
-            style={{ background:'#fff', border:'1px solid var(--divider)', borderRadius:'var(--radius)', color:'var(--light)', fontSize:11, padding:'4px 8px', fontFamily:'inherit', outline:'none' }}>
-            {PHASE_STATUSES.map(s => <option key={s}>{s}</option>)}
-          </select>
-        ) : <StatusBadge status={localStatus} />}
+        {/* Status — always computed from child activity progress (Blocked comes
+            from unresolved dependencies); nobody sets this by hand anymore */}
+        <StatusBadge status={phase.status} />
 
         {canEdit && (
           <div style={{ display:'flex', gap:3 }} onClick={e => e.stopPropagation()}>

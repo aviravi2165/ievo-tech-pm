@@ -3,6 +3,7 @@
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
 const { getProjectProgress } = require('./progressService');
+const { getProjectDelayDays } = require('./delayService');
 
 async function listProjects(userId) {
   const pool = await getPool();
@@ -55,7 +56,10 @@ async function getProject(projectId, userId) {
       WHERE m.project_id=@projectId ORDER BY m.role, u.first_name
     `);
   const progress = await getProjectProgress(projectId);
-  return { ...proj, members: membersResult.recordset, progress };
+  const delayDays = (proj.status === 'Completed' || proj.status === 'Cancelled')
+    ? 0
+    : await getProjectDelayDays(projectId, proj.plannedEnd);
+  return { ...proj, members: membersResult.recordset, progress, delayDays };
 }
 
 async function createProject(userId, body) {

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import StatusBadge from '../components/StatusBadge';
 import ProgressBar from '../components/ProgressBar';
 import OverdueBadge from '../components/OverdueBadge';
+import DelayBadge from '../components/DelayBadge';
 import PhasePanel from '../components/PhasePanel';
 import MemberManager from '../components/MemberManager';
 import AuditLog from '../components/AuditLog';
@@ -104,6 +105,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
           <div style={{ minWidth:160 }}>
             <ProgressBar value={project.progress || 0} />
           </div>
+          <DelayBadge days={project.delayDays} label="Delayed by" />
           <StatusBadge status={project.status} />
           <span style={{
             fontSize:11, color:'var(--muted)', background:'var(--mid)',

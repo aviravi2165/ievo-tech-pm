@@ -2,9 +2,9 @@
 
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
-const { resolveUnblocked, blockIfNeeded } = require('./dependencyService');
-const { getPhaseProgress } = require('./progressService');
-const { broadcastStatusChanged, broadcastUnblocked } = require('../socket/socketHandler');
+const { blockIfNeeded } = require('./dependencyService');
+const { getPhaseProgress, deriveStatus } = require('./progressService');
+const { getPhaseDelayDays } = require('./delayService');
 
 function parseIdList(val) {
   if (!val) return [];
@@ -30,7 +30,11 @@ async function getPhasesForProject(projectId) {
       ORDER BY ph.display_order
     `);
   const rows = result.recordset.map(r => ({ ...r, dependsOn: parseIdList(r.dependsOn) }));
-  for (const ph of rows) ph.progress = await getPhaseProgress(ph.phaseId);
+  for (const ph of rows) {
+    ph.progress = await getPhaseProgress(ph.phaseId);
+    ph.status = deriveStatus(ph.progress, ph.status);
+    ph.delayDays = ph.status === 'Completed' ? 0 : await getPhaseDelayDays(ph.phaseId, ph.plannedEnd);
+  }
   return rows;
 }
 
@@ -94,29 +98,6 @@ async function updatePhase(phaseId, projectId, userId, body) {
   return { phaseId, ...fields };
 }
 
-async function updatePhaseStatus(phaseId, projectId, userId, newStatus) {
-  const pool = await getPool();
-  const cur = await pool.request()
-    .input('phaseId', sql.Int, phaseId)
-    .query(`SELECT status FROM pm_phases WHERE phase_id=@phaseId AND is_deleted=0`);
-  if (!cur.recordset[0]) { const e = new Error('Phase not found'); e.statusCode = 404; throw e; }
-  const oldStatus = cur.recordset[0].status;
-
-  let unblockedIds = [];
-  await withTransaction(async (req) => {
-    await req()
-      .input('status',  sql.NVarChar(30), newStatus)
-      .input('phaseId', sql.Int,          phaseId)
-      .query(`UPDATE pm_phases SET status=@status, status_override=1 WHERE phase_id=@phaseId`);
-    unblockedIds = newStatus === 'Completed' ? await resolveUnblocked(req, 'phase', phaseId) : [];
-  });
-
-  await audit.log({ entityType:'phase', entityId:phaseId, projectId, userId, action:'status_changed', fieldChanged:'status', oldValue:oldStatus, newValue:newStatus });
-  broadcastStatusChanged(projectId, { entityType:'phase', entityId:phaseId, status:newStatus });
-  if (unblockedIds.length) broadcastUnblocked(projectId, { entityType:'phase', unblockedIds });
-  return { phaseId, status:newStatus, unblockedPhaseIds:unblockedIds };
-}
-
 async function deletePhase(phaseId, projectId, userId) {
   const pool = await getPool();
   await pool.request()
@@ -176,4 +157,4 @@ async function reorderPhase(projectId, phaseId, direction) {
   });
 }
 
-module.exports = { getPhasesForProject, createPhase, updatePhase, updatePhaseStatus, deletePhase, addPhaseDep, removePhaseDep, reorderPhase };
+module.exports = { getPhasesForProject, createPhase, updatePhase, deletePhase, addPhaseDep, removePhaseDep, reorderPhase };
