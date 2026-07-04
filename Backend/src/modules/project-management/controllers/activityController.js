@@ -15,7 +15,14 @@ const updateMemberRole = async (req,res,next) => { try { await svc.updateActivit
 const removeMember     = async (req,res,next) => { try { await svc.removeActivityMember(req.params.id, req.params.uid, req.user.userId, req.pmProjectId); res.json({ok:true}); } catch(e){next(e);} };
 
 // Chat — returns the (auto-created if needed) Activity group thread's conversationId
-const getChat = async (req,res,next) => { try { res.json({ conversationId: await svc.getOrCreateActivityThread(req.params.id) }); } catch(e){next(e);} };
+const getChat = async (req,res,next) => {
+  try {
+    const thread = await svc.getOrCreateActivityThread(req.params.id);
+    // thread is now { conversationId, groupId } — groupId tells ChatButton
+    // to open the Groups tab to this specific group, not the inbox
+    res.json(thread);
+  } catch(e){ next(e); }
+};
 
 // Dependencies
 const addDep        = async (req,res,next) => { try { await svc.addActivityDep(req.params.id, req.body.dependsOnId, req.pmProjectId, req.user.userId); res.json({ok:true}); } catch(e){next(e);} };

@@ -309,7 +309,14 @@ async function removeActivityDep(activityId, dependsOnId, projectId, userId) {
 // ── Chat thread lookup (used by activityRoutes GET /:id/chat) ──────────────────
 
 async function getOrCreateActivityThread(activityId) {
-  return pmChatService.ensureActivityThread(activityId);
+  // Returns { conversationId, groupId } — groupId is used by ChatButton
+  // to open the Groups tab to the correct group, not the inbox.
+  const existing = await pmChatService.getActivityThreadId(activityId);
+  if (existing) return existing;
+  const conversationId = await pmChatService.ensureActivityThread(activityId);
+  // Re-fetch so we always return the full { conversationId, groupId } shape
+  const thread = await pmChatService.getActivityThreadId(activityId);
+  return thread || { conversationId, groupId: null };
 }
 
 module.exports = {

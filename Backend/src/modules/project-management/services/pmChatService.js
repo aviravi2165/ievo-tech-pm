@@ -79,17 +79,54 @@ async function getActiveParticipantIds(conversationId) {
   return result.recordset.map(r => String(r.userId));
 }
 
-async function createSystemConversation(reqFn, { subject, createdBy, convType }) {
+async function createSystemConversation(reqFn, { subject, createdBy, convType, groupId = null }) {
   const result = await reqFn()
     .input('subject',   sql.NVarChar,        subject)
     .input('createdBy', sql.UniqueIdentifier, createdBy)
     .input('convType',  sql.NVarChar,         convType)
+    .input('groupId',   sql.Int,              groupId)
     .query(`
       INSERT INTO comm_conversations (subject, created_by, allow_reply, group_id, conv_type, last_message_at)
       OUTPUT INSERTED.conversation_id
-      VALUES (@subject, @createdBy, 1, NULL, @convType, SYSDATETIMEOFFSET())
+      VALUES (@subject, @createdBy, 1, @groupId, @convType, SYSDATETIMEOFFSET())
     `);
   return result.recordset[0].conversation_id;
+}
+
+/**
+ * Creates a real comm_groups entry for the activity group chat so it
+ * surfaces in the Groups tab (not inbox). Returns { groupId, conversationId }.
+ */
+async function createGroupAndConversation(reqFn, { groupName, subject, createdBy }) {
+  // Insert a comm_groups row — same as user-created groups but flagged as system-managed
+  const groupResult = await reqFn()
+    .input('groupName',  sql.NVarChar,        groupName)
+    .input('createdBy',  sql.UniqueIdentifier, createdBy)
+    .query(`
+      INSERT INTO comm_groups (group_name, created_by, description)
+      OUTPUT INSERTED.group_id
+      VALUES (@groupName, @createdBy, 'Auto-managed activity chat group')
+    `);
+  const groupId = groupResult.recordset[0].group_id;
+
+  // Add creator as first member of the comm_group
+  await reqFn()
+    .input('groupId', sql.Int,              groupId)
+    .input('userId',  sql.UniqueIdentifier, createdBy)
+    .query(`
+      IF NOT EXISTS (SELECT 1 FROM comm_group_members WHERE group_id=@groupId AND user_id=@userId)
+        INSERT INTO comm_group_members (group_id, user_id) VALUES (@groupId, @userId)
+    `);
+
+  // Create the group_thread conversation linked to this group
+  const conversationId = await createSystemConversation(reqFn, {
+    subject,
+    createdBy,
+    convType: 'group_thread',
+    groupId,
+  });
+
+  return { groupId, conversationId };
 }
 
 // ── Desired-participant computation ────────────────────────────────────────
@@ -200,8 +237,14 @@ async function getActivityThreadId(activityId) {
   const pool = await getPool();
   const result = await pool.request()
     .input('activityId', sql.Int, activityId)
-    .query(`SELECT conversation_id AS conversationId FROM pm_activity_threads WHERE activity_id=@activityId`);
-  return result.recordset[0]?.conversationId ?? null;
+    .query(`
+      SELECT t.conversation_id AS conversationId, c.group_id AS groupId
+      FROM pm_activity_threads t
+      INNER JOIN comm_conversations c ON c.conversation_id = t.conversation_id
+      WHERE t.activity_id = @activityId
+    `);
+  const row = result.recordset[0];
+  return row ? { conversationId: row.conversationId, groupId: row.groupId } : null;
 }
 
 async function ensureActivityThread(activityId) {
@@ -209,7 +252,6 @@ async function ensureActivityThread(activityId) {
   if (existing) return existing;
 
   const pool = await getPool();
-  // Fetch activity + hierarchy for subject
   const actResult = await pool.request()
     .input('activityId', sql.Int, activityId)
     .query(`
@@ -225,24 +267,38 @@ async function ensureActivityThread(activityId) {
   const activity = actResult.recordset[0];
   if (!activity) return null;
 
-  // Hierarchical subject: Project / Phase / Activity
-  const subject = `${activity.projectName} / ${activity.phaseName} / ${activity.activityName}`;
+  // Group name: "ProjectName / ActivityName" — short and recognisable in the Groups tab
+  const groupName = `${activity.projectName} · ${activity.activityName}`;
+  // Conversation subject: full hierarchy for context in thread header
+  const subject   = `${activity.projectName} / ${activity.phaseName} / ${activity.activityName}`;
 
-  const seedIds = await resolveActivityThreadSeedIds(activityId);
+  const seedIds   = await resolveActivityThreadSeedIds(activityId);
   const creatorId = seedIds[0];
   if (!creatorId) return null;
 
   let conversationId;
   await withTransaction(async (req) => {
-    // Use 'cc' (Shared) so the thread appears naturally in the inbox
-    // and participants can see each other — same as task threads.
-    // group_thread with group_id=NULL was invisible in the messaging UI.
-    conversationId = await createSystemConversation(req, {
+    // Creates comm_groups row + group_thread conversation — appears in Groups tab
+    const { groupId, conversationId: cid } = await createGroupAndConversation(req, {
+      groupName,
       subject,
       createdBy: creatorId,
-      convType:  'cc',
     });
+    conversationId = cid;
+
+    // Seed members in both comm_participants (for the conversation) and
+    // comm_group_members (so the group shows correctly in the Groups tab)
+    for (const uid of seedIds) {
+      await req()
+        .input('groupId', sql.Int,              groupId)
+        .input('userId',  sql.UniqueIdentifier, uid)
+        .query(`
+          IF NOT EXISTS (SELECT 1 FROM comm_group_members WHERE group_id=@groupId AND user_id=@userId)
+            INSERT INTO comm_group_members (group_id, user_id) VALUES (@groupId, @userId)
+        `);
+    }
     await upsertParticipants(req, conversationId, seedIds, 'to');
+
     await req()
       .input('activityId', sql.Int, activityId)
       .input('convId',     sql.Int, conversationId)
@@ -259,20 +315,44 @@ async function ensureActivityThread(activityId) {
  * the activity; it is not filtered down to Managers or assignees only.
  */
 async function syncActivityThreadParticipants(activityId) {
-  const conversationId = await ensureActivityThread(activityId);
-  if (!conversationId) return;
+  let thread = await getActivityThreadId(activityId);
+  if (!thread) {
+    const convId = await ensureActivityThread(activityId);
+    thread = await getActivityThreadId(activityId);
+    if (!thread) return;
+  }
+  const { conversationId, groupId } = thread;
 
   const [desiredIds, current] = await Promise.all([
     resolveActivityThreadSeedIds(activityId),
     getActiveParticipantIds(conversationId),
   ]);
-  const desired = new Set(desiredIds);
+  const desired  = new Set(desiredIds);
   const toAdd    = [...desired].filter(id => !current.includes(id));
   const toRemove = current.filter(id => !desired.has(id));
 
   await withTransaction(async (req) => {
     if (toAdd.length)    await upsertParticipants(req, conversationId, toAdd, 'to');
     if (toRemove.length) await removeParticipantsSoft(req, conversationId, toRemove);
+
+    // Keep comm_group_members in sync so the Groups tab shows correct membership
+    if (groupId) {
+      for (const uid of toAdd) {
+        await req()
+          .input('groupId', sql.Int,              groupId)
+          .input('userId',  sql.UniqueIdentifier, uid)
+          .query(`
+            IF NOT EXISTS (SELECT 1 FROM comm_group_members WHERE group_id=@groupId AND user_id=@userId)
+              INSERT INTO comm_group_members (group_id, user_id) VALUES (@groupId, @userId)
+          `);
+      }
+      for (const uid of toRemove) {
+        await req()
+          .input('groupId', sql.Int,              groupId)
+          .input('userId',  sql.UniqueIdentifier, uid)
+          .query(`DELETE FROM comm_group_members WHERE group_id=@groupId AND user_id=@userId`);
+      }
+    }
   });
 }
 
