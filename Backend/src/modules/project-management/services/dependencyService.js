@@ -46,13 +46,39 @@ async function resolveUnblocked(reqFactory, entityType, completedId) {
 /**
  * blockIfNeeded — when the dependency's blocker is not yet done, set the
  * dependent entity to Blocked. `reqFactory` is a () => sql.Request producer.
+ * We check BOTH status = done AND progress >= 100 so a dep that reached 100%
+ * but has a stale Blocked status column doesn't wrongly block the dependent.
  */
 async function blockIfNeeded(reqFactory, entityType, entityId, dependsOnId) {
   const c = CFG[entityType]; if (!c) return;
-  const result = await reqFactory()
+
+  // For tasks, progress = % of task itself (0 or 100 based on status).
+  // For phases/activities, compute progress from children in-line.
+  let depDone = false;
+
+  const statusRes = await reqFactory()
     .input('dependsOnId', sql.Int, dependsOnId)
     .query(`SELECT status FROM ${c.entityTable} WHERE ${c.idCol} = @dependsOnId`);
-  if (result.recordset[0]?.status !== c.done) {
+  const depStatus = statusRes.recordset[0]?.status;
+
+  if (depStatus === c.done) {
+    depDone = true;
+  } else if (entityType === 'task') {
+    // Tasks: done is purely status-driven
+    depDone = false;
+  } else {
+    // Phase/Activity: compute progress from tasks to guard against stale Blocked status
+    const progressCol = entityType === 'phase'
+      ? `(SELECT ROUND(AVG(act_p),0) FROM (SELECT COALESCE((SELECT AVG(CASE WHEN t.status='Complete' THEN 100.0 ELSE 0 END) FROM pm_tasks t INNER JOIN pm_activities a ON a.activity_id=t.activity_id WHERE a.phase_id=ph2.phase_id AND t.is_deleted=0 AND a.is_deleted=0),0) AS act_p FROM pm_phases ph2 WHERE ph2.phase_id=@dependsOnId AND ph2.is_deleted=0) sub)`
+      : `(SELECT ROUND(AVG(CASE WHEN t.status='Complete' THEN 100.0 ELSE 0 END),0) FROM pm_tasks t WHERE t.activity_id=@dependsOnId AND t.is_deleted=0)`;
+
+    const progressRes = await reqFactory()
+      .input('dependsOnId', sql.Int, dependsOnId)
+      .query(`SELECT COALESCE(${progressCol}, 0) AS progress`);
+    depDone = (parseInt(progressRes.recordset[0]?.progress || 0, 10) >= 100);
+  }
+
+  if (!depDone) {
     await reqFactory()
       .input('entityId', sql.Int, entityId)
       .query(`UPDATE ${c.entityTable} SET status = 'Blocked' WHERE ${c.idCol} = @entityId AND status = 'To Do'`);

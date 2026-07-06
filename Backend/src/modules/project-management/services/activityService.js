@@ -54,6 +54,12 @@ async function getActivitiesForPhase(phaseId) {
   const rows = result.recordset.map(r => ({ ...r, dependsOn: parseIdList(r.dependsOn) }));
   for (const act of rows) {
     act.progress = await getActivityProgress(act.activityId);
+    if (act.progress >= 100 && act.status === 'Blocked') {
+      await pool.request()
+        .input('activityId', sql.Int, act.activityId)
+        .query(`UPDATE pm_activities SET status = 'To Do' WHERE activity_id = @activityId AND status = 'Blocked'`);
+      act.status = 'To Do';
+    }
     act.status = deriveStatus(act.progress, act.status);
     act.delayDays = act.status === 'Completed' ? 0 : await getActivityDelayDays(act.activityId, act.plannedEnd);
   }
@@ -284,6 +290,23 @@ async function removeActivityDep(activityId, dependsOnId, projectId, userId) {
     .input('activityId',  sql.Int, activityId)
     .input('dependsOnId', sql.Int, dependsOnId)
     .query(`DELETE FROM pm_activity_deps WHERE activity_id=@activityId AND depends_on_activity_id=@dependsOnId`);
+
+  // Re-evaluate: if no remaining unresolved deps, unblock the activity
+  await withTransaction(async (req) => {
+    const unresolved = await req()
+      .input('activityId', sql.Int, activityId)
+      .query(`
+        SELECT 1 AS x FROM pm_activity_deps d
+        INNER JOIN pm_activities e ON e.activity_id = d.depends_on_activity_id
+        WHERE d.activity_id = @activityId AND e.status <> 'Completed' AND e.is_deleted = 0
+      `);
+    if (!unresolved.recordset.length) {
+      await req()
+        .input('activityId', sql.Int, activityId)
+        .query(`UPDATE pm_activities SET status = 'To Do' WHERE activity_id = @activityId AND status = 'Blocked'`);
+    }
+  });
+
   await audit.log({ entityType:'activity', entityId:activityId, projectId, userId, action:'dependency_removed', oldValue:dependsOnId });
 }
 

@@ -233,8 +233,12 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
               </button>
               {otherTasks.length > 0 && (
-                <button className={`icon-btn ${panel === 'deps' ? 'active' : ''}`} title="Dependencies" onClick={() => togglePanel('deps')} style={{ width: 26, height: 26 }}>
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                <button
+                  className={`pm-btn pm-btn-ghost ${panel === 'deps' ? 'active' : ''}`}
+                  title="Add or remove task dependencies"
+                  onClick={() => togglePanel('deps')}
+                  style={{ fontSize: 10, padding: '2px 8px', color: panel === 'deps' ? 'var(--gold)' : 'var(--muted)', borderColor: panel === 'deps' ? 'var(--gold)' : undefined }}>
+                  ⟶ Dep
                 </button>
               )}
               <button className="icon-btn" title="Rename" onClick={() => setEditingName(true)} style={{ width: 26, height: 26 }}>
@@ -349,27 +353,35 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
       {/* ── Dependency panel ── */}
       {panel === 'deps' && canManager && (
         <div className="pm-sub-panel" style={{ marginTop: 8 }}>
-          <div className="pm-sub-panel-title">Task Dependencies</div>
+          <div className="pm-sub-panel-title">Prerequisites — Tasks that must complete first</div>
           <div className="pm-sub-panel-hint">
-            This task will be <strong>Blocked</strong> until all predecessor tasks are marked <strong>Complete</strong>.
-            Circular dependencies are automatically prevented.
+            This task auto-<strong>Blocks</strong> when a dep is added (if that dep isn't Complete yet).
+            It auto-<strong>unblocks</strong> once all predecessors reach Complete — no manual action needed.
           </div>
-          {otherTasks.map(t => {
-            const isSel = currentDeps.has(t.taskId);
-            return (
-              <div key={t.taskId} className={`pm-member-row ${isSel ? 'selected' : ''}`} style={{ marginBottom: 4 }}>
-                <span style={{ flex: 1, fontSize: 12, color: 'var(--light)' }}>{t.name}</span>
-                <StatusBadge status={t.status} />
-                {isSel ? (
-                  <button className="pm-btn pm-btn-ghost" style={{ fontSize: 11, padding: '2px 8px', color: '#aa1010', borderColor: 'rgba(170,16,16,.3)' }}
-                    onClick={() => handleRemoveDep(t.taskId)}>Remove</button>
-                ) : (
-                  <button className="pm-btn pm-btn-ghost" style={{ fontSize: 11, padding: '2px 8px' }}
-                    onClick={() => handleAddDep(t.taskId)}>+ Add</button>
-                )}
-              </div>
-            );
-          })}
+          {otherTasks.length === 0
+            ? <div style={{ fontSize: 12, color: 'var(--muted)' }}>No other tasks in this activity.</div>
+            : otherTasks.map(t => {
+              const isSel = currentDeps.has(t.taskId);
+              return (
+                <div key={t.taskId} className={`pm-member-row ${isSel ? 'selected' : ''}`} style={{ marginBottom: 4 }}>
+                  <span style={{ flex: 1, fontSize: 12, color: 'var(--light)' }}>{t.name}</span>
+                  <StatusBadge status={t.status} />
+                  {isSel ? (
+                    <button className="pm-btn pm-btn-ghost" style={{ fontSize: 11, padding: '2px 8px', color: '#aa1010', borderColor: 'rgba(170,16,16,.3)' }}
+                      onClick={() => handleRemoveDep(t.taskId)}>✕ Remove</button>
+                  ) : (
+                    <button className="pm-btn pm-btn-ghost" style={{ fontSize: 11, padding: '2px 8px' }}
+                      onClick={() => handleAddDep(t.taskId)}>＋ Add</button>
+                  )}
+                </div>
+              );
+            })
+          }
+          {task.dependsOn?.length > 0 && (
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8, paddingTop: 6, borderTop: '1px solid var(--divider)' }}>
+              ⟶ Blocked by {task.dependsOn.length} predecessor task{task.dependsOn.length > 1 ? 's' : ''}
+            </div>
+          )}
           {depError && <div style={{ color: '#aa1010', fontSize: 11, marginTop: 6 }}>{depError}</div>}
         </div>
       )}

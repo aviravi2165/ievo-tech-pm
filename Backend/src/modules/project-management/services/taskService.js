@@ -4,7 +4,7 @@ const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
 const { resolveUnblocked, blockIfNeeded } = require('./dependencyService');
 const { getActivityProgress, getPhaseProgress } = require('./progressService');
-const { broadcastStatusChanged, broadcastUnblocked, broadcastAssignmentRequest } = require('../socket/socketHandler');
+const { broadcastStatusChanged, broadcastUnblocked, broadcastAssignmentRequest, broadcastProgressUpdated } = require('../socket/socketHandler');
 const pmChatService = require('./pmChatService');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -359,6 +359,19 @@ async function updateTaskStatus(taskId, projectId, userId, newStatus, projectRol
   broadcastStatusChanged(projectId, { entityType:'task', entityId:taskId, status:newStatus });
   if (unblockedIds.length) broadcastUnblocked(projectId, { entityType:'task', unblockedIds });
 
+  // Broadcast updated progress immediately so all clients refresh without waiting for a full refetch
+  const { getProjectProgress: gpp, getActivityProgress: gap, getPhaseProgress: gphp } = require('./progressService');
+  const [projectProg, actProg, phaseProg] = await Promise.all([
+    gpp(projectId),
+    gap(activityId),
+    gphp(phaseId),
+  ]);
+  broadcastProgressUpdated(projectId, {
+    projectProgress: projectProg,
+    activityId, activityProgress: actProg,
+    phaseId,    phaseProgress:    phaseProg,
+  });
+
   // Activity/Phase status is now purely computed from child progress — there's
   // no manual "mark Completed" action left to hang resolveUnblocked off of at
   // those levels. So: every time a task completes, check right here whether
@@ -370,11 +383,21 @@ async function updateTaskStatus(taskId, projectId, userId, newStatus, projectRol
   if (newStatus === DONE_STATUS) {
     const activityProgress = await getActivityProgress(activityId);
     if (activityProgress >= 100) {
+      // Clear any stale Blocked flag on the activity itself
+      await pool.request()
+        .input('activityId', sql.Int, activityId)
+        .query(`UPDATE pm_activities SET status = 'To Do' WHERE activity_id = @activityId AND status = 'Blocked'`);
+
       const unblockedActivityIds = await resolveUnblocked(() => pool.request(), 'activity', activityId);
       if (unblockedActivityIds.length) broadcastUnblocked(projectId, { entityType:'activity', unblockedIds: unblockedActivityIds });
 
       const phaseProgress = await getPhaseProgress(phaseId);
       if (phaseProgress >= 100) {
+        // Clear any stale Blocked flag on the phase itself
+        await pool.request()
+          .input('phaseId', sql.Int, phaseId)
+          .query(`UPDATE pm_phases SET status = 'To Do' WHERE phase_id = @phaseId AND status = 'Blocked'`);
+
         const unblockedPhaseIds = await resolveUnblocked(() => pool.request(), 'phase', phaseId);
         if (unblockedPhaseIds.length) broadcastUnblocked(projectId, { entityType:'phase', unblockedIds: unblockedPhaseIds });
       }
@@ -465,6 +488,24 @@ async function removeTaskDep(taskId, dependsOnId, projectId, userId) {
     .input('taskId',      sql.Int, taskId)
     .input('dependsOnId', sql.Int, dependsOnId)
     .query(`DELETE FROM pm_task_deps WHERE task_id=@taskId AND depends_on_task_id=@dependsOnId`);
+
+  // Re-evaluate: if no remaining unresolved deps, unblock the task
+  await withTransaction(async (req) => {
+    const unresolved = await req()
+      .input('taskId', sql.Int, taskId)
+      .input('done',   sql.NVarChar(30), DONE_STATUS)
+      .query(`
+        SELECT 1 AS x FROM pm_task_deps d
+        INNER JOIN pm_tasks e ON e.task_id = d.depends_on_task_id
+        WHERE d.task_id = @taskId AND e.status <> @done AND e.is_deleted = 0
+      `);
+    if (!unresolved.recordset.length) {
+      await req()
+        .input('taskId', sql.Int, taskId)
+        .query(`UPDATE pm_tasks SET status = 'To Do' WHERE task_id = @taskId AND status = 'Blocked'`);
+    }
+  });
+
   await audit.log({ entityType:'task', entityId:taskId, projectId, userId, action:'dependency_removed', oldValue:dependsOnId });
 }
 

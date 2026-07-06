@@ -133,13 +133,6 @@ export default function PhasePanel({ phase, myRole, projectId, allPhases = [], p
         )}
 
         <DueBadge start={phase.plannedStart} end={phase.plannedEnd} status={phase.status} />
-
-        {phase.dependsOn?.length > 0 && (
-          <span className="pm-dep-badge" title={`Depends on ${phase.dependsOn.length} phase(s)`}>
-            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-            {phase.dependsOn.length} dep
-          </span>
-        )}
         {phase.isOverdue && <OverdueBadge />}
         <DelayBadge days={phase.delayDays} label="Late by" />
 
@@ -154,9 +147,15 @@ export default function PhasePanel({ phase, myRole, projectId, allPhases = [], p
           <ProgressBar value={phase.progress || 0} />
         </div>
 
-        {/* Status — always computed from child activity progress (Blocked comes
-            from unresolved dependencies); nobody sets this by hand anymore */}
         <StatusBadge status={phase.status} />
+
+        {/* Dep badge — after status so it never overlaps reorder buttons */}
+        {phase.dependsOn?.length > 0 && (
+          <span className="pm-dep-badge" title={`Depends on ${phase.dependsOn.length} phase(s)`} onClick={e => { e.stopPropagation(); togglePanel('deps'); }}>
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+            {phase.dependsOn.length} dep
+          </span>
+        )}
 
         {canEdit && (
           <div style={{ display:'flex', gap:3 }} onClick={e => e.stopPropagation()}>
@@ -200,8 +199,10 @@ export default function PhasePanel({ phase, myRole, projectId, allPhases = [], p
       {/* ── Dependency panel ── */}
       {panel === 'deps' && canEdit && (
         <div style={{ padding:'12px 18px 14px', borderTop:'1px solid var(--divider)', background:'#fafaf8' }}>
-          <div style={{ fontSize:11, color:'var(--gold)', fontWeight:700, textTransform:'uppercase', letterSpacing:'.07em', marginBottom:8 }}>Phase Dependencies</div>
-          <div style={{ fontSize:12, color:'var(--muted)', marginBottom:8 }}>This phase is <strong>Blocked</strong> until all selected phases are Completed.</div>
+          <div style={{ fontSize:11, color:'var(--gold)', fontWeight:700, textTransform:'uppercase', letterSpacing:'.07em', marginBottom:8 }}>Phase Prerequisites</div>
+          <div style={{ fontSize:12, color:'var(--muted)', marginBottom:8 }}>
+            Auto-<strong>Blocks</strong> when added (if predecessor isn't Completed). Auto-<strong>unblocks</strong> once all predecessors complete — no manual action needed.
+          </div>
           {otherPhases.length === 0 && <div style={{ fontSize:12, color:'var(--muted)' }}>No other phases.</div>}
           {otherPhases.map(p => {
             const isSel = currentDeps.has(p.phaseId);

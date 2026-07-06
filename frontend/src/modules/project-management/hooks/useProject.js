@@ -51,6 +51,18 @@ export function useProject(projectId) {
     socket.on('TASK_STATUS_CHANGED', () => fetchProject());
     socket.on('ENTITY_UNBLOCKED',    () => fetchProject());
 
+    // Granular progress broadcast — update in-place without full refetch
+    socket.on('PROGRESS_UPDATED', (data) => {
+      if (data.projectProgress != null) {
+        setProject(p => p ? { ...p, progress: data.projectProgress } : p);
+      }
+      if (data.phaseId != null && data.phaseProgress != null) {
+        setPhases(ps => ps.map(ph =>
+          ph.phaseId === data.phaseId ? { ...ph, progress: data.phaseProgress } : ph
+        ));
+      }
+    });
+
     socketRef.current = socket;
     return () => { socket.emit('leave_project', { projectId }); socket.disconnect(); socketRef.current = null; };
   }, [projectId, fetchProject]);

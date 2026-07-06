@@ -17,7 +17,22 @@ async function listProjects(userId) {
              CASE WHEN p.planned_end < CAST(GETDATE() AS DATE) AND p.status NOT IN ('Completed','Cancelled')
                   THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS isOverdue,
              (SELECT COUNT(*) FROM pm_phases ph WHERE ph.project_id=p.project_id AND ph.is_deleted=0) AS phaseCount,
-             (SELECT COUNT(*) FROM pm_members WHERE project_id=p.project_id) AS memberCount
+             (SELECT COUNT(*) FROM pm_members WHERE project_id=p.project_id) AS memberCount,
+             -- Progress: average of (per-phase average of task completion %)
+             COALESCE((
+               SELECT ROUND(AVG(phase_progress), 0)
+               FROM (
+                 SELECT ph2.phase_id,
+                   COALESCE((
+                     SELECT AVG(CASE WHEN t.status='Complete' THEN 100.0 ELSE 0 END)
+                     FROM pm_tasks t
+                     INNER JOIN pm_activities a ON a.activity_id=t.activity_id
+                     WHERE a.phase_id=ph2.phase_id AND t.is_deleted=0 AND a.is_deleted=0
+                   ), 0) AS phase_progress
+                 FROM pm_phases ph2
+                 WHERE ph2.project_id=p.project_id AND ph2.is_deleted=0
+               ) sub
+             ), 0) AS progress
       FROM pm_projects p
       INNER JOIN pm_members pm ON pm.project_id=p.project_id AND pm.user_id=@userId
       LEFT JOIN auth_users u ON u.user_id=p.owner_id

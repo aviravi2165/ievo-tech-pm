@@ -32,6 +32,15 @@ async function getPhasesForProject(projectId) {
   const rows = result.recordset.map(r => ({ ...r, dependsOn: parseIdList(r.dependsOn) }));
   for (const ph of rows) {
     ph.progress = await getPhaseProgress(ph.phaseId);
+    // If phase reached 100% but DB still says Blocked (stale from a dep that
+    // was added before its predecessor was done), clear it now so deriveStatus
+    // can return Completed correctly.
+    if (ph.progress >= 100 && ph.status === 'Blocked') {
+      await pool.request()
+        .input('phaseId', sql.Int, ph.phaseId)
+        .query(`UPDATE pm_phases SET status = 'To Do' WHERE phase_id = @phaseId AND status = 'Blocked'`);
+      ph.status = 'To Do'; // will become Completed via deriveStatus below
+    }
     ph.status = deriveStatus(ph.progress, ph.status);
     ph.delayDays = ph.status === 'Completed' ? 0 : await getPhaseDelayDays(ph.phaseId, ph.plannedEnd);
   }
@@ -126,6 +135,23 @@ async function removePhaseDep(phaseId, dependsOnId, projectId, userId) {
     .input('phaseId',     sql.Int, phaseId)
     .input('dependsOnId', sql.Int, dependsOnId)
     .query(`DELETE FROM pm_phase_deps WHERE phase_id=@phaseId AND depends_on_phase_id=@dependsOnId`);
+
+  // Re-evaluate: if no remaining unresolved deps, unblock the phase
+  await withTransaction(async (req) => {
+    const unresolved = await req()
+      .input('phaseId', sql.Int, phaseId)
+      .query(`
+        SELECT 1 AS x FROM pm_phase_deps d
+        INNER JOIN pm_phases e ON e.phase_id = d.depends_on_phase_id
+        WHERE d.phase_id = @phaseId AND e.status <> 'Completed' AND e.is_deleted = 0
+      `);
+    if (!unresolved.recordset.length) {
+      await req()
+        .input('phaseId', sql.Int, phaseId)
+        .query(`UPDATE pm_phases SET status = 'To Do' WHERE phase_id = @phaseId AND status = 'Blocked'`);
+    }
+  });
+
   await audit.log({ entityType:'phase', entityId:phaseId, projectId, userId, action:'dependency_removed', oldValue:dependsOnId });
 }
 

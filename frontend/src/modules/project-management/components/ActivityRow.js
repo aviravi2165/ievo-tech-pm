@@ -248,9 +248,11 @@ export default function ActivityRow({
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
             </button>
             {otherActivities.length > 0 && (
-              <button className={`icon-btn ${panel === 'deps' ? 'active' : ''}`} title="Dependencies"
-                onClick={() => togglePanel('deps')} style={{ width: 26, height: 26 }}>
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+              <button className={`pm-btn pm-btn-ghost ${panel === 'deps' ? 'active' : ''}`}
+                title="Add or remove activity dependencies"
+                onClick={() => togglePanel('deps')}
+                style={{ fontSize: 11, padding: '3px 10px', color: panel === 'deps' ? 'var(--gold)' : 'var(--muted)', borderColor: panel === 'deps' ? 'var(--gold)' : undefined }}>
+                ⟶ Dep
               </button>
             )}
           </div>
@@ -352,27 +354,29 @@ export default function ActivityRow({
       {/* ── Dependency panel ── */}
       {panel === 'deps' && canEdit && (
         <div style={{ padding: '10px 14px 12px', borderTop: '1px solid var(--divider)', background: '#fafaf8' }}>
-          <div style={{ fontSize: 11, color: 'var(--gold)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 6 }}>Activity Dependencies</div>
+          <div style={{ fontSize: 11, color: 'var(--gold)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 6 }}>Activity Prerequisites</div>
           <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8 }}>
-            This activity is <strong>Blocked</strong> until all selected predecessor activities are Completed.
-            Circular dependencies are automatically prevented.
+            Auto-<strong>Blocks</strong> when added (if predecessor isn't Completed). Auto-<strong>unblocks</strong> once all predecessors complete — no manual action needed.
           </div>
-          {otherActivities.map(a => {
-            const isSel = currentDeps.has(a.activityId);
-            return (
-              <div key={a.activityId} className={`pm-member-row ${isSel ? 'selected' : ''}`} style={{ marginBottom: 4 }}>
-                <span style={{ flex: 1, fontSize: 12, color: 'var(--light)' }}>{a.name}</span>
-                <StatusBadge status={a.status} />
-                {isSel ? (
-                  <button className="pm-btn pm-btn-ghost" style={{ fontSize: 11, padding: '2px 8px', color: '#aa1010', borderColor: 'rgba(170,16,16,.3)' }}
-                    onClick={() => handleRemoveDep(a.activityId)}>Remove</button>
-                ) : (
-                  <button className="pm-btn pm-btn-ghost" style={{ fontSize: 11, padding: '2px 8px' }}
-                    onClick={() => handleAddDep(a.activityId)}>+ Add</button>
-                )}
-              </div>
-            );
-          })}
+          {otherActivities.length === 0
+            ? <div style={{ fontSize: 12, color: 'var(--muted)' }}>No other activities in this phase.</div>
+            : otherActivities.map(a => {
+              const isSel = currentDeps.has(a.activityId);
+              return (
+                <div key={a.activityId} className={`pm-member-row ${isSel ? 'selected' : ''}`} style={{ marginBottom: 4 }}>
+                  <span style={{ flex: 1, fontSize: 12, color: 'var(--light)' }}>{a.name}</span>
+                  <StatusBadge status={a.status} />
+                  {isSel ? (
+                    <button className="pm-btn pm-btn-ghost" style={{ fontSize: 11, padding: '2px 8px', color: '#aa1010', borderColor: 'rgba(170,16,16,.3)' }}
+                      onClick={() => handleRemoveDep(a.activityId)}>✕ Remove</button>
+                  ) : (
+                    <button className="pm-btn pm-btn-ghost" style={{ fontSize: 11, padding: '2px 8px' }}
+                      onClick={() => handleAddDep(a.activityId)}>＋ Add</button>
+                  )}
+                </div>
+              );
+            })
+          }
           {depError && <div style={{ color: '#aa1010', fontSize: 11, marginTop: 4 }}>{depError}</div>}
         </div>
       )}
@@ -519,7 +523,7 @@ export default function ActivityRow({
                 myUserId={myUserId}
                 allTasks={tasks}
                 activityMembers={actMembers}
-                onRefetch={fetchTasks}
+                onRefetch={async () => { await fetchTasks(); onRefetchPhase?.(); }}
                 onRefetchProject={onRefetchProject}
               />
             ))}
