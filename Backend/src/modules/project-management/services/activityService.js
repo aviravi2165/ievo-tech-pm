@@ -2,7 +2,7 @@
 
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
-const { blockIfNeeded } = require('./dependencyService');
+const { blockIfNeeded, isBlocked } = require('./dependencyService');
 const { getActivityProgress, deriveStatus } = require('./progressService');
 const { getActivityDelayDays } = require('./delayService');
 const pmChatService = require('./pmChatService');
@@ -151,6 +151,11 @@ async function removeActivityMember(activityId, targetUserId, actorUserId, proje
 async function createActivity(phaseId, projectId, userId, body) {
   const { name, description, plannedStart, plannedEnd, ownerId, displayOrder, memberIds = [] } = body;
   if (!name?.trim()) { const e = new Error('Activity name required'); e.statusCode = 400; throw e; }
+
+  if (await isBlocked('phase', phaseId)) {
+    const e = new Error('This Phase is blocked by an unresolved dependency — resolve it before adding activities.');
+    e.statusCode = 409; throw e;
+  }
 
   const pool = await getPool();
   let row;

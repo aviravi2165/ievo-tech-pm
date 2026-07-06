@@ -2,7 +2,7 @@
 
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
-const { resolveUnblocked, blockIfNeeded } = require('./dependencyService');
+const { resolveUnblocked, blockIfNeeded, isBlocked } = require('./dependencyService');
 const { getActivityProgress, getPhaseProgress } = require('./progressService');
 const { broadcastStatusChanged, broadcastUnblocked, broadcastAssignmentRequest, broadcastProgressUpdated } = require('../socket/socketHandler');
 const pmChatService = require('./pmChatService');
@@ -98,6 +98,25 @@ async function getTasksForActivity(activityId) {
 async function createTask(activityId, projectId, userId, body) {
   const { name, description, priority = 'Medium', dueDate, estimatedHours, assigneeIds = [] } = body;
   if (!name?.trim()) { const e = new Error('Task name required'); e.statusCode = 400; throw e; }
+
+  // Refuse to create work under something that's Blocked — this was
+  // previously unenforced, so a Task could be added (and even marked
+  // Complete) inside an Activity/Phase still waiting on an unresolved
+  // dependency, making the block meaningless.
+  const pool = await getPool();
+  const parentResult = await pool.request()
+    .input('activityId', sql.Int, activityId)
+    .query(`SELECT a.status AS activityStatus, ph.phase_id AS phaseId FROM pm_activities a INNER JOIN pm_phases ph ON ph.phase_id=a.phase_id WHERE a.activity_id=@activityId`);
+  const parent = parentResult.recordset[0];
+  if (!parent) { const e = new Error('Activity not found'); e.statusCode = 404; throw e; }
+  if (parent.activityStatus === 'Blocked') {
+    const e = new Error('This Activity is blocked by an unresolved dependency — resolve it before adding tasks.');
+    e.statusCode = 409; throw e;
+  }
+  if (await isBlocked('phase', parent.phaseId)) {
+    const e = new Error('This Phase is blocked by an unresolved dependency — resolve it before adding tasks.');
+    e.statusCode = 409; throw e;
+  }
 
   let task;
   await withTransaction(async (req) => {
@@ -333,7 +352,7 @@ async function updateTaskStatus(taskId, projectId, userId, newStatus, projectRol
     .input('taskId', sql.Int,              taskId)
     .input('userId', sql.UniqueIdentifier, userId)
     .query(`
-      SELECT t.status, t.activity_id AS activityId, a.phase_id AS phaseId,
+      SELECT t.status, t.activity_id AS activityId, a.phase_id AS phaseId, a.status AS activityStatus,
         CAST(CASE WHEN EXISTS(SELECT 1 FROM pm_task_assignees WHERE task_id=@taskId AND user_id=@userId)
              THEN 1 ELSE 0 END AS BIT) AS isAssigned
       FROM pm_tasks t
@@ -344,7 +363,21 @@ async function updateTaskStatus(taskId, projectId, userId, newStatus, projectRol
   if (projectRole === 'Member' && !cur.recordset[0].isAssigned) {
     const e = new Error('Members can only update their own assigned tasks'); e.statusCode = 403; throw e;
   }
-  const { status: oldStatus, activityId, phaseId } = cur.recordset[0];
+  const { status: oldStatus, activityId, phaseId, activityStatus } = cur.recordset[0];
+
+  // Refuse to complete a task sitting inside something that's currently
+  // Blocked — previously unenforced, so marking a task Complete had no
+  // regard for whether its Activity/Phase was waiting on a dependency.
+  if (newStatus === DONE_STATUS) {
+    if (activityStatus === 'Blocked') {
+      const e = new Error('This task\'s Activity is blocked by an unresolved dependency — it can\'t be marked Complete yet.');
+      e.statusCode = 409; throw e;
+    }
+    if (await isBlocked('phase', phaseId)) {
+      const e = new Error('This task\'s Phase is blocked by an unresolved dependency — it can\'t be marked Complete yet.');
+      e.statusCode = 409; throw e;
+    }
+  }
 
   let unblockedIds = [];
   await withTransaction(async (req) => {

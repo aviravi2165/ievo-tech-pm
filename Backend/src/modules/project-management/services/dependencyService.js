@@ -7,7 +7,8 @@
  * callback of withTransaction (so all queries share one transaction).
  * Returns array of newly unblocked entity IDs for socket broadcast.
  */
-const { sql } = require('../../../config/db');
+const { getPool, sql } = require('../../../config/db');
+const { getActivityProgress, getPhaseProgress } = require('./progressService');
 
 const CFG = {
   phase:    { depTable: 'pm_phase_deps',    entityTable: 'pm_phases',     idCol: 'phase_id',    depCol: 'depends_on_phase_id',    done: 'Completed' },
@@ -67,15 +68,14 @@ async function blockIfNeeded(reqFactory, entityType, entityId, dependsOnId) {
     // Tasks: done is purely status-driven
     depDone = false;
   } else {
-    // Phase/Activity: compute progress from tasks to guard against stale Blocked status
-    const progressCol = entityType === 'phase'
-      ? `(SELECT ROUND(AVG(act_p),0) FROM (SELECT COALESCE((SELECT AVG(CASE WHEN t.status='Complete' THEN 100.0 ELSE 0 END) FROM pm_tasks t INNER JOIN pm_activities a ON a.activity_id=t.activity_id WHERE a.phase_id=ph2.phase_id AND t.is_deleted=0 AND a.is_deleted=0),0) AS act_p FROM pm_phases ph2 WHERE ph2.phase_id=@dependsOnId AND ph2.is_deleted=0) sub)`
-      : `(SELECT ROUND(AVG(CASE WHEN t.status='Complete' THEN 100.0 ELSE 0 END),0) FROM pm_tasks t WHERE t.activity_id=@dependsOnId AND t.is_deleted=0)`;
-
-    const progressRes = await reqFactory()
-      .input('dependsOnId', sql.Int, dependsOnId)
-      .query(`SELECT COALESCE(${progressCol}, 0) AS progress`);
-    depDone = (parseInt(progressRes.recordset[0]?.progress || 0, 10) >= 100);
+    // Phase/Activity: compute progress from children to guard against a
+    // stale Blocked status column. Reuses the real hierarchical progress
+    // functions (Phase = avg of its Activities, not a flat pool of every
+    // grandchild task) rather than a second, easy-to-drift copy of that logic.
+    const progress = entityType === 'phase'
+      ? await getPhaseProgress(dependsOnId)
+      : await getActivityProgress(dependsOnId);
+    depDone = progress >= 100;
   }
 
   if (!depDone) {
@@ -85,4 +85,23 @@ async function blockIfNeeded(reqFactory, entityType, entityId, dependsOnId) {
   }
 }
 
-module.exports = { resolveUnblocked, blockIfNeeded };
+/**
+ * isBlocked — the actual enforcement point that was missing. Blocked has
+ * always been a real status dependencyService sets, but nothing outside
+ * this file ever checked it before allowing new work underneath a blocked
+ * Phase/Activity — you could create a Task inside a Blocked Activity, or
+ * mark that Task Complete, with the block having no real effect. Called
+ * from taskService (before creating a task, and before marking one
+ * Complete) and activityService (before creating an activity in a phase).
+ */
+async function isBlocked(entityType, entityId) {
+  if (!entityId) return false;
+  const c = CFG[entityType]; if (!c) return false;
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('id', sql.Int, entityId)
+    .query(`SELECT status FROM ${c.entityTable} WHERE ${c.idCol} = @id`);
+  return result.recordset[0]?.status === 'Blocked';
+}
+
+module.exports = { resolveUnblocked, blockIfNeeded, isBlocked };

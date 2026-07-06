@@ -355,29 +355,41 @@ export default function ActivityRow({
       {panel === 'deps' && canEdit && (
         <div style={{ padding: '10px 14px 12px', borderTop: '1px solid var(--divider)', background: '#fafaf8' }}>
           <div style={{ fontSize: 11, color: 'var(--gold)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 6 }}>Activity Prerequisites</div>
-          <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8 }}>
-            Auto-<strong>Blocks</strong> when added (if predecessor isn't Completed). Auto-<strong>unblocks</strong> once all predecessors complete — no manual action needed.
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 10 }}>
+            Selecting a predecessor auto-<strong>blocks</strong> this activity until it completes, then auto-unblocks. Cycles are prevented.
           </div>
-          {otherActivities.length === 0
-            ? <div style={{ fontSize: 12, color: 'var(--muted)' }}>No other activities in this phase.</div>
-            : otherActivities.map(a => {
-              const isSel = currentDeps.has(a.activityId);
-              return (
-                <div key={a.activityId} className={`pm-member-row ${isSel ? 'selected' : ''}`} style={{ marginBottom: 4 }}>
-                  <span style={{ flex: 1, fontSize: 12, color: 'var(--light)' }}>{a.name}</span>
-                  <StatusBadge status={a.status} />
-                  {isSel ? (
-                    <button className="pm-btn pm-btn-ghost" style={{ fontSize: 11, padding: '2px 8px', color: '#aa1010', borderColor: 'rgba(170,16,16,.3)' }}
-                      onClick={() => handleRemoveDep(a.activityId)}>✕ Remove</button>
-                  ) : (
-                    <button className="pm-btn pm-btn-ghost" style={{ fontSize: 11, padding: '2px 8px' }}
-                      onClick={() => handleAddDep(a.activityId)}>＋ Add</button>
-                  )}
-                </div>
-              );
-            })
-          }
-          {depError && <div style={{ color: '#aa1010', fontSize: 11, marginTop: 4 }}>{depError}</div>}
+
+          {/* Current dep chips */}
+          {currentDeps.size > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
+              {[...currentDeps].map(depId => {
+                const act = otherActivities.find(a => a.activityId === depId);
+                if (!act) return null;
+                return (
+                  <span key={depId} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, background: 'var(--mid)', border: '1px solid var(--divider)', borderRadius: 12, padding: '2px 8px 2px 10px' }}>
+                    {act.name}
+                    <button type="button" onClick={() => handleRemoveDep(depId)}
+                      style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Add via dropdown */}
+          {otherActivities.filter(a => !currentDeps.has(a.activityId)).length > 0 ? (
+            <select defaultValue="" onChange={e => { if (e.target.value) { handleAddDep(Number(e.target.value)); e.target.value = ''; } }}
+              style={{ width: '100%', background: '#fff', border: '1px solid var(--divider)', borderRadius: 'var(--radius)', padding: '6px 10px', color: 'var(--light)', fontSize: 12, fontFamily: 'inherit', outline: 'none' }}>
+              <option value="">+ Add a predecessor activity…</option>
+              {otherActivities.filter(a => !currentDeps.has(a.activityId)).map(a => (
+                <option key={a.activityId} value={a.activityId}>{a.name} ({a.status})</option>
+              ))}
+            </select>
+          ) : (
+            <div style={{ fontSize: 12, color: 'var(--muted)' }}>All activities already added as prerequisites.</div>
+          )}
+
+          {depError && <div style={{ color: '#aa1010', fontSize: 11, marginTop: 6 }}>{depError}</div>}
         </div>
       )}
 

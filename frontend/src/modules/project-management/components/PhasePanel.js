@@ -148,8 +148,8 @@ export default function PhasePanel({ phase, myRole, projectId, allPhases = [], p
             </div>
           )}
 
-          {/* Progress bar — fixed width */}
-          <div style={{ width:120, flexShrink:0 }}>
+          {/* Progress bar — flexible so controls can shrink when space is tight */}
+          <div style={{ width:90, flexShrink:1, minWidth:60 }}>
             <ProgressBar value={phase.progress || 0} />
           </div>
 
@@ -207,26 +207,42 @@ export default function PhasePanel({ phase, myRole, projectId, allPhases = [], p
       {/* ── Dependency panel ── */}
       {panel === 'deps' && canEdit && (
         <div style={{ padding:'12px 18px 14px', borderTop:'1px solid var(--divider)', background:'#fafaf8' }}>
-          <div style={{ fontSize:11, color:'var(--gold)', fontWeight:700, textTransform:'uppercase', letterSpacing:'.07em', marginBottom:8 }}>Phase Prerequisites</div>
-          <div style={{ fontSize:12, color:'var(--muted)', marginBottom:8 }}>
-            Auto-<strong>Blocks</strong> when added (if predecessor isn't Completed). Auto-<strong>unblocks</strong> once all predecessors complete — no manual action needed.
+          <div style={{ fontSize:11, color:'var(--gold)', fontWeight:700, textTransform:'uppercase', letterSpacing:'.07em', marginBottom:6 }}>Phase Prerequisites</div>
+          <div style={{ fontSize:11, color:'var(--muted)', marginBottom:10 }}>
+            Selecting a predecessor auto-<strong>blocks</strong> this phase until it completes, then auto-unblocks.
           </div>
-          {otherPhases.length === 0 && <div style={{ fontSize:12, color:'var(--muted)' }}>No other phases.</div>}
-          {otherPhases.map(p => {
-            const isSel = currentDeps.has(p.phaseId);
-            return (
-              <div key={p.phaseId} className={`pm-member-row ${isSel?'selected':''}`} style={{ marginBottom:4 }}>
-                <span style={{ flex:1, fontSize:12, color:'var(--light)' }}>{p.name}</span>
-                <StatusBadge status={p.status} />
-                {isSel ? (
-                  <button className="pm-btn pm-btn-ghost" style={{ fontSize:11, padding:'2px 8px', color:'#aa1010', borderColor:'rgba(170,16,16,.3)' }} onClick={() => handleRemoveDep(p.phaseId)}>Remove</button>
-                ) : (
-                  <button className="pm-btn pm-btn-ghost" style={{ fontSize:11, padding:'2px 8px' }} onClick={() => handleAddDep(p.phaseId)}>+ Add</button>
-                )}
-              </div>
-            );
-          })}
-          {depError && <div style={{ color:'#aa1010', fontSize:11, marginTop:4 }}>{depError}</div>}
+
+          {/* Existing dep chips */}
+          {currentDeps.size > 0 && (
+            <div style={{ display:'flex', flexWrap:'wrap', gap:5, marginBottom:8 }}>
+              {[...currentDeps].map(depId => {
+                const ph = otherPhases.find(p => p.phaseId === depId);
+                if (!ph) return null;
+                return (
+                  <span key={depId} style={{ display:'inline-flex', alignItems:'center', gap:4, fontSize:11, background:'var(--mid)', border:'1px solid var(--divider)', borderRadius:12, padding:'2px 8px 2px 10px' }}>
+                    {ph.name}
+                    <button type="button" onClick={() => handleRemoveDep(depId)}
+                      style={{ background:'none', border:'none', color:'var(--muted)', cursor:'pointer', fontSize:14, lineHeight:1, padding:0 }}>×</button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Add via dropdown */}
+          {otherPhases.filter(p => !currentDeps.has(p.phaseId)).length > 0 ? (
+            <select defaultValue="" onChange={e => { if (e.target.value) { handleAddDep(Number(e.target.value)); e.target.value = ""; } }}
+              style={{ width:'100%', background:'#fff', border:'1px solid var(--divider)', borderRadius:'var(--radius)', padding:'6px 10px', color:'var(--light)', fontSize:12, fontFamily:'inherit', outline:'none' }}>
+              <option value="">+ Add a predecessor phase…</option>
+              {otherPhases.filter(p => !currentDeps.has(p.phaseId)).map(p => (
+                <option key={p.phaseId} value={p.phaseId}>{p.name} ({p.status})</option>
+              ))}
+            </select>
+          ) : (
+            <div style={{ fontSize:12, color:'var(--muted)' }}>All phases already added as prerequisites.</div>
+          )}
+
+          {depError && <div style={{ color:'#aa1010', fontSize:11, marginTop:6 }}>{depError}</div>}
         </div>
       )}
 

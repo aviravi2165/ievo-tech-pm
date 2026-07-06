@@ -4,42 +4,23 @@
  * Progress computed on fetch — never stored (PRD §5.4)
  * Task Complete=100, else 0. Activity=avg tasks. Phase=avg activities. Project=avg phases.
  *
- * NOTE: this used to check task.status='Done', which stopped matching
+ * NOTE 1: this used to check task.status='Done', which stopped matching
  * anything the moment the task status vocabulary was migrated to
- * ('To Do','Ongoing','Complete','Blocked') — every progress figure has
+ * ('To Do','Ongoing','Complete','Blocked') — every progress figure had
  * silently been 0% since then. Fixed below.
+ *
+ * NOTE 2: getPhaseProgress/getProjectProgress used to flat-pool every
+ * grandchild task/activity directly in one query, instead of averaging
+ * each immediate child's OWN already-computed progress. That's a
+ * different number whenever children have unequal task counts — worse,
+ * an Activity with zero tasks yet was silently excluded from the pool
+ * entirely (an empty JOIN contributes nothing) rather than counting as
+ * 0%, so a Phase could read 100% complete while one of its two
+ * Activities sat at 0%. Fixed below: each level now genuinely averages
+ * its immediate children's progress, recursing one level at a time, and
+ * a child with nothing under it yet counts as 0%, not "not counted".
  */
 const { getPool, sql } = require('../../../config/db');
-
-async function getProjectProgress(projectId) {
-  const pool = await getPool();
-  const result = await pool.request()
-    .input('projectId', sql.Int, projectId)
-    .query(`
-      SELECT ROUND(AVG(phase_progress), 0) AS progress FROM (
-        SELECT ph.phase_id,
-          COALESCE((
-            SELECT AVG(CASE WHEN t.status='Complete' THEN 100.0 ELSE 0 END)
-            FROM pm_tasks t INNER JOIN pm_activities a ON a.activity_id=t.activity_id
-            WHERE a.phase_id=ph.phase_id AND t.is_deleted=0 AND a.is_deleted=0
-          ), 0) AS phase_progress
-        FROM pm_phases ph WHERE ph.project_id=@projectId AND ph.is_deleted=0
-      ) sub
-    `);
-  return parseInt(result.recordset[0]?.progress || 0, 10);
-}
-
-async function getPhaseProgress(phaseId) {
-  const pool = await getPool();
-  const result = await pool.request()
-    .input('phaseId', sql.Int, phaseId)
-    .query(`
-      SELECT ROUND(AVG(CASE WHEN t.status='Complete' THEN 100.0 ELSE 0 END), 0) AS progress
-      FROM pm_tasks t INNER JOIN pm_activities a ON a.activity_id=t.activity_id
-      WHERE a.phase_id=@phaseId AND t.is_deleted=0 AND a.is_deleted=0
-    `);
-  return parseInt(result.recordset[0]?.progress || 0, 10);
-}
 
 async function getActivityProgress(activityId) {
   const pool = await getPool();
@@ -50,6 +31,30 @@ async function getActivityProgress(activityId) {
       FROM pm_tasks WHERE activity_id=@activityId AND is_deleted=0
     `);
   return parseInt(result.recordset[0]?.progress || 0, 10);
+}
+
+async function getPhaseProgress(phaseId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('phaseId', sql.Int, phaseId)
+    .query(`SELECT activity_id AS activityId FROM pm_activities WHERE phase_id=@phaseId AND is_deleted=0`);
+  const activities = result.recordset;
+  if (!activities.length) return 0;
+  let sum = 0;
+  for (const a of activities) sum += await getActivityProgress(a.activityId);
+  return Math.round(sum / activities.length);
+}
+
+async function getProjectProgress(projectId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('projectId', sql.Int, projectId)
+    .query(`SELECT phase_id AS phaseId FROM pm_phases WHERE project_id=@projectId AND is_deleted=0`);
+  const phases = result.recordset;
+  if (!phases.length) return 0;
+  let sum = 0;
+  for (const ph of phases) sum += await getPhaseProgress(ph.phaseId);
+  return Math.round(sum / phases.length);
 }
 
 /**

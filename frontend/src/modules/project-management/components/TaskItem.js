@@ -233,12 +233,14 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
               </button>
               {otherTasks.length > 0 && (
-                <button
-                  className={`pm-btn pm-btn-ghost ${panel === 'deps' ? 'active' : ''}`}
-                  title="Add or remove task dependencies"
+                <button className={`icon-btn ${panel === 'deps' ? 'active' : ''}`}
+                  title="Set prerequisites (tasks that must finish first)"
                   onClick={() => togglePanel('deps')}
-                  style={{ fontSize: 10, padding: '2px 8px', color: panel === 'deps' ? 'var(--gold)' : 'var(--muted)', borderColor: panel === 'deps' ? 'var(--gold)' : undefined }}>
-                  ⟶ Dep
+                  style={{ width: 26, height: 26 }}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                  </svg>
                 </button>
               )}
               <button className="icon-btn" title="Rename" onClick={() => setEditingName(true)} style={{ width: 26, height: 26 }}>
@@ -355,33 +357,39 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
         <div className="pm-sub-panel" style={{ marginTop: 8 }}>
           <div className="pm-sub-panel-title">Prerequisites — Tasks that must complete first</div>
           <div className="pm-sub-panel-hint">
-            This task auto-<strong>Blocks</strong> when a dep is added (if that dep isn't Complete yet).
-            It auto-<strong>unblocks</strong> once all predecessors reach Complete — no manual action needed.
+            Selecting a predecessor auto-<strong>blocks</strong> this task until it reaches Complete, then auto-unblocks. Cycles are prevented.
           </div>
-          {otherTasks.length === 0
-            ? <div style={{ fontSize: 12, color: 'var(--muted)' }}>No other tasks in this activity.</div>
-            : otherTasks.map(t => {
-              const isSel = currentDeps.has(t.taskId);
-              return (
-                <div key={t.taskId} className={`pm-member-row ${isSel ? 'selected' : ''}`} style={{ marginBottom: 4 }}>
-                  <span style={{ flex: 1, fontSize: 12, color: 'var(--light)' }}>{t.name}</span>
-                  <StatusBadge status={t.status} />
-                  {isSel ? (
-                    <button className="pm-btn pm-btn-ghost" style={{ fontSize: 11, padding: '2px 8px', color: '#aa1010', borderColor: 'rgba(170,16,16,.3)' }}
-                      onClick={() => handleRemoveDep(t.taskId)}>✕ Remove</button>
-                  ) : (
-                    <button className="pm-btn pm-btn-ghost" style={{ fontSize: 11, padding: '2px 8px' }}
-                      onClick={() => handleAddDep(t.taskId)}>＋ Add</button>
-                  )}
-                </div>
-              );
-            })
-          }
-          {task.dependsOn?.length > 0 && (
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8, paddingTop: 6, borderTop: '1px solid var(--divider)' }}>
-              ⟶ Blocked by {task.dependsOn.length} predecessor task{task.dependsOn.length > 1 ? 's' : ''}
+
+          {/* Current dep chips */}
+          {currentDeps.size > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
+              {[...currentDeps].map(depId => {
+                const t = otherTasks.find(x => x.taskId === depId);
+                if (!t) return null;
+                return (
+                  <span key={depId} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, background: 'var(--mid)', border: '1px solid var(--divider)', borderRadius: 12, padding: '2px 8px 2px 10px' }}>
+                    {t.name}
+                    <button type="button" onClick={() => handleRemoveDep(depId)}
+                      style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
+                  </span>
+                );
+              })}
             </div>
           )}
+
+          {/* Add via dropdown */}
+          {otherTasks.filter(t => !currentDeps.has(t.taskId)).length > 0 ? (
+            <select defaultValue="" onChange={e => { if (e.target.value) { handleAddDep(Number(e.target.value)); e.target.value = ''; } }}
+              style={{ width: '100%', background: '#fff', border: '1px solid var(--divider)', borderRadius: 'var(--radius)', padding: '6px 10px', color: 'var(--light)', fontSize: 12, fontFamily: 'inherit', outline: 'none' }}>
+              <option value="">+ Add a predecessor task…</option>
+              {otherTasks.filter(t => !currentDeps.has(t.taskId)).map(t => (
+                <option key={t.taskId} value={t.taskId}>{t.name} ({t.status})</option>
+              ))}
+            </select>
+          ) : (
+            <div style={{ fontSize: 12, color: 'var(--muted)' }}>All tasks already added as prerequisites.</div>
+          )}
+
           {depError && <div style={{ color: '#aa1010', fontSize: 11, marginTop: 6 }}>{depError}</div>}
         </div>
       )}
