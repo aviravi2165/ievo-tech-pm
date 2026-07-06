@@ -121,54 +121,62 @@ export default function PhasePanel({ phase, myRole, projectId, allPhases = [], p
     <div className="pm-phase">
       {/* ── Header ── */}
       <div className="pm-phase-header" onClick={() => setOpen(v => !v)}>
+        {/* Chevron */}
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
           style={{ transform:open?'rotate(90deg)':'none', transition:'transform 0.15s', flexShrink:0, color:'var(--muted)' }}>
           <polyline points="9 18 15 12 9 6"/>
         </svg>
 
-        <span className="pm-phase-name">{phase.name}</span>
+        {/* Name — truncates when space is tight */}
+        <span className="pm-phase-name" title={phase.name}>{phase.name}</span>
 
+        {/* Date range — shrinks and hides if needed */}
         {dateRange && (
-          <span style={{ fontSize: 10, color: 'var(--muted)', flexShrink: 0 }}>{dateRange}</span>
+          <span style={{ fontSize:10, color:'var(--muted)', flexShrink:0, whiteSpace:'nowrap' }}>{dateRange}</span>
         )}
 
-        <DueBadge start={phase.plannedStart} end={phase.plannedEnd} status={phase.status} />
-        {phase.isOverdue && <OverdueBadge />}
-        <DelayBadge days={phase.delayDays} label="Late by" />
+        {/* All controls pinned to the right */}
+        <div className="pm-phase-controls" onClick={e => e.stopPropagation()}>
+          <DueBadge start={phase.plannedStart} end={phase.plannedEnd} status={phase.status} />
+          {phase.isOverdue && <OverdueBadge />}
+          <DelayBadge days={phase.delayDays} label="Late by" />
 
-        {canEdit && onReorder && (
-          <div style={{ display:'flex', gap:2 }} onClick={e => e.stopPropagation()}>
-            <button className="icon-btn" title="Move up"   onClick={() => onReorder(phase.phaseId,'up')}   style={{width:22,height:22}}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="18 15 12 9 6 15"/></svg></button>
-            <button className="icon-btn" title="Move down" onClick={() => onReorder(phase.phaseId,'down')} style={{width:22,height:22}}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="6 9 12 15 18 9"/></svg></button>
+          {canEdit && onReorder && (
+            <div style={{ display:'flex', gap:2 }}>
+              <button className="icon-btn" title="Move up"   onClick={() => onReorder(phase.phaseId,'up')}   style={{width:22,height:22}}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="18 15 12 9 6 15"/></svg></button>
+              <button className="icon-btn" title="Move down" onClick={() => onReorder(phase.phaseId,'down')} style={{width:22,height:22}}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="6 9 12 15 18 9"/></svg></button>
+            </div>
+          )}
+
+          {/* Progress bar — fixed width */}
+          <div style={{ width:120, flexShrink:0 }}>
+            <ProgressBar value={phase.progress || 0} />
           </div>
-        )}
 
-        <div style={{ minWidth:180, marginLeft:'auto' }}>
-          <ProgressBar value={phase.progress || 0} />
+          <StatusBadge status={phase.status} />
+
+          {/* Dep badge — clickable shortcut to open dep panel */}
+          {phase.dependsOn?.length > 0 && (
+            <span className="pm-dep-badge" title={`Depends on ${phase.dependsOn.length} phase(s)`}
+              onClick={() => togglePanel('deps')} style={{ cursor:'pointer' }}>
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+              {phase.dependsOn.length} dep
+            </span>
+          )}
+
+          {canEdit && (
+            <div style={{ display:'flex', gap:3 }}>
+              <button className={`icon-btn ${panel==='dates'?'active':''}`} title="Edit phase dates"
+                onClick={() => togglePanel('dates')} style={{width:26,height:26}}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              </button>
+              <button className={`icon-btn ${panel==='deps'?'active':''}`} title="Manage dependencies"
+                onClick={() => togglePanel('deps')} style={{width:26,height:26}}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+              </button>
+            </div>
+          )}
         </div>
-
-        <StatusBadge status={phase.status} />
-
-        {/* Dep badge — after status so it never overlaps reorder buttons */}
-        {phase.dependsOn?.length > 0 && (
-          <span className="pm-dep-badge" title={`Depends on ${phase.dependsOn.length} phase(s)`} onClick={e => { e.stopPropagation(); togglePanel('deps'); }}>
-            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-            {phase.dependsOn.length} dep
-          </span>
-        )}
-
-        {canEdit && (
-          <div style={{ display:'flex', gap:3 }} onClick={e => e.stopPropagation()}>
-            <button className={`icon-btn ${panel==='dates'?'active':''}`} title="Edit phase dates"
-              onClick={() => togglePanel('dates')} style={{width:26,height:26}}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-            </button>
-            <button className={`icon-btn ${panel==='deps'?'active':''}`} title="Manage dependencies"
-              onClick={() => togglePanel('deps')} style={{width:26,height:26}}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-            </button>
-          </div>
-        )}
       </div>
 
       {/* ── Date edit panel ── */}
