@@ -104,4 +104,21 @@ async function isBlocked(entityType, entityId) {
   return result.recordset[0]?.status === 'Blocked';
 }
 
-module.exports = { resolveUnblocked, blockIfNeeded, isBlocked };
+/**
+ * isInactive — a Project/Phase/Activity/Task that's been deactivated
+ * (has children, so couldn't be hard-deleted) is frozen from new child
+ * creation until reactivated. Checks only the entity's OWN is_active
+ * column; ancestor cascade is handled by callers that already have the
+ * parent chain loaded (see createActivity/createTask).
+ */
+async function isInactive(entityType, entityId) {
+  if (!entityId) return false;
+  const c = CFG[entityType]; if (!c) return false;
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('id', sql.Int, entityId)
+    .query(`SELECT is_active FROM ${c.entityTable} WHERE ${c.idCol} = @id`);
+  return result.recordset[0]?.is_active === false;
+}
+
+module.exports = { resolveUnblocked, blockIfNeeded, isBlocked, isInactive };

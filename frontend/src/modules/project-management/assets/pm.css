@@ -28,11 +28,14 @@
 /* ── List page ── */
 .pm-list        { flex:1; overflow-y:auto; padding:24px; }
 .pm-list-grid   { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:16px; margin-top:20px; }
-.pm-card        { background:var(--charcoal); border:1px solid var(--divider); border-radius:var(--radius-lg); padding:20px; cursor:pointer; transition:border-color 0.15s, box-shadow 0.15s; position:relative; }
+.pm-card        { display:flex; flex-direction:column; background:var(--charcoal); border:1px solid var(--divider); border-radius:var(--radius-lg); padding:20px; cursor:pointer; transition:border-color 0.15s, box-shadow 0.15s; position:relative; }
 .pm-card:hover  { border-color:var(--gold-dim); box-shadow:0 4px 16px rgba(0,0,0,.1); }
 .pm-card-name   { font-size:15px; font-weight:600; color:var(--light); margin-bottom:4px; padding-right:32px; }
 .pm-card-meta   { font-size:12px; color:var(--muted); margin-bottom:12px; }
-.pm-card-footer { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+/* Pins the footer to the card's bottom edge regardless of how much content
+   (description, dates, badges) sits above it, so footers line up across
+   cards in the same grid row instead of drifting with content length. */
+.pm-card-footer { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:auto; padding-top:8px; }
 .pm-card-delete { position:absolute; top:14px; right:14px; opacity:0; transition:opacity 0.15s; }
 .pm-card:hover .pm-card-delete { opacity:1; }
 
@@ -61,6 +64,9 @@
 .pm-late-tag { display:inline-flex; align-items:center; gap:3px; font-size:10px; font-weight:700; color:#fff; background:#aa1010; border-radius:10px; padding:1px 7px; letter-spacing:.03em; }
 .pm-due-soon { display:inline-flex; align-items:center; gap:3px; font-size:10px; font-weight:700; color:#8a5200; background:rgba(200,120,0,.15); border-radius:10px; padding:1px 7px; }
 
+/* ── Inactive badge — deactivated (has children), distinct from status ── */
+.pm-inactive-badge { display:inline-flex; align-items:center; gap:3px; font-size:10px; font-weight:700; color:#666; background:rgba(100,100,100,.14); border-radius:10px; padding:1px 7px; letter-spacing:.03em; text-transform:uppercase; }
+
 /* ── Progress bar ── */
 .pm-progress-wrap  { display:flex; align-items:center; gap:8px; }
 .pm-progress-bar   { flex:1; height:5px; background:var(--mid); border-radius:3px; overflow:hidden; }
@@ -80,22 +86,34 @@
 
 /* ── Phase panel ── */
 .pm-phase          { background:var(--charcoal); border:1px solid var(--divider); border-radius:var(--radius-lg); }
-.pm-phase-header   { display:flex; align-items:center; gap:8px; padding:12px 18px; cursor:pointer; user-select:none; flex-wrap:nowrap; min-width:0; }
+.pm-phase-header   { display:flex; align-items:center; gap:10px; padding:12px 18px; cursor:pointer; user-select:none; flex-wrap:nowrap; min-width:0; min-height:52px; }
 .pm-phase-header:hover { background:rgba(0,0,0,.02); }
-.pm-phase-controls  { display:flex; align-items:center; gap:6px; flex-shrink:1; min-width:0; margin-left:auto; flex-wrap:wrap; justify-content:flex-end; }
-.pm-phase-name     { font-size:14px; font-weight:600; color:var(--light); flex:1; min-width:50px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pm-phase-name     { font-size:14px; font-weight:600; color:var(--light); min-width:60px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .pm-phase-body     { padding:0 18px 16px 18px; border-top:1px solid var(--divider); }
 
 /* ── Activity row ── */
 .pm-activity         { background:var(--slate); border:1px solid var(--divider); border-radius:var(--radius); margin-bottom:8px; }
 .pm-activity-header  { display:flex; align-items:center; gap:8px; padding:10px 14px; cursor:pointer; min-width:0; flex-wrap:nowrap; }
 .pm-activity-header:hover { background:rgba(0,0,0,.02); border-radius:var(--radius); }
-.pm-activity-controls { display:flex; align-items:center; gap:5px; flex-shrink:0; margin-left:auto; }
 .pm-activity-name    { font-size:13px; font-weight:500; color:var(--light); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .pm-activity-body    { padding:0 14px 12px; border-top:1px solid var(--divider); }
 
+/* Shared "meta cluster" — date/progress/status/badges trailing the name in
+   phase & activity header rows. Shrinks and wraps onto a 2nd line instead of
+   overflowing when the row is squeezed (e.g. message panel expanded). */
+.pm-row-meta { display:flex; align-items:center; gap:6px 10px; flex-wrap:wrap; justify-content:flex-end; flex:0 1 auto; min-width:0; }
+
+/* Hover-reveal action icons — shared across phase/activity/task rows */
+.pm-phase-header .pm-row-actions,
+.pm-activity-header .pm-row-actions,
+.pm-task-row .pm-row-actions { opacity:0; pointer-events:none; transition:opacity .12s; display:flex; gap:3px; align-items:center; flex-shrink:0; }
+.pm-phase-header:hover .pm-row-actions, .pm-phase-header .pm-row-actions.open,
+.pm-activity-header:hover .pm-row-actions, .pm-activity-header .pm-row-actions.open,
+.pm-task-row:hover .pm-row-actions, .pm-task-row .pm-row-actions.open { opacity:1; pointer-events:auto; }
+
 /* ── Task item ── */
 .pm-task         { display:flex; flex-direction:column; gap:0; padding:10px 12px; background:var(--charcoal); border:1px solid var(--divider); border-radius:var(--radius); margin-bottom:6px; }
+.pm-task-row     { display:flex; align-items:flex-start; gap:8px; width:100%; }
 .pm-task-info    { flex:1; min-width:0; }
 .pm-task-name    { font-size:13px; color:var(--light); margin-bottom:3px; }
 .pm-task-meta    { font-size:11px; color:var(--muted); display:flex; gap:8px; flex-wrap:wrap; align-items:center; }

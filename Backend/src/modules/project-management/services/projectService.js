@@ -12,7 +12,7 @@ async function listProjects(userId) {
     .query(`
       SELECT p.project_id AS projectId, p.name, p.description, p.status,
              p.planned_start AS plannedStart, p.planned_end AS plannedEnd,
-             p.created_at AS createdAt, pm.role AS myRole,
+             p.created_at AS createdAt, pm.role AS myRole, p.is_active AS isActive,
              COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''), u.email) AS ownerName,
              CASE WHEN p.planned_end < CAST(GETDATE() AS DATE) AND p.status NOT IN ('Completed','Cancelled')
                   THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS isOverdue,
@@ -50,7 +50,7 @@ async function getProject(projectId, userId) {
       SELECT p.project_id AS projectId, p.name, p.description, p.status,
              p.planned_start AS plannedStart, p.planned_end AS plannedEnd,
              p.dept_id AS deptId, p.created_at AS createdAt, p.modified_at AS modifiedAt,
-             pm.role AS myRole,
+             pm.role AS myRole, p.is_active AS isActive,
              COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''), u.email) AS ownerName,
              CASE WHEN p.planned_end < CAST(GETDATE() AS DATE) AND p.status NOT IN ('Completed','Cancelled')
                   THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS isOverdue
@@ -141,12 +141,35 @@ async function updateProject(projectId, userId, body) {
   return { projectId, ...fields };
 }
 
+// Delete only when empty (no phases) — otherwise deactivate, preserving
+// data underneath instead of orphaning it from view.
 async function deleteProject(projectId, userId) {
   const pool = await getPool();
+  const childResult = await pool.request()
+    .input('projectId', sql.Int, projectId)
+    .query(`SELECT COUNT(*) AS cnt FROM pm_phases WHERE project_id=@projectId AND is_deleted=0`);
+
+  if (childResult.recordset[0].cnt > 0) {
+    await pool.request()
+      .input('projectId', sql.Int, projectId)
+      .query(`UPDATE pm_projects SET is_active=0, modified_at=SYSDATETIMEOFFSET() WHERE project_id=@projectId`);
+    await audit.log({ entityType:'project', entityId:projectId, projectId, userId, action:'deactivated' });
+    return { action: 'deactivated' };
+  }
+
   await pool.request()
     .input('projectId', sql.Int, projectId)
     .query(`UPDATE pm_projects SET is_deleted=1, modified_at=SYSDATETIMEOFFSET() WHERE project_id=@projectId`);
   await audit.log({ entityType:'project', entityId:projectId, projectId, userId, action:'deleted' });
+  return { action: 'deleted' };
+}
+
+async function reactivateProject(projectId, userId) {
+  const pool = await getPool();
+  await pool.request()
+    .input('projectId', sql.Int, projectId)
+    .query(`UPDATE pm_projects SET is_active=1, modified_at=SYSDATETIMEOFFSET() WHERE project_id=@projectId`);
+  await audit.log({ entityType:'project', entityId:projectId, projectId, userId, action:'reactivated' });
 }
 
 // ── Flat member list (used by project header + progress sidebar) ──────────────
@@ -353,6 +376,6 @@ async function removeMember(projectId, targetUserId, actorUserId) {
 }
 
 module.exports = {
-  listProjects, getProject, createProject, updateProject, deleteProject,
+  listProjects, getProject, createProject, updateProject, deleteProject, reactivateProject,
   getMembers, getProjectMembersHierarchy, addMember, updateMemberRole, removeMember,
 };

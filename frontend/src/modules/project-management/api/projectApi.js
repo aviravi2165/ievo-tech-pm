@@ -8,6 +8,7 @@ export const projectApi = {
   create:            (body)          => axiosInstance.post(BASE, body).then(r => r.data),
   update:            (id, body)      => axiosInstance.patch(`${BASE}/${id}`, body).then(r => r.data),
   delete:            (id)            => axiosInstance.delete(`${BASE}/${id}`).then(r => r.data),
+  reactivate:        (id)            => axiosInstance.post(`${BASE}/${id}/reactivate`).then(r => r.data),
   getAudit:          (id)            => axiosInstance.get(`${BASE}/${id}/audit`).then(r => r.data),
   getPhases:         (id)            => axiosInstance.get(`${BASE}/${id}/phases`).then(r => r.data),
   createPhase:       (id, body)      => axiosInstance.post(`${BASE}/${id}/phases`, body).then(r => r.data),
@@ -26,6 +27,7 @@ export const phaseApi = {
   createActivity: (phaseId, body)   => axiosInstance.post(`/api/phases/${phaseId}/activities`, body).then(r => r.data),
   update:         (id, body)        => axiosInstance.patch(`/api/phases/${id}`, body).then(r => r.data),
   delete:         (id)              => axiosInstance.delete(`/api/phases/${id}`).then(r => r.data),
+  reactivate:     (id)              => axiosInstance.patch(`/api/phases/${id}/reactivate`).then(r => r.data),
   addDep:         (id, dependsOnId) => axiosInstance.post(`/api/phases/${id}/dependencies`, { dependsOnId }).then(r => r.data),
   removeDep:      (id, depId)       => axiosInstance.delete(`/api/phases/${id}/dependencies/${depId}`).then(r => r.data),
   reorder:        (id, direction)   => axiosInstance.patch(`/api/phases/${id}/reorder`, { direction }).then(r => r.data),
@@ -43,6 +45,7 @@ export const activityApi = {
   // Activity CRUD
   update:         (id, body)        => axiosInstance.patch(`/api/activities/${id}`, body).then(r => r.data),
   delete:         (id)              => axiosInstance.delete(`/api/activities/${id}`).then(r => r.data),
+  reactivate:     (id)              => axiosInstance.patch(`/api/activities/${id}/reactivate`).then(r => r.data),
   addDep:         (id, dependsOnId) => axiosInstance.post(`/api/activities/${id}/dependencies`, { dependsOnId }).then(r => r.data),
   removeDep:      (id, depId)       => axiosInstance.delete(`/api/activities/${id}/dependencies/${depId}`).then(r => r.data),
   // Activity members — role: 'Manager' | 'Employee' | 'Viewer'
@@ -58,6 +61,7 @@ export const taskApi = {
   update:       (id, body)      => axiosInstance.patch(`/api/tasks/${id}`, body).then(r => r.data),
   updateStatus: (id, status)    => axiosInstance.patch(`/api/tasks/${id}/status`, { status }).then(r => r.data),
   delete:       (id)            => axiosInstance.delete(`/api/tasks/${id}`).then(r => r.data),
+  reactivate:   (id)            => axiosInstance.patch(`/api/tasks/${id}/reactivate`).then(r => r.data),
   addDep:       (id, dependsOnId) => axiosInstance.post(`/api/tasks/${id}/dependencies`, { dependsOnId }).then(r => r.data),
   removeDep:    (id, depId)     => axiosInstance.delete(`/api/tasks/${id}/dependencies/${depId}`).then(r => r.data),
   // Assignment requests (replaces old direct addAssignee)

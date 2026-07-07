@@ -43,10 +43,14 @@ function requireEntityRole(level, minRole) {
 
       let effective;
       if (level === 'activity') {
-        const activityId = req.params.id || req.params.activityId;
+        // Prefer an explicitly-resolved activityId (set by a resolve*Project
+        // middleware, e.g. taskRoutes.js resolveTaskProject) over req.params.id
+        // — on task routes :id is the TASK's own id, not the activity's, so
+        // falling back to it first would silently check the wrong entity.
+        const activityId = req.params.activityId || req.params.id;
         effective = await getEffectiveActivityRole(userId, activityId);
       } else if (level === 'phase') {
-        const phaseId = req.params.id || req.params.phaseId;
+        const phaseId = req.params.phaseId || req.params.id;
         effective = await getEffectivePhaseRole(userId, phaseId);
       } else {
         return res.status(500).json({ error: `Unknown entityRole level: ${level}` });

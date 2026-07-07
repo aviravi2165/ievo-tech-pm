@@ -15,6 +15,7 @@ router.post('/',     ctrl.create);
 router.get('/:id',   ctrl.get);
 router.patch('/:id',  setProjectId, requireRole('Manager'), ctrl.update);
 router.delete('/:id', setProjectId, requireRole('Manager'), ctrl.remove);
+router.post('/:id/reactivate', setProjectId, requireRole('Manager'), ctrl.reactivate);
 router.get('/:id/audit', setProjectId, requireRole('Manager'), ctrl.getAudit);
 
 // Members — flat list and hierarchical breakdown (for Members tab)

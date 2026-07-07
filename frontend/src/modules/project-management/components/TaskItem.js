@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import StatusBadge from './StatusBadge';
+import StatusBadge, { InactiveBadge } from './StatusBadge';
 import PriorityBadge from './PriorityBadge';
 import OverdueBadge from './OverdueBadge';
 import UserSearchInput from './UserSearchInput';
@@ -69,6 +69,7 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
   const canMember  = myRole === 'Member' && isAssigned;
   const canEdit    = canManager || canMember;
   const canStatus  = canEdit || (myRole === 'Member' && isAssigned);
+  const isInactive = task.isActive === false;
 
   const [localStatus,  setLocalStatus]  = useState(task.status);
   const [panel,        setPanel]        = useState(null); // 'assign'|'deps'|'date'|'desc'|null
@@ -117,7 +118,15 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
   // ── Delete ─────────────────────────────────────────────────────────────────
   const handleDelete = async () => {
     if (!window.confirm(`Delete task "${task.name}"?`)) return;
-    try { await taskApi.delete(task.taskId); onRefetch?.(); onRefetchProject?.(); } catch {}
+    try {
+      const { action } = await taskApi.delete(task.taskId);
+      if (action === 'deactivated') alert('This task has assignees — it was deactivated instead of deleted.');
+      onRefetch?.(); onRefetchProject?.();
+    } catch {}
+  };
+
+  const handleReactivate = async () => {
+    try { await taskApi.reactivate(task.taskId); onRefetch?.(); onRefetchProject?.(); } catch {}
   };
 
   // ── Assignment requests ────────────────────────────────────────────────────
@@ -161,7 +170,7 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
   return (
     <div className="pm-task">
       {/* ── Main row ── */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, width: '100%' }}>
+      <div className="pm-task-row">
         <div style={{ flex: 1, minWidth: 0 }}>
           {/* Task name */}
           {editingName ? (
@@ -171,7 +180,7 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
                 style={{ flex: 1, background: '#fff', border: '1px solid var(--gold)', borderRadius: 'var(--radius)', padding: '4px 8px', color: 'var(--light)', fontSize: 13, fontFamily: 'inherit', outline: 'none' }}
                 onKeyDown={e => { if (e.key === 'Enter') handleNameSave(); if (e.key === 'Escape') { setEditingName(false); setEditName(task.name); } }} />
               <button className="pm-btn pm-btn-primary" style={{ padding: '3px 10px', fontSize: 11 }} onClick={handleNameSave}>✓</button>
-              <button className="pm-btn pm-btn-ghost"   style={{ padding: '3px 8px', fontSize: 11 }} onClick={() => { setEditingName(false); setEditName(task.name); }}>✕</button>
+              <button className="pm-btn pm-btn-ghost"   style={{ padding: '3px 8px',  fontSize: 11 }} onClick={() => { setEditingName(false); setEditName(task.name); }}>✕</button>
             </div>
           ) : (
             <div className="pm-task-name" style={{ textDecoration: localStatus === 'Complete' ? 'line-through' : 'none', opacity: localStatus === 'Complete' ? 0.5 : 1 }}>
@@ -179,76 +188,72 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
             </div>
           )}
 
-          {/* Meta row */}
+          {/* Meta row — only essential inline badges, no wrapping */}
           <div className="pm-task-meta">
             <PriorityBadge priority={task.priority} />
+            {isInactive && <InactiveBadge />}
             <DueDateBadge dueDate={task.dueDate} status={localStatus} />
             {task.isOverdue && localStatus !== 'Complete' && <OverdueBadge />}
-            {task.estimatedHours && <span>{task.estimatedHours}h est.</span>}
+            {task.estimatedHours && <span style={{ flexShrink:0 }}>{task.estimatedHours}h</span>}
             <Avatars assignees={task.assignees} />
-            {(canEdit || isAssigned) && <ChatButton kind="task" id={task.taskId} />}
             {task.dependsOn?.length > 0 && (
-              <span className="pm-dep-badge">
+              <span className="pm-dep-badge" onClick={e => { e.stopPropagation(); togglePanel('deps'); }}
+                title="This task has prerequisites">
                 <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-                {task.dependsOn.length} dep
-              </span>
-            )}
-            {task.description && (
-              <span style={{ fontSize: 10, color: 'var(--muted)', border: '1px solid var(--divider)', borderRadius: 8, padding: '0 6px', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                title={task.description}>
-                {task.description.length > 28 ? `${task.description.slice(0, 28)}…` : task.description}
+                {task.dependsOn.length}
               </span>
             )}
           </div>
-
-          {task.description && panel !== 'desc' && (
-            <div style={{ marginTop: 5, fontSize: 12, color: 'var(--muted)', lineHeight: 1.5, borderLeft: '2px solid var(--divider)', paddingLeft: 8 }}>
-              {task.description}
-            </div>
-          )}
         </div>
 
-        {/* Action area */}
-        <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {canStatus ? (
+        {/* Status select / badge — frozen (no select) while inactive */}
+        <div style={{ flexShrink:0 }} onClick={e => e.stopPropagation()}>
+          {canStatus && !isInactive ? (
             <select value={localStatus} onChange={handleStatusChange}
-              style={{ background: '#fff', border: '1px solid var(--divider)', borderRadius: 'var(--radius)', color: 'var(--light)', fontSize: 11, padding: '3px 6px', fontFamily: 'inherit', outline: 'none' }}>
+              style={{ background:'#fff', border:'1px solid var(--divider)', borderRadius:'var(--radius)', color:'var(--light)', fontSize:11, padding:'3px 6px', fontFamily:'inherit', outline:'none' }}>
               {STATUS_OPTIONS.map(s => <option key={s}>{s}</option>)}
             </select>
           ) : <StatusBadge status={localStatus} />}
+        </div>
 
+        {/* Hover-reveal action buttons */}
+        <div className={`pm-row-actions${panel ? ' open' : ''}`} onClick={e => e.stopPropagation()}>
           {canEdit && (
             <>
-              <button className={`icon-btn ${panel === 'desc' ? 'active' : ''}`} title="Description" onClick={() => togglePanel('desc')} style={{ width: 26, height: 26 }}>
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              <button className={`icon-btn${panel === 'desc' ? ' active' : ''}`} title="Description" onClick={() => togglePanel('desc')} style={{ width:24, height:24 }}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
               </button>
-              <button className={`icon-btn ${panel === 'date' ? 'active' : ''}`} title="Due date" onClick={() => togglePanel('date')} style={{ width: 26, height: 26 }}>
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              <button className={`icon-btn${panel === 'date' ? ' active' : ''}`} title="Due date" onClick={() => togglePanel('date')} style={{ width:24, height:24 }}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
               </button>
+              {(canEdit || isAssigned) && (
+                <ChatButton kind="task" id={task.taskId} compact />
+              )}
             </>
           )}
           {canManager && (
             <>
-              <button className={`icon-btn ${panel === 'assign' ? 'active' : ''}`} title="Assign" onClick={() => togglePanel('assign')} style={{ width: 26, height: 26 }}>
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              <button className={`icon-btn${panel === 'assign' ? ' active' : ''}`} title="Assign" onClick={() => togglePanel('assign')} style={{ width:24, height:24 }}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
               </button>
               {otherTasks.length > 0 && (
-                <button className={`icon-btn ${panel === 'deps' ? 'active' : ''}`}
-                  title="Set prerequisites (tasks that must finish first)"
-                  onClick={() => togglePanel('deps')}
-                  style={{ width: 26, height: 26 }}>
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-                  </svg>
+                <button className={`icon-btn${panel === 'deps' ? ' active' : ''}`} title="Prerequisites"
+                  onClick={() => togglePanel('deps')} style={{ width:24, height:24 }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
                 </button>
               )}
-              <button className="icon-btn" title="Rename" onClick={() => setEditingName(true)} style={{ width: 26, height: 26 }}>
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              <button className="icon-btn" title="Rename" onClick={() => setEditingName(true)} style={{ width:24, height:24 }}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
               </button>
-              <button className="icon-btn danger" title="Delete" onClick={handleDelete} style={{ width: 26, height: 26 }}>
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-              </button>
+              {isInactive ? (
+                <button className="icon-btn" title="Reactivate" onClick={handleReactivate} style={{ width:24, height:24 }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                </button>
+              ) : (
+                <button className="icon-btn danger" title="Delete" onClick={handleDelete} style={{ width:24, height:24 }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                </button>
+              )}
             </>
           )}
         </div>
@@ -352,16 +357,18 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
         </div>
       )}
 
-      {/* ── Dependency panel ── */}
-      {panel === 'deps' && canManager && (
+      {/* ── Dependency panel — viewable by anyone, editable by Manager only ── */}
+      {panel === 'deps' && (
         <div className="pm-sub-panel" style={{ marginTop: 8 }}>
           <div className="pm-sub-panel-title">Prerequisites — Tasks that must complete first</div>
           <div className="pm-sub-panel-hint">
-            Selecting a predecessor auto-<strong>blocks</strong> this task until it reaches Complete, then auto-unblocks. Cycles are prevented.
+            {canManager
+              ? <>Selecting a predecessor auto-<strong>blocks</strong> this task until it reaches Complete, then auto-unblocks. Cycles are prevented.</>
+              : 'This task is blocked until the tasks below reach Complete.'}
           </div>
 
           {/* Current dep chips */}
-          {currentDeps.size > 0 && (
+          {currentDeps.size > 0 ? (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
               {[...currentDeps].map(depId => {
                 const t = otherTasks.find(x => x.taskId === depId);
@@ -369,25 +376,31 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
                 return (
                   <span key={depId} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, background: 'var(--mid)', border: '1px solid var(--divider)', borderRadius: 12, padding: '2px 8px 2px 10px' }}>
                     {t.name}
-                    <button type="button" onClick={() => handleRemoveDep(depId)}
-                      style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
+                    {canManager && (
+                      <button type="button" onClick={() => handleRemoveDep(depId)}
+                        style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
+                    )}
                   </span>
                 );
               })}
             </div>
+          ) : (
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: canManager ? 8 : 0 }}>No prerequisites set.</div>
           )}
 
-          {/* Add via dropdown */}
-          {otherTasks.filter(t => !currentDeps.has(t.taskId)).length > 0 ? (
-            <select defaultValue="" onChange={e => { if (e.target.value) { handleAddDep(Number(e.target.value)); e.target.value = ''; } }}
-              style={{ width: '100%', background: '#fff', border: '1px solid var(--divider)', borderRadius: 'var(--radius)', padding: '6px 10px', color: 'var(--light)', fontSize: 12, fontFamily: 'inherit', outline: 'none' }}>
-              <option value="">+ Add a predecessor task…</option>
-              {otherTasks.filter(t => !currentDeps.has(t.taskId)).map(t => (
-                <option key={t.taskId} value={t.taskId}>{t.name} ({t.status})</option>
-              ))}
-            </select>
-          ) : (
-            <div style={{ fontSize: 12, color: 'var(--muted)' }}>All tasks already added as prerequisites.</div>
+          {/* Add via dropdown — Manager only */}
+          {canManager && (
+            otherTasks.filter(t => !currentDeps.has(t.taskId)).length > 0 ? (
+              <select defaultValue="" onChange={e => { if (e.target.value) { handleAddDep(Number(e.target.value)); e.target.value = ''; } }}
+                style={{ width: '100%', background: '#fff', border: '1px solid var(--divider)', borderRadius: 'var(--radius)', padding: '6px 10px', color: 'var(--light)', fontSize: 12, fontFamily: 'inherit', outline: 'none' }}>
+                <option value="">+ Add a predecessor task…</option>
+                {otherTasks.filter(t => !currentDeps.has(t.taskId)).map(t => (
+                  <option key={t.taskId} value={t.taskId}>{t.name} ({t.status})</option>
+                ))}
+              </select>
+            ) : (
+              <div style={{ fontSize: 12, color: 'var(--muted)' }}>All tasks already added as prerequisites.</div>
+            )
           )}
 
           {depError && <div style={{ color: '#aa1010', fontSize: 11, marginTop: 6 }}>{depError}</div>}

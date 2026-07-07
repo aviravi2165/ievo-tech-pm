@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import StatusBadge from './StatusBadge';
+import StatusBadge, { InactiveBadge } from './StatusBadge';
 import ProgressBar from './ProgressBar';
 import OverdueBadge from './OverdueBadge';
 import DelayBadge from './DelayBadge';
@@ -28,13 +28,9 @@ function DueBadge({ start, end, status }) {
   const dt  = parseLocalDate(end);
   const now = new Date(); now.setHours(0, 0, 0, 0);
   const diff = Math.round((dt - now) / 86400000);
-  if (diff < 0)  return <span className="pm-late-tag" style={{ whiteSpace:'nowrap' }}>⚠ {Math.abs(diff)}d late</span>;
-  if (diff <= 3) return <span className="pm-due-soon" style={{ whiteSpace:'nowrap' }}>Ends {diff === 0 ? 'today' : `in ${diff}d`}</span>;
-  return (
-    <span style={{ fontSize: 10, color: 'var(--muted)', whiteSpace: 'nowrap' }}>
-      {fmtDate(start)} → {fmtDate(end)}
-    </span>
-  );
+  if (diff < 0)  return <span className="pm-late-tag" style={{ whiteSpace:'nowrap' }} title={`${Math.abs(diff)}d overdue`}>⚠ {Math.abs(diff)}d</span>;
+  if (diff <= 3) return <span className="pm-due-soon" style={{ whiteSpace:'nowrap' }} title={`Ends ${diff===0?'today':`in ${diff}d`}`}>{diff===0?'today':`·${diff}d`}</span>;
+  return null;
 }
 
 export default function ActivityRow({
@@ -182,7 +178,21 @@ export default function ActivityRow({
     try { await activityApi.removeDep(activity.activityId, depId); onRefetchPhase?.(); } catch {}
   };
 
-  const isBlocked = activity.status === 'Blocked';
+  const isBlocked  = activity.status === 'Blocked';
+  const isInactive = activity.isActive === false;
+
+  const handleDelete = async () => {
+    if (!window.confirm(`Delete activity "${activity.name}"?`)) return;
+    try {
+      const { action } = await activityApi.delete(activity.activityId);
+      if (action === 'deactivated') alert('This activity still has tasks — it was deactivated instead of deleted.');
+      onRefetchPhase?.(); onRefetchProject?.();
+    } catch (err) { alert(err?.response?.data?.error || 'Failed to delete activity.'); }
+  };
+
+  const handleReactivate = async () => {
+    try { await activityApi.reactivate(activity.activityId); onRefetchPhase?.(); onRefetchProject?.(); } catch {}
+  };
 
   return (
     <div className="pm-activity">
@@ -196,63 +206,63 @@ export default function ActivityRow({
         </svg>
 
         {/* Name */}
-        <span className="pm-activity-name" style={{ opacity: isBlocked ? 0.5 : 1 }}>
+        <span className="pm-activity-name" style={{ opacity: (isBlocked || isInactive) ? 0.5 : 1 }}>
           {activity.name}
         </span>
 
-        {/* Member count */}
-        {activity.memberCount > 0 && (
-          <span style={{ fontSize: 10, color: 'var(--muted)', background: 'var(--mid)', padding: '1px 7px', borderRadius: 8, border: '1px solid var(--divider)', flexShrink: 0 }}>
-            {activity.memberCount} {activity.memberCount === 1 ? 'member' : 'members'}
-          </span>
-        )}
-
-        {/* Chat button — compact (icon-only) to save header space */}
-        {showChatButton && (
-          <span onClick={e => e.stopPropagation()}>
-            <ChatButton kind="activity" id={activity.activityId} compact />
-          </span>
-        )}
-
-        {/* Dates — nowrap prevents multi-line stacking */}
-        <DueBadge start={activity.plannedStart} end={activity.plannedEnd} status={activity.status} />
-
-        {/* Dependency badge */}
-        {activity.dependsOn?.length > 0 && (
-          <span className="pm-dep-badge" title={`Depends on ${activity.dependsOn.length} activity`}>
-            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-            {activity.dependsOn.length}
-          </span>
-        )}
-        {activity.isOverdue && <OverdueBadge />}
-        <DelayBadge days={activity.delayDays} label="Late by" />
-
-        {/* Progress bar — tightened width */}
-        <div style={{ minWidth: 90, maxWidth: 140, flex: '1 1 90px' }}>
-          <ProgressBar value={activity.progress || 0} />
+        {/* Meta cluster: dep badge, dates, progress, status — wraps as a group
+            instead of forcing the whole row to overflow when space is tight. */}
+        <div className="pm-row-meta">
+          {isInactive && <InactiveBadge />}
+          {activity.dependsOn?.length > 0 && (
+            <span className="pm-dep-badge"
+              title={`Depends on ${activity.dependsOn.length} activity`}
+              onClick={e => { e.stopPropagation(); togglePanel('deps'); }}>
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+              </svg>
+              {activity.dependsOn.length}
+            </span>
+          )}
+          <DueBadge start={activity.plannedStart} end={activity.plannedEnd} status={activity.status} />
+          {activity.isOverdue && <OverdueBadge />}
+          <DelayBadge days={activity.delayDays} label="Late by" />
+          <div style={{ width:90, flexShrink:0 }}><ProgressBar value={activity.progress || 0} /></div>
+          <StatusBadge status={activity.status} />
         </div>
 
-        {/* Status — always computed from child task progress (Blocked comes from
-            unresolved dependencies); nobody sets this by hand anymore */}
-        <StatusBadge status={activity.status} />
-
-        {/* Manager action buttons */}
+        {/* Hover-reveal actions */}
         {canEdit && (
-          <div style={{ display: 'flex', gap: 3, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-            <button className={`icon-btn ${panel === 'edit' ? 'active' : ''}`} title="Edit activity"
-              onClick={() => togglePanel('edit')} style={{ width: 26, height: 26 }}>
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          <div
+            className={`pm-row-actions${panel ? ' open' : ''}`}
+            onClick={e => e.stopPropagation()}
+            style={{ marginLeft:8 }}>
+            <button className={`icon-btn${panel === 'edit' ? ' active' : ''}`} title="Edit"
+              onClick={() => togglePanel('edit')} style={{ width:24, height:24 }}>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             </button>
-            <button className={`icon-btn ${panel === 'members' ? 'active' : ''}`} title="Activity members"
-              onClick={() => { togglePanel('members'); if (panel !== 'members') fetchMembers(); }} style={{ width: 26, height: 26 }}>
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <button className={`icon-btn${panel === 'members' ? ' active' : ''}`} title="Members"
+              onClick={() => { togglePanel('members'); if (panel !== 'members') fetchMembers(); }} style={{ width:24, height:24 }}>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
             </button>
+            {showChatButton && (
+              <span onClick={e => e.stopPropagation()}>
+                <ChatButton kind="activity" id={activity.activityId} compact />
+              </span>
+            )}
             {otherActivities.length > 0 && (
-              <button className={`pm-btn pm-btn-ghost ${panel === 'deps' ? 'active' : ''}`}
-                title="Add or remove activity dependencies"
-                onClick={() => togglePanel('deps')}
-                style={{ fontSize: 11, padding: '3px 10px', color: panel === 'deps' ? 'var(--gold)' : 'var(--muted)', borderColor: panel === 'deps' ? 'var(--gold)' : undefined }}>
-                ⟶ Dep
+              <button className={`icon-btn${panel === 'deps' ? ' active' : ''}`} title="Prerequisites"
+                onClick={() => togglePanel('deps')} style={{ width:24, height:24 }}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+              </button>
+            )}
+            {isInactive ? (
+              <button className="icon-btn" title="Reactivate" onClick={handleReactivate} style={{ width:24, height:24 }}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+              </button>
+            ) : (
+              <button className="icon-btn danger" title="Delete" onClick={handleDelete} style={{ width:24, height:24 }}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
               </button>
             )}
           </div>
@@ -351,16 +361,18 @@ export default function ActivityRow({
         </div>
       )}
 
-      {/* ── Dependency panel ── */}
-      {panel === 'deps' && canEdit && (
+      {/* ── Dependency panel — viewable by anyone, editable by Manager only ── */}
+      {panel === 'deps' && (
         <div style={{ padding: '10px 14px 12px', borderTop: '1px solid var(--divider)', background: '#fafaf8' }}>
           <div style={{ fontSize: 11, color: 'var(--gold)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 6 }}>Activity Prerequisites</div>
           <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 10 }}>
-            Selecting a predecessor auto-<strong>blocks</strong> this activity until it completes, then auto-unblocks. Cycles are prevented.
+            {canEdit
+              ? <>Selecting a predecessor auto-<strong>blocks</strong> this activity until it completes, then auto-unblocks. Cycles are prevented.</>
+              : 'This activity is blocked until the activities below complete.'}
           </div>
 
           {/* Current dep chips */}
-          {currentDeps.size > 0 && (
+          {currentDeps.size > 0 ? (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
               {[...currentDeps].map(depId => {
                 const act = otherActivities.find(a => a.activityId === depId);
@@ -368,25 +380,31 @@ export default function ActivityRow({
                 return (
                   <span key={depId} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, background: 'var(--mid)', border: '1px solid var(--divider)', borderRadius: 12, padding: '2px 8px 2px 10px' }}>
                     {act.name}
-                    <button type="button" onClick={() => handleRemoveDep(depId)}
-                      style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
+                    {canEdit && (
+                      <button type="button" onClick={() => handleRemoveDep(depId)}
+                        style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
+                    )}
                   </span>
                 );
               })}
             </div>
+          ) : (
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: canEdit ? 8 : 0 }}>No prerequisites set.</div>
           )}
 
-          {/* Add via dropdown */}
-          {otherActivities.filter(a => !currentDeps.has(a.activityId)).length > 0 ? (
-            <select defaultValue="" onChange={e => { if (e.target.value) { handleAddDep(Number(e.target.value)); e.target.value = ''; } }}
-              style={{ width: '100%', background: '#fff', border: '1px solid var(--divider)', borderRadius: 'var(--radius)', padding: '6px 10px', color: 'var(--light)', fontSize: 12, fontFamily: 'inherit', outline: 'none' }}>
-              <option value="">+ Add a predecessor activity…</option>
-              {otherActivities.filter(a => !currentDeps.has(a.activityId)).map(a => (
-                <option key={a.activityId} value={a.activityId}>{a.name} ({a.status})</option>
-              ))}
-            </select>
-          ) : (
-            <div style={{ fontSize: 12, color: 'var(--muted)' }}>All activities already added as prerequisites.</div>
+          {/* Add via dropdown — Manager only */}
+          {canEdit && (
+            otherActivities.filter(a => !currentDeps.has(a.activityId)).length > 0 ? (
+              <select defaultValue="" onChange={e => { if (e.target.value) { handleAddDep(Number(e.target.value)); e.target.value = ''; } }}
+                style={{ width: '100%', background: '#fff', border: '1px solid var(--divider)', borderRadius: 'var(--radius)', padding: '6px 10px', color: 'var(--light)', fontSize: 12, fontFamily: 'inherit', outline: 'none' }}>
+                <option value="">+ Add a predecessor activity…</option>
+                {otherActivities.filter(a => !currentDeps.has(a.activityId)).map(a => (
+                  <option key={a.activityId} value={a.activityId}>{a.name} ({a.status})</option>
+                ))}
+              </select>
+            ) : (
+              <div style={{ fontSize: 12, color: 'var(--muted)' }}>All activities already added as prerequisites.</div>
+            )
           )}
 
           {depError && <div style={{ color: '#aa1010', fontSize: 11, marginTop: 6 }}>{depError}</div>}
@@ -423,7 +441,7 @@ export default function ActivityRow({
             <span style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.06em' }}>
               Tasks ({tasks.length})
             </span>
-            {canEdit && !isBlocked && (
+            {canEdit && !isBlocked && !isInactive && (
               <button className="pm-btn pm-btn-ghost" style={{ padding: '4px 10px', fontSize: 11 }}
                 onClick={() => togglePanel('addtask')}>
                 + Add Task

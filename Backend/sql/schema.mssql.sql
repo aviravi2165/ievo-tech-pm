@@ -1005,3 +1005,23 @@ CREATE INDEX IX_pm_activity_members_user ON dbo.pm_activity_members(user_id);
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_pm_phase_members_user')
 CREATE INDEX IX_pm_phase_members_user ON dbo.pm_phase_members(user_id);
+
+-- ────────────────────────────────────────────────────────────
+-- is_active — soft-deactivation, distinct from is_deleted. A Project/
+-- Phase/Activity/Task with children still under it gets deactivated
+-- (is_active=0) instead of hard-soft-deleted, preserving its workflow
+-- status underneath. Cascades to descendants at READ time (see
+-- phaseService/activityService/taskService), the same technique
+-- already used for cascaded 'Blocked' status.
+-- ────────────────────────────────────────────────────────────
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_projects') AND name = 'is_active')
+    ALTER TABLE dbo.pm_projects ADD is_active BIT NOT NULL DEFAULT 1;
+
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_phases') AND name = 'is_active')
+    ALTER TABLE dbo.pm_phases ADD is_active BIT NOT NULL DEFAULT 1;
+
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_activities') AND name = 'is_active')
+    ALTER TABLE dbo.pm_activities ADD is_active BIT NOT NULL DEFAULT 1;
+
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_tasks') AND name = 'is_active')
+    ALTER TABLE dbo.pm_tasks ADD is_active BIT NOT NULL DEFAULT 1;

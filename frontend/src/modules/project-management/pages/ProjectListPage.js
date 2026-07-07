@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import StatusBadge from '../components/StatusBadge';
+import StatusBadge, { InactiveBadge } from '../components/StatusBadge';
 import ProgressBar from '../components/ProgressBar';
 import OverdueBadge from '../components/OverdueBadge';
 import ProjectFormModal from '../components/ProjectFormModal';
@@ -31,11 +31,17 @@ export default function ProjectListPage({ onSelectProject }) {
     e.stopPropagation();
     if (!window.confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
     try {
-      await projectApi.delete(project.projectId);
+      const { action } = await projectApi.delete(project.projectId);
+      if (action === 'deactivated') alert('This project still has phases — it was deactivated instead of deleted.');
       refetch();
     } catch (err) {
       alert(err?.response?.data?.error || 'Failed to delete project');
     }
+  };
+
+  const handleReactivate = async (e, project) => {
+    e.stopPropagation();
+    try { await projectApi.reactivate(project.projectId); refetch(); } catch {}
   };
 
   return (
@@ -91,6 +97,7 @@ export default function ProjectListPage({ onSelectProject }) {
               </div>
               <div className="pm-card-footer">
                 <StatusBadge status={p.status} />
+                {p.isActive === false && <InactiveBadge />}
                 <span style={{ fontSize: 11, color: 'var(--muted)' }}>{p.phaseCount} phase{p.phaseCount !== 1 ? 's' : ''}</span>
                 <span style={{ fontSize: 11, color: 'var(--muted)' }}>{p.memberCount} member{p.memberCount !== 1 ? 's' : ''}</span>
                 <span style={{
@@ -101,19 +108,32 @@ export default function ProjectListPage({ onSelectProject }) {
                 {p.isOverdue && <OverdueBadge />}
               </div>
 
-              {/* Delete button — only visible on hover, only for Managers */}
+              {/* Delete/Reactivate button — only visible on hover, only for Managers */}
               {p.myRole === 'Manager' && (
-                <button
-                  className="pm-card-delete icon-btn danger"
-                  title="Delete project"
-                  onClick={(e) => handleDelete(e, p)}
-                  style={{ width: 26, height: 26 }}
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/>
-                    <path d="M9 6V4h6v2"/>
-                  </svg>
-                </button>
+                p.isActive === false ? (
+                  <button
+                    className="pm-card-delete icon-btn"
+                    title="Reactivate project"
+                    onClick={(e) => handleReactivate(e, p)}
+                    style={{ width: 26, height: 26 }}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+                    </svg>
+                  </button>
+                ) : (
+                  <button
+                    className="pm-card-delete icon-btn danger"
+                    title="Delete project"
+                    onClick={(e) => handleDelete(e, p)}
+                    style={{ width: 26, height: 26 }}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/>
+                      <path d="M9 6V4h6v2"/>
+                    </svg>
+                  </button>
+                )
               )}
             </div>
           ))}

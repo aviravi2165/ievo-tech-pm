@@ -20,13 +20,16 @@ async function getPhasesForProject(projectId) {
              ph.name, ph.description, ph.display_order AS displayOrder,
              ph.planned_start AS plannedStart, ph.planned_end AS plannedEnd,
              ph.status, ph.status_override AS statusOverride, ph.created_at AS createdAt,
+             ph.is_active AS ownIsActive, parentProj.is_active AS parentProjectActive,
              CASE WHEN ph.planned_end < CAST(GETDATE() AS DATE) AND ph.status <> 'Completed'
                   THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS isOverdue,
              (
                SELECT STRING_AGG(CAST(depends_on_phase_id AS VARCHAR(20)), ',')
                FROM pm_phase_deps WHERE phase_id = ph.phase_id
              ) AS dependsOn
-      FROM pm_phases ph WHERE ph.project_id=@projectId AND ph.is_deleted=0
+      FROM pm_phases ph
+      INNER JOIN pm_projects parentProj ON parentProj.project_id = ph.project_id
+      WHERE ph.project_id=@projectId AND ph.is_deleted=0
       ORDER BY ph.display_order
     `);
   const rows = result.recordset.map(r => ({ ...r, dependsOn: parseIdList(r.dependsOn) }));
@@ -43,6 +46,9 @@ async function getPhasesForProject(projectId) {
     }
     ph.status = deriveStatus(ph.progress, ph.status);
     ph.delayDays = ph.status === 'Completed' ? 0 : await getPhaseDelayDays(ph.phaseId, ph.plannedEnd);
+    // Cascade: a Phase under an inactive Project reads as inactive too.
+    ph.isActive = ph.ownIsActive !== false && ph.parentProjectActive !== false;
+    delete ph.ownIsActive; delete ph.parentProjectActive;
   }
   return rows;
 }
@@ -107,15 +113,51 @@ async function updatePhase(phaseId, projectId, userId, body) {
   return { phaseId, ...fields };
 }
 
+// Delete only when empty (no activities) — otherwise deactivate, preserving
+// data underneath instead of orphaning it from view.
 async function deletePhase(phaseId, projectId, userId) {
   const pool = await getPool();
+  const childResult = await pool.request()
+    .input('phaseId', sql.Int, phaseId)
+    .query(`SELECT COUNT(*) AS cnt FROM pm_activities WHERE phase_id=@phaseId AND is_deleted=0`);
+
+  if (childResult.recordset[0].cnt > 0) {
+    await pool.request()
+      .input('phaseId', sql.Int, phaseId)
+      .query(`UPDATE pm_phases SET is_active=0 WHERE phase_id=@phaseId`);
+    await audit.log({ entityType:'phase', entityId:phaseId, projectId, userId, action:'deactivated' });
+    return { action: 'deactivated' };
+  }
+
   await pool.request()
     .input('phaseId', sql.Int, phaseId)
     .query(`UPDATE pm_phases SET is_deleted=1 WHERE phase_id=@phaseId`);
   await audit.log({ entityType:'phase', entityId:phaseId, projectId, userId, action:'deleted' });
+  return { action: 'deleted' };
+}
+
+async function reactivatePhase(phaseId, projectId, userId) {
+  const pool = await getPool();
+  await pool.request()
+    .input('phaseId', sql.Int, phaseId)
+    .query(`UPDATE pm_phases SET is_active=1 WHERE phase_id=@phaseId`);
+  await audit.log({ entityType:'phase', entityId:phaseId, projectId, userId, action:'reactivated' });
 }
 
 async function addPhaseDep(phaseId, dependsOnId, projectId, userId) {
+  // Dependencies are same-level only: a phase may only depend on another
+  // phase within its own Project (mirrors what the UI's dropdown already
+  // offers, enforced here so the API can't be used to link across Projects).
+  const pool = await getPool();
+  const scopeResult = await pool.request()
+    .input('dependsOnId', sql.Int, dependsOnId)
+    .query(`SELECT project_id AS depProjectId FROM pm_phases WHERE phase_id=@dependsOnId`);
+  const depProjectId = scopeResult.recordset[0]?.depProjectId;
+  if (!depProjectId) { const e = new Error('Dependency phase not found'); e.statusCode = 404; throw e; }
+  if (String(depProjectId) !== String(projectId)) {
+    const e = new Error('Phases can only depend on other phases within the same project'); e.statusCode = 400; throw e;
+  }
+
   await withTransaction(async (req) => {
     await req()
       .input('phaseId',     sql.Int, phaseId)
@@ -183,4 +225,4 @@ async function reorderPhase(projectId, phaseId, direction) {
   });
 }
 
-module.exports = { getPhasesForProject, createPhase, updatePhase, deletePhase, addPhaseDep, removePhaseDep, reorderPhase };
+module.exports = { getPhasesForProject, createPhase, updatePhase, deletePhase, reactivatePhase, addPhaseDep, removePhaseDep, reorderPhase };

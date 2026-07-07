@@ -2,7 +2,7 @@
 
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
-const { resolveUnblocked, blockIfNeeded, isBlocked } = require('./dependencyService');
+const { resolveUnblocked, blockIfNeeded, isBlocked, isInactive } = require('./dependencyService');
 const { getActivityProgress, getPhaseProgress } = require('./progressService');
 const { broadcastStatusChanged, broadcastUnblocked, broadcastAssignmentRequest, broadcastProgressUpdated } = require('../socket/socketHandler');
 const pmChatService = require('./pmChatService');
@@ -37,6 +37,8 @@ async function getTasksForActivity(activityId) {
              t.due_date      AS dueDate,
              t.estimated_hours AS estimatedHours,
              t.created_at   AS createdAt,
+             pa.status AS parentActivityStatus, pph.status AS parentPhaseStatus,
+             t.is_active AS ownIsActive, pa.is_active AS parentActivityActive, pph.is_active AS parentPhaseActive,
              CASE WHEN t.due_date < CAST(GETDATE() AS DATE) AND t.status <> 'Complete'
                   THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS isOverdue,
              -- Accepted assignees (confirmed participants)
@@ -70,16 +72,34 @@ async function getTasksForActivity(activityId) {
                SELECT CAST(CASE WHEN EXISTS (SELECT 1 FROM pm_task_threads WHERE task_id = t.task_id) THEN 1 ELSE 0 END AS BIT)
              ) AS hasThread
       FROM pm_tasks t
+      INNER JOIN pm_activities pa ON pa.activity_id = t.activity_id
+      INNER JOIN pm_phases     pph ON pph.phase_id  = pa.phase_id
       WHERE t.activity_id = @activityId AND t.is_deleted = 0
       ORDER BY t.created_at
     `);
 
-  return result.recordset.map(r => ({
-    ...r,
-    assignees:   parseJsonArray(r.assignees),
-    allRequests: parseJsonArray(r.allRequests),
-    dependsOn:   parseIdList(r.dependsOn),
-  }));
+  return result.recordset.map(r => {
+    // Cascade blocking: a task under a Blocked Activity or Phase reads as
+    // Blocked too, until that ancestor's own dependency resolves — same rule
+    // as blockIfNeeded/resolveUnblocked apply at their own level, just
+    // reflected downward at read time instead of writing every descendant row.
+    const cascadeBlocked = r.status !== 'Complete'
+      && (r.parentActivityStatus === 'Blocked' || r.parentPhaseStatus === 'Blocked');
+    // Cascade: a task under an inactive Activity or Phase (or itself
+    // deactivated) reads as inactive too, frozen until reactivated.
+    const cascadeInactive = r.ownIsActive === false
+      || r.parentActivityActive === false
+      || r.parentPhaseActive === false;
+    const { parentActivityStatus, parentPhaseStatus, ownIsActive, parentActivityActive, parentPhaseActive, ...rest } = r;
+    return {
+      ...rest,
+      assignees:   parseJsonArray(r.assignees),
+      allRequests: parseJsonArray(r.allRequests),
+      dependsOn:   parseIdList(r.dependsOn),
+      status:      cascadeBlocked ? 'Blocked' : r.status,
+      isActive:    !cascadeInactive,
+    };
+  });
 }
 
 // ── Create task + send assignment requests ────────────────────────────────────
@@ -106,7 +126,7 @@ async function createTask(activityId, projectId, userId, body) {
   const pool = await getPool();
   const parentResult = await pool.request()
     .input('activityId', sql.Int, activityId)
-    .query(`SELECT a.status AS activityStatus, ph.phase_id AS phaseId FROM pm_activities a INNER JOIN pm_phases ph ON ph.phase_id=a.phase_id WHERE a.activity_id=@activityId`);
+    .query(`SELECT a.status AS activityStatus, a.is_active AS activityActive, ph.phase_id AS phaseId FROM pm_activities a INNER JOIN pm_phases ph ON ph.phase_id=a.phase_id WHERE a.activity_id=@activityId`);
   const parent = parentResult.recordset[0];
   if (!parent) { const e = new Error('Activity not found'); e.statusCode = 404; throw e; }
   if (parent.activityStatus === 'Blocked') {
@@ -115,6 +135,14 @@ async function createTask(activityId, projectId, userId, body) {
   }
   if (await isBlocked('phase', parent.phaseId)) {
     const e = new Error('This Phase is blocked by an unresolved dependency — resolve it before adding tasks.');
+    e.statusCode = 409; throw e;
+  }
+  if (parent.activityActive === false) {
+    const e = new Error('This Activity is inactive — reactivate it before adding tasks.');
+    e.statusCode = 409; throw e;
+  }
+  if (await isInactive('phase', parent.phaseId)) {
+    const e = new Error('This Phase is inactive — reactivate it before adding tasks.');
     e.statusCode = 409; throw e;
   }
 
@@ -365,18 +393,19 @@ async function updateTaskStatus(taskId, projectId, userId, newStatus, projectRol
   }
   const { status: oldStatus, activityId, phaseId, activityStatus } = cur.recordset[0];
 
-  // Refuse to complete a task sitting inside something that's currently
-  // Blocked — previously unenforced, so marking a task Complete had no
-  // regard for whether its Activity/Phase was waiting on a dependency.
-  if (newStatus === DONE_STATUS) {
-    if (activityStatus === 'Blocked') {
-      const e = new Error('This task\'s Activity is blocked by an unresolved dependency — it can\'t be marked Complete yet.');
-      e.statusCode = 409; throw e;
-    }
-    if (await isBlocked('phase', phaseId)) {
-      const e = new Error('This task\'s Phase is blocked by an unresolved dependency — it can\'t be marked Complete yet.');
-      e.statusCode = 409; throw e;
-    }
+  // Refuse to change the status of a task sitting inside something that's
+  // currently Blocked (Activity or Phase) — it cascades down until the
+  // ancestor's own dependency resolves. Previously only marking a task
+  // Complete was guarded, so a task could still be moved to Ongoing (or any
+  // other status) underneath a Blocked Activity/Phase with the block having
+  // no real effect on it.
+  if (activityStatus === 'Blocked') {
+    const e = new Error('This task\'s Activity is blocked by an unresolved dependency — resolve it before changing status.');
+    e.statusCode = 409; throw e;
+  }
+  if (await isBlocked('phase', phaseId)) {
+    const e = new Error('This task\'s Phase is blocked by an unresolved dependency — resolve it before changing status.');
+    e.statusCode = 409; throw e;
   }
 
   let unblockedIds = [];
@@ -440,14 +469,39 @@ async function updateTaskStatus(taskId, projectId, userId, newStatus, projectRol
   return { taskId, status:newStatus, unblockedTaskIds:unblockedIds };
 }
 
+// Tasks have no child table, so "children" here means confirmed assignees
+// (pm_task_assignees) — committed work that would otherwise silently vanish
+// from an assignee's active-tasks view. Pending/declined-only requests don't
+// count (no committed work yet), so an unassigned task still hard-deletes.
 async function deleteTask(taskId, projectId, userId) {
   const pool = await getPool();
+  const childResult = await pool.request()
+    .input('taskId', sql.Int, taskId)
+    .query(`SELECT COUNT(*) AS cnt FROM pm_task_assignees WHERE task_id=@taskId`);
+
+  if (childResult.recordset[0].cnt > 0) {
+    await pool.request()
+      .input('taskId', sql.Int, taskId)
+      .query(`UPDATE pm_tasks SET is_active=0 WHERE task_id=@taskId`);
+    await audit.log({ entityType:'task', entityId:taskId, projectId, userId, action:'deactivated' });
+    return { action: 'deactivated' };
+  }
+
   await pool.request()
     .input('taskId', sql.Int, taskId)
     .query(`UPDATE pm_tasks SET is_deleted=1 WHERE task_id=@taskId`);
   await audit.log({ entityType:'task', entityId:taskId, projectId, userId, action:'deleted' });
   // The task's chat thread (if any) is left intact for history — it simply
   // stops appearing as "linked to an open task" in the UI. Nothing to sync.
+  return { action: 'deleted' };
+}
+
+async function reactivateTask(taskId, projectId, userId) {
+  const pool = await getPool();
+  await pool.request()
+    .input('taskId', sql.Int, taskId)
+    .query(`UPDATE pm_tasks SET is_active=1 WHERE task_id=@taskId`);
+  await audit.log({ entityType:'task', entityId:taskId, projectId, userId, action:'reactivated' });
 }
 
 // ── Send a new assignment request (post-creation) ─────────────────────────────
@@ -502,6 +556,24 @@ async function removeAssignmentRequest(taskId, targetUserId, projectId, actorUse
 // ── Dependency management ─────────────────────────────────────────────────────
 
 async function addTaskDep(taskId, dependsOnId, projectId, userId) {
+  // Dependencies are same-level only: a task may only depend on another
+  // task within its own Activity (mirrors what the UI's dropdown already
+  // offers, enforced here so the API can't be used to link across Activities).
+  const pool = await getPool();
+  const scopeResult = await pool.request()
+    .input('taskId',      sql.Int, taskId)
+    .input('dependsOnId', sql.Int, dependsOnId)
+    .query(`
+      SELECT
+        (SELECT activity_id FROM pm_tasks WHERE task_id=@taskId)      AS activityId,
+        (SELECT activity_id FROM pm_tasks WHERE task_id=@dependsOnId) AS depActivityId
+    `);
+  const { activityId, depActivityId } = scopeResult.recordset[0] || {};
+  if (!depActivityId) { const e = new Error('Dependency task not found'); e.statusCode = 404; throw e; }
+  if (activityId !== depActivityId) {
+    const e = new Error('Tasks can only depend on other tasks within the same activity'); e.statusCode = 400; throw e;
+  }
+
   await withTransaction(async (req) => {
     await req()
       .input('taskId',      sql.Int, taskId)
@@ -589,6 +661,7 @@ module.exports = {
   updateTask,
   updateTaskStatus,
   deleteTask,
+  reactivateTask,
   sendAssignmentRequest,
   removeAssignmentRequest,
   getMyAssignmentRequests,

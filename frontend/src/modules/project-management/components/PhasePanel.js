@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import StatusBadge from './StatusBadge';
+import StatusBadge, { InactiveBadge } from './StatusBadge';
 import ProgressBar from './ProgressBar';
 import OverdueBadge from './OverdueBadge';
 import DelayBadge from './DelayBadge';
@@ -19,13 +19,17 @@ function fmtRange(start, end) {
   return `${s ? fmt(s) : '?'} → ${e ? fmt(e) : '?'}`;
 }
 
-function DueBadge({ start, end, status }) {
+function DueBadge({ start, end, status, compact }) {
   if (!end || status === 'Completed') return null;
   const dt  = parseLocalDate(end);
   const now = new Date(); now.setHours(0,0,0,0);
   const diff = Math.round((dt - now) / 86400000);
-  if (diff < 0)  return <span className="pm-late-tag">⚠ {Math.abs(diff)}d late</span>;
-  if (diff <= 5) return <span className="pm-due-soon">Ends {diff === 0 ? 'today' : `in ${diff}d`}</span>;
+  if (diff < 0)  return compact
+    ? <span className="pm-late-tag" title={`${Math.abs(diff)}d late`}>⚠ {Math.abs(diff)}d</span>
+    : <span className="pm-late-tag">⚠ {Math.abs(diff)}d late</span>;
+  if (diff <= 5) return compact
+    ? <span className="pm-due-soon" title={`Ends ${diff === 0 ? 'today' : `in ${diff}d`}`}>{diff === 0 ? '·today' : `·${diff}d`}</span>
+    : <span className="pm-due-soon">Ends {diff === 0 ? 'today' : `in ${diff}d`}</span>;
   return null;
 }
 
@@ -116,67 +120,105 @@ export default function PhasePanel({ phase, myRole, projectId, allPhases = [], p
   };
 
   const dateRange = fmtRange(phase.plannedStart, phase.plannedEnd);
+  const isInactive = phase.isActive === false;
+
+  const handleDelete = async () => {
+    if (!window.confirm(`Delete phase "${phase.name}"?`)) return;
+    try {
+      const { action } = await phaseApi.delete(phase.phaseId);
+      if (action === 'deactivated') alert('This phase still has activities — it was deactivated instead of deleted.');
+      onRefetchProject?.();
+    } catch (err) { alert(err?.response?.data?.error || 'Failed to delete phase.'); }
+  };
+
+  const handleReactivate = async () => {
+    try { await phaseApi.reactivate(phase.phaseId); onRefetchProject?.(); } catch {}
+  };
 
   return (
     <div className="pm-phase">
       {/* ── Header ── */}
       <div className="pm-phase-header" onClick={() => setOpen(v => !v)}>
-        {/* Chevron */}
+
+        {/* Col 1: expand chevron */}
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
           style={{ transform:open?'rotate(90deg)':'none', transition:'transform 0.15s', flexShrink:0, color:'var(--muted)' }}>
           <polyline points="9 18 15 12 9 6"/>
         </svg>
 
-        {/* Name — truncates when space is tight */}
-        <span className="pm-phase-name" title={phase.name}>{phase.name}</span>
+        {/* Col 2: name — grows, truncates */}
+        <span className="pm-phase-name" style={{ flex:'1 1 120px', minWidth:80 }} title={phase.name}>{phase.name}</span>
 
-        {/* Date range — shrinks and hides if needed */}
-        {dateRange && (
-          <span style={{ fontSize:10, color:'var(--muted)', flexShrink:0, whiteSpace:'nowrap' }}>{dateRange}</span>
+        {/* Col 3: reorder — only when canEdit */}
+        {canEdit && onReorder && (
+          <div style={{ display:'flex', gap:2, flexShrink:0 }} onClick={e => e.stopPropagation()}>
+            <button className="icon-btn" title="Move up"   onClick={() => onReorder(phase.phaseId,'up')}   style={{width:22,height:22}}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="18 15 12 9 6 15"/></svg></button>
+            <button className="icon-btn" title="Move down" onClick={() => onReorder(phase.phaseId,'down')} style={{width:22,height:22}}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="6 9 12 15 18 9"/></svg></button>
+          </div>
         )}
 
-        {/* All controls pinned to the right */}
-        <div className="pm-phase-controls" onClick={e => e.stopPropagation()}>
-          <DueBadge start={phase.plannedStart} end={phase.plannedEnd} status={phase.status} />
-          {phase.isOverdue && <OverdueBadge />}
-          <DelayBadge days={phase.delayDays} label="Late by" />
-
-          {canEdit && onReorder && (
-            <div style={{ display:'flex', gap:2 }}>
-              <button className="icon-btn" title="Move up"   onClick={() => onReorder(phase.phaseId,'up')}   style={{width:22,height:22}}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="18 15 12 9 6 15"/></svg></button>
-              <button className="icon-btn" title="Move down" onClick={() => onReorder(phase.phaseId,'down')} style={{width:22,height:22}}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="6 9 12 15 18 9"/></svg></button>
-            </div>
+        {/* Col 4: meta cluster — date, progress, status, badges. Wraps as a group
+            instead of forcing the whole row to overflow when space is tight. */}
+        <div className="pm-row-meta">
+          {isInactive && <InactiveBadge />}
+          {dateRange && (
+            <span style={{ fontSize:10, color:'var(--muted)', whiteSpace:'nowrap' }}>{dateRange}</span>
           )}
-
-          {/* Progress bar — flexible so controls can shrink when space is tight */}
-          <div style={{ width:90, flexShrink:1, minWidth:60 }}>
+          <div style={{ width:90, flexShrink:0 }}>
             <ProgressBar value={phase.progress || 0} />
           </div>
-
           <StatusBadge status={phase.status} />
-
-          {/* Dep badge — clickable shortcut to open dep panel */}
           {phase.dependsOn?.length > 0 && (
             <span className="pm-dep-badge" title={`Depends on ${phase.dependsOn.length} phase(s)`}
-              onClick={() => togglePanel('deps')} style={{ cursor:'pointer' }}>
+              onClick={e => { e.stopPropagation(); togglePanel('deps'); }} style={{ cursor:'pointer' }}>
               <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-              {phase.dependsOn.length} dep
+              {phase.dependsOn.length}
             </span>
           )}
+          {(phase.isOverdue || phase.delayDays > 0) && (
+            <span style={{ fontSize:10, color:'#c00', fontWeight:700, whiteSpace:'nowrap' }}
+              title={phase.isOverdue ? 'Overdue' : `Delayed ${phase.delayDays}d`}>
+              ⚠
+            </span>
+          )}
+          <DueBadge start={phase.plannedStart} end={phase.plannedEnd} status={phase.status} compact />
+        </div>
 
+        {/* Col 5: hover-reveal action buttons */}
+        <div className={`pm-row-actions${panel ? ' open' : ''}`} onClick={e => e.stopPropagation()}>
           {canEdit && (
-            <div style={{ display:'flex', gap:3 }}>
-              <button className={`icon-btn ${panel==='dates'?'active':''}`} title="Edit phase dates"
-                onClick={() => togglePanel('dates')} style={{width:26,height:26}}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <>
+              <button className={`icon-btn${panel==='dates'?' active':''}`} title="Edit dates"
+                onClick={() => togglePanel('dates')} style={{width:24,height:24}}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
               </button>
-              <button className={`icon-btn ${panel==='deps'?'active':''}`} title="Manage dependencies"
-                onClick={() => togglePanel('deps')} style={{width:26,height:26}}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-              </button>
-            </div>
+              {otherPhases.length > 0 && (
+                <button className={`icon-btn${panel==='deps'?' active':''}`} title="Manage prerequisites"
+                  onClick={() => togglePanel('deps')} style={{width:24,height:24}}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                </button>
+              )}
+              {isInactive ? (
+                <button className="icon-btn" title="Reactivate" onClick={handleReactivate} style={{width:24,height:24}}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                </button>
+              ) : (
+                <button className="icon-btn danger" title="Delete" onClick={handleDelete} style={{width:24,height:24}}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                </button>
+              )}
+            </>
           )}
         </div>
+
+        {/* Col 6: navigate arrow */}
+        {!open && (
+          <button className="icon-btn" title="Open project detail"
+            onClick={e => { e.stopPropagation(); }}
+            style={{ width:24, height:24, flexShrink:0 }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        )}
       </div>
 
       {/* ── Date edit panel ── */}
@@ -204,16 +246,18 @@ export default function PhasePanel({ phase, myRole, projectId, allPhases = [], p
         </div>
       )}
 
-      {/* ── Dependency panel ── */}
-      {panel === 'deps' && canEdit && (
+      {/* ── Dependency panel — viewable by anyone, editable by Manager only ── */}
+      {panel === 'deps' && (
         <div style={{ padding:'12px 18px 14px', borderTop:'1px solid var(--divider)', background:'#fafaf8' }}>
           <div style={{ fontSize:11, color:'var(--gold)', fontWeight:700, textTransform:'uppercase', letterSpacing:'.07em', marginBottom:6 }}>Phase Prerequisites</div>
           <div style={{ fontSize:11, color:'var(--muted)', marginBottom:10 }}>
-            Selecting a predecessor auto-<strong>blocks</strong> this phase until it completes, then auto-unblocks.
+            {canEdit
+              ? <>Selecting a predecessor auto-<strong>blocks</strong> this phase until it completes, then auto-unblocks.</>
+              : 'This phase is blocked until the phases below complete.'}
           </div>
 
           {/* Existing dep chips */}
-          {currentDeps.size > 0 && (
+          {currentDeps.size > 0 ? (
             <div style={{ display:'flex', flexWrap:'wrap', gap:5, marginBottom:8 }}>
               {[...currentDeps].map(depId => {
                 const ph = otherPhases.find(p => p.phaseId === depId);
@@ -221,25 +265,31 @@ export default function PhasePanel({ phase, myRole, projectId, allPhases = [], p
                 return (
                   <span key={depId} style={{ display:'inline-flex', alignItems:'center', gap:4, fontSize:11, background:'var(--mid)', border:'1px solid var(--divider)', borderRadius:12, padding:'2px 8px 2px 10px' }}>
                     {ph.name}
-                    <button type="button" onClick={() => handleRemoveDep(depId)}
-                      style={{ background:'none', border:'none', color:'var(--muted)', cursor:'pointer', fontSize:14, lineHeight:1, padding:0 }}>×</button>
+                    {canEdit && (
+                      <button type="button" onClick={() => handleRemoveDep(depId)}
+                        style={{ background:'none', border:'none', color:'var(--muted)', cursor:'pointer', fontSize:14, lineHeight:1, padding:0 }}>×</button>
+                    )}
                   </span>
                 );
               })}
             </div>
+          ) : (
+            <div style={{ fontSize:12, color:'var(--muted)', marginBottom: canEdit ? 8 : 0 }}>No prerequisites set.</div>
           )}
 
-          {/* Add via dropdown */}
-          {otherPhases.filter(p => !currentDeps.has(p.phaseId)).length > 0 ? (
-            <select defaultValue="" onChange={e => { if (e.target.value) { handleAddDep(Number(e.target.value)); e.target.value = ""; } }}
-              style={{ width:'100%', background:'#fff', border:'1px solid var(--divider)', borderRadius:'var(--radius)', padding:'6px 10px', color:'var(--light)', fontSize:12, fontFamily:'inherit', outline:'none' }}>
-              <option value="">+ Add a predecessor phase…</option>
-              {otherPhases.filter(p => !currentDeps.has(p.phaseId)).map(p => (
-                <option key={p.phaseId} value={p.phaseId}>{p.name} ({p.status})</option>
-              ))}
-            </select>
-          ) : (
-            <div style={{ fontSize:12, color:'var(--muted)' }}>All phases already added as prerequisites.</div>
+          {/* Add via dropdown — Manager only */}
+          {canEdit && (
+            otherPhases.filter(p => !currentDeps.has(p.phaseId)).length > 0 ? (
+              <select defaultValue="" onChange={e => { if (e.target.value) { handleAddDep(Number(e.target.value)); e.target.value = ""; } }}
+                style={{ width:'100%', background:'#fff', border:'1px solid var(--divider)', borderRadius:'var(--radius)', padding:'6px 10px', color:'var(--light)', fontSize:12, fontFamily:'inherit', outline:'none' }}>
+                <option value="">+ Add a predecessor phase…</option>
+                {otherPhases.filter(p => !currentDeps.has(p.phaseId)).map(p => (
+                  <option key={p.phaseId} value={p.phaseId}>{p.name} ({p.status})</option>
+                ))}
+              </select>
+            ) : (
+              <div style={{ fontSize:12, color:'var(--muted)' }}>All phases already added as prerequisites.</div>
+            )
           )}
 
           {depError && <div style={{ color:'#aa1010', fontSize:11, marginTop:6 }}>{depError}</div>}
@@ -257,7 +307,7 @@ export default function PhasePanel({ phase, myRole, projectId, allPhases = [], p
             <span style={{ fontSize:11, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.06em' }}>
               Activities ({activities.length})
             </span>
-            {canEdit && (
+            {canEdit && !isInactive && (
               <button className="pm-btn pm-btn-ghost" style={{ padding:'4px 12px', fontSize:11 }}
                 onClick={() => togglePanel('addact')}>
                 + Add Activity

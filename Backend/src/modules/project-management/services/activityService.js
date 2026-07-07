@@ -2,7 +2,7 @@
 
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
-const { blockIfNeeded, isBlocked } = require('./dependencyService');
+const { blockIfNeeded, isBlocked, isInactive } = require('./dependencyService');
 const { getActivityProgress, deriveStatus } = require('./progressService');
 const { getActivityDelayDays } = require('./delayService');
 const pmChatService = require('./pmChatService');
@@ -27,6 +27,8 @@ async function getActivitiesForPhase(phaseId) {
              a.planned_end   AS plannedEnd,
              a.status, a.status_override AS statusOverride,
              a.created_at    AS createdAt,
+             parentPh.status AS parentPhaseStatus,
+             a.is_active AS ownIsActive, parentPh.is_active AS parentPhaseActive,
              CASE WHEN a.planned_end < CAST(GETDATE() AS DATE) AND a.status <> 'Completed'
                   THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS isOverdue,
              COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''), u.email) AS ownerName,
@@ -47,6 +49,7 @@ async function getActivitiesForPhase(phaseId) {
              ) AS managerNames
       FROM pm_activities a
       LEFT JOIN auth_users u ON u.user_id = a.owner_id
+      INNER JOIN pm_phases parentPh ON parentPh.phase_id = a.phase_id
       WHERE a.phase_id = @phaseId AND a.is_deleted = 0
       ORDER BY a.display_order
     `);
@@ -61,6 +64,14 @@ async function getActivitiesForPhase(phaseId) {
       act.status = 'To Do';
     }
     act.status = deriveStatus(act.progress, act.status);
+    // Cascade blocking: an Activity under a Blocked Phase reads as Blocked
+    // too, until the Phase's own dependency resolves — reflected at read
+    // time rather than writing every descendant row.
+    if (act.status !== 'Completed' && act.parentPhaseStatus === 'Blocked') act.status = 'Blocked';
+    delete act.parentPhaseStatus;
+    // Cascade: an Activity under an inactive Phase reads as inactive too.
+    act.isActive = act.ownIsActive !== false && act.parentPhaseActive !== false;
+    delete act.ownIsActive; delete act.parentPhaseActive;
     act.delayDays = act.status === 'Completed' ? 0 : await getActivityDelayDays(act.activityId, act.plannedEnd);
   }
   return rows;
@@ -154,6 +165,10 @@ async function createActivity(phaseId, projectId, userId, body) {
 
   if (await isBlocked('phase', phaseId)) {
     const e = new Error('This Phase is blocked by an unresolved dependency — resolve it before adding activities.');
+    e.statusCode = 409; throw e;
+  }
+  if (await isInactive('phase', phaseId)) {
+    const e = new Error('This Phase is inactive — reactivate it before adding activities.');
     e.statusCode = 409; throw e;
   }
 
@@ -262,8 +277,22 @@ async function updateActivity(activityId, projectId, userId, body) {
   return { activityId, ...fields };
 }
 
+// Delete only when empty (no tasks) — otherwise deactivate, preserving data
+// underneath instead of orphaning it from view.
 async function deleteActivity(activityId, projectId, userId) {
   const pool = await getPool();
+  const childResult = await pool.request()
+    .input('activityId', sql.Int, activityId)
+    .query(`SELECT COUNT(*) AS cnt FROM pm_tasks WHERE activity_id=@activityId AND is_deleted=0`);
+
+  if (childResult.recordset[0].cnt > 0) {
+    await pool.request()
+      .input('activityId', sql.Int, activityId)
+      .query(`UPDATE pm_activities SET is_active=0 WHERE activity_id=@activityId`);
+    await audit.log({ entityType:'activity', entityId:activityId, projectId, userId, action:'deactivated' });
+    return { action: 'deactivated' };
+  }
+
   await pool.request()
     .input('activityId', sql.Int, activityId)
     .query(`UPDATE pm_activities SET is_deleted=1 WHERE activity_id=@activityId`);
@@ -271,11 +300,38 @@ async function deleteActivity(activityId, projectId, userId) {
   // Thread history is preserved (comm_conversations rows are never deleted here) —
   // only the pm_* rows are marked deleted, matching how everything else in this
   // module soft-deletes rather than destroying data.
+  return { action: 'deleted' };
+}
+
+async function reactivateActivity(activityId, projectId, userId) {
+  const pool = await getPool();
+  await pool.request()
+    .input('activityId', sql.Int, activityId)
+    .query(`UPDATE pm_activities SET is_active=1 WHERE activity_id=@activityId`);
+  await audit.log({ entityType:'activity', entityId:activityId, projectId, userId, action:'reactivated' });
 }
 
 // ── Activity dependencies ─────────────────────────────────────────────────────
 
 async function addActivityDep(activityId, dependsOnId, projectId, userId) {
+  // Dependencies are same-level only: an activity may only depend on another
+  // activity within its own Phase (mirrors what the UI's dropdown already
+  // offers, enforced here so the API can't be used to link across Phases).
+  const pool = await getPool();
+  const scopeResult = await pool.request()
+    .input('activityId',  sql.Int, activityId)
+    .input('dependsOnId', sql.Int, dependsOnId)
+    .query(`
+      SELECT
+        (SELECT phase_id FROM pm_activities WHERE activity_id=@activityId)  AS phaseId,
+        (SELECT phase_id FROM pm_activities WHERE activity_id=@dependsOnId) AS depPhaseId
+    `);
+  const { phaseId, depPhaseId } = scopeResult.recordset[0] || {};
+  if (!depPhaseId) { const e = new Error('Dependency activity not found'); e.statusCode = 404; throw e; }
+  if (phaseId !== depPhaseId) {
+    const e = new Error('Activities can only depend on other activities within the same phase'); e.statusCode = 400; throw e;
+  }
+
   await withTransaction(async (req) => {
     await req()
       .input('activityId',  sql.Int, activityId)
@@ -344,6 +400,7 @@ module.exports = {
   createActivity,
   updateActivity,
   deleteActivity,
+  reactivateActivity,
   addActivityDep,
   removeActivityDep,
 };

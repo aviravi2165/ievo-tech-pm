@@ -29,8 +29,12 @@ async function resolveActivityProject(req, res, next) {
 router.use(authenticate);
 
 // ── Activity CRUD ─────────────────────────────────────────────────────────────
+// Delete/reactivate: Activity-level Managers can manage their own Activity
+// (requireEntityRole also grants this to project-level Managers via its
+// built-in bypass, so this widens, not narrows, who can act here).
 router.patch('/:id',        resolveActivityProject, requireRole('Member'),  ctrl.update);
-router.delete('/:id',       resolveActivityProject, requireRole('Manager'), ctrl.remove);
+router.delete('/:id',       resolveActivityProject, requireEntityRole('activity', 'Manager'), ctrl.remove);
+router.patch('/:id/reactivate', resolveActivityProject, requireEntityRole('activity', 'Manager'), ctrl.reactivate);
 
 // ── Activity members ──────────────────────────────────────────────────────────
 // Read: anyone with at least Viewer-level effective access to the activity.
@@ -48,8 +52,8 @@ router.delete('/:id/members/:uid',    resolveActivityProject, requireEntityRole(
 router.get('/:id/chat', resolveActivityProject, requireEntityRole('activity', 'Viewer'), ctrl.getChat);
 
 // ── Activity dependencies ─────────────────────────────────────────────────────
-router.post('/:id/dependencies',          resolveActivityProject, requireRole('Manager'), checkCircular('activity'), ctrl.addDep);
-router.delete('/:id/dependencies/:depId', resolveActivityProject, requireRole('Manager'), ctrl.removeDep);
+router.post('/:id/dependencies',          resolveActivityProject, requireEntityRole('activity', 'Manager'), checkCircular('activity'), ctrl.addDep);
+router.delete('/:id/dependencies/:depId', resolveActivityProject, requireEntityRole('activity', 'Manager'), ctrl.removeDep);
 
 // ── Tasks nested under activity ───────────────────────────────────────────────
 // GET  /api/pm/activities/:activityId/tasks  — list tasks

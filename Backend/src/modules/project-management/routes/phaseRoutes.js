@@ -2,7 +2,6 @@
 
 const router = require('express').Router();
 const { authenticate } = require('../../../middleware/auth');
-const { requireRole }  = require('../middleware/projectRole');
 const { requireEntityRole } = require('../middleware/entityRole');
 const { checkCircular }= require('../middleware/circularDepCheck');
 const { getPool, sql } = require('../../../config/db');
@@ -14,7 +13,7 @@ async function resolvePhaseProject(req, res, next) {
   try {
     const pool = await getPool();
     const result = await pool.request()
-      .input('phaseId', sql.Int, req.params.id)
+      .input('phaseId', sql.Int, req.params.id || req.params.phaseId)
       .query(`SELECT project_id FROM pm_phases WHERE phase_id=@phaseId`);
     if (!result.recordset[0]) return res.status(404).json({ error: 'Phase not found' });
     req.pmProjectId = result.recordset[0].project_id;
@@ -24,11 +23,15 @@ async function resolvePhaseProject(req, res, next) {
 
 router.use(authenticate);
 
-router.patch('/:id',        resolvePhaseProject, requireRole('Manager'), ctrl.update);
-router.delete('/:id',       resolvePhaseProject, requireRole('Manager'), ctrl.remove);
-router.patch('/:id/reorder', resolvePhaseProject, requireRole('Manager'), ctrl.reorder);
-router.post('/:id/dependencies',              resolvePhaseProject, requireRole('Manager'), checkCircular('phase'), ctrl.addDep);
-router.delete('/:id/dependencies/:depId',     resolvePhaseProject, requireRole('Manager'), ctrl.removeDep);
+// Phase-level Managers (pm_phase_members role=Manager) can manage their own
+// Phase — requireEntityRole also grants this to project-level Managers via
+// its built-in bypass, so this widens (not narrows) who can act here.
+router.patch('/:id',        resolvePhaseProject, requireEntityRole('phase', 'Manager'), ctrl.update);
+router.delete('/:id',       resolvePhaseProject, requireEntityRole('phase', 'Manager'), ctrl.remove);
+router.patch('/:id/reactivate', resolvePhaseProject, requireEntityRole('phase', 'Manager'), ctrl.reactivate);
+router.patch('/:id/reorder', resolvePhaseProject, requireEntityRole('phase', 'Manager'), ctrl.reorder);
+router.post('/:id/dependencies',              resolvePhaseProject, requireEntityRole('phase', 'Manager'), checkCircular('phase'), ctrl.addDep);
+router.delete('/:id/dependencies/:depId',     resolvePhaseProject, requireEntityRole('phase', 'Manager'), ctrl.removeDep);
 
 // ── Phase members ──────────────────────────────────────────────────────────────
 // Read: anyone with at least Viewer-level effective access to the phase.
@@ -38,18 +41,11 @@ router.post('/:id/members',        resolvePhaseProject, requireEntityRole('phase
 router.patch('/:id/members/:uid',  resolvePhaseProject, requireEntityRole('phase', 'Manager'), ctrl.updateMemberRole);
 router.delete('/:id/members/:uid', resolvePhaseProject, requireEntityRole('phase', 'Manager'), ctrl.removeMember);
 
-// Activities for a phase
-router.get('/:phaseId/activities',  async (req, res, next) => { try { res.json(await require('../services/activityService').getActivitiesForPhase(req.params.phaseId)); } catch (e) { next(e); } });
-router.post('/:phaseId/activities', async (req, res, next) => {
-  try {
-    const pool = await getPool();
-    const result = await pool.request()
-      .input('phaseId', sql.Int, req.params.phaseId)
-      .query(`SELECT project_id FROM pm_phases WHERE phase_id=@phaseId`);
-    if (!result.recordset[0]) return res.status(404).json({ error: 'Phase not found' });
-    req.pmProjectId = result.recordset[0].project_id;
-    next();
-  } catch (e) { next(e); }
-}, requireRole('Manager'), actCtrl.create);
+// Activities for a phase — previously had NO auth/membership check at all.
+router.get('/:phaseId/activities', resolvePhaseProject, requireEntityRole('phase', 'Viewer'),
+  async (req, res, next) => { try { res.json(await require('../services/activityService').getActivitiesForPhase(req.params.phaseId)); } catch (e) { next(e); } });
+// Phase Managers can create Activities in their own phase, matching Activity
+// Managers already being able to create Tasks in their own activity.
+router.post('/:phaseId/activities', resolvePhaseProject, requireEntityRole('phase', 'Manager'), actCtrl.create);
 
 module.exports = router;
