@@ -44,6 +44,46 @@ async function getDepartments() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// getUserCounts — admin dashboard summary tiles. getUsers() is paginated
+// (capped at 100/page) with no COUNT variant, and computing "total active
+// users" or "users by department" by paging through every user client-side
+// would be wasteful — this does the aggregation server-side in one query.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function getUserCounts() {
+  const pool = await getPool();
+  const totals = await pool.request().query(`
+    SELECT
+      COUNT(*)                                              AS total,
+      SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END)         AS active,
+      SUM(CASE WHEN is_active = 0 THEN 1 ELSE 0 END)         AS inactive,
+      SUM(CASE WHEN user_type = 'admin' THEN 1 ELSE 0 END)   AS admins,
+      SUM(CASE WHEN user_type = 'employee' THEN 1 ELSE 0 END) AS employees
+    FROM auth_users
+  `);
+  const byDept = await pool.request().query(`
+    SELECT COALESCE(d.dept_name, 'No department') AS deptName, COUNT(*) AS cnt
+    FROM auth_users u
+    LEFT JOIN dept_master d ON d.dept_id = u.dept_id
+    WHERE u.is_active = 1
+    GROUP BY d.dept_name
+    ORDER BY cnt DESC
+  `);
+  const recent = await pool.request().query(`
+    SELECT TOP (8) user_id AS userId,
+           COALESCE(NULLIF(TRIM(CONCAT(first_name,' ',last_name)),''), email) AS name,
+           user_type AS userType, created_at AS createdAt
+    FROM auth_users
+    ORDER BY created_at DESC
+  `);
+  return {
+    ...totals.recordset[0],
+    byDepartment: byDept.recordset,
+    recentlyCreated: recent.recordset,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // getUsers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -317,4 +357,4 @@ async function updateUser(userId, data) {
   return updated.recordset[0];
 }
 
-module.exports = { getDepartments, getUsers, registerUser, updateUser };
+module.exports = { getDepartments, getUsers, registerUser, updateUser, getUserCounts };

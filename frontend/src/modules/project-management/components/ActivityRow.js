@@ -74,6 +74,7 @@ export default function ActivityRow({
   const [newTaskName,  setNewTaskName]  = useState('');
   const [newTaskPrio,  setNewTaskPrio]  = useState('Medium');
   const [newTaskDue,   setNewTaskDue]   = useState('');
+  const [newTaskStart, setNewTaskStart] = useState('');
   const [newTaskDesc,  setNewTaskDesc]  = useState('');
   const [newTaskDeps,  setNewTaskDeps]  = useState([]);
   const [taskAssignees, setTaskAssignees] = useState([]);
@@ -183,11 +184,12 @@ export default function ActivityRow({
       await activityApi.createTask(activity.activityId, {
         name:        newTaskName.trim(),
         priority:    newTaskPrio,
+        startDate:   newTaskStart || null,
         dueDate:     newTaskDue,
         description: newTaskDesc || null,
         assigneeIds: taskAssignees.map(a => a.userId),
       });
-      setNewTaskName(''); setNewTaskDue(''); setNewTaskDesc('');
+      setNewTaskName(''); setNewTaskDue(''); setNewTaskStart(''); setNewTaskDesc('');
       setTaskAssignees([]); setTaskAssignSearch(null); setNewTaskDeps([]);
       setPanel(null); setAddErrors({});
       fetchTasks(); onRefetchProject?.();
@@ -441,8 +443,10 @@ export default function ActivityRow({
                 <option value="Employee">Employee</option>
                 <option value="Viewer">Viewer</option>
               </select>
-              <BtnGhost style={{ fontSize: 11, padding: '2px 8px', color: theme.colors.danger, borderColor: 'rgba(168,93,77,.35)' }}
-                onClick={() => handleRemoveMember(m.userId)}>Remove</BtnGhost>
+              {String(m.userId) !== String(myUserId) && (
+                <BtnGhost style={{ fontSize: 11, padding: '2px 8px', color: theme.colors.danger, borderColor: 'rgba(168,93,77,.35)' }}
+                  onClick={() => handleRemoveMember(m.userId)}>Remove</BtnGhost>
+              )}
             </div>
           ))}
           {!memberLoading && actMembers.length === 0 && (
@@ -551,6 +555,12 @@ export default function ActivityRow({
               </div>
 
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <label style={{ fontSize: 10, color: theme.colors.ash, fontWeight: 600, textTransform: 'uppercase' }}>Start Date</label>
+                  <input type="date" value={newTaskStart} min={activity.plannedStart ? String(activity.plannedStart).split('T')[0] : undefined}
+                    onChange={e => setNewTaskStart(e.target.value)}
+                    style={{ background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '6px 10px', color: theme.colors.onyx, fontSize: 12, fontFamily: 'inherit', outline: 'none' }} />
+                </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                   <label style={{ fontSize: 10, color: theme.colors.ash, fontWeight: 600, textTransform: 'uppercase' }}>Due Date *</label>
                   <input type="date" value={newTaskDue} onChange={e => { setNewTaskDue(e.target.value); setAddErrors(er => ({ ...er, due: '' })); }}

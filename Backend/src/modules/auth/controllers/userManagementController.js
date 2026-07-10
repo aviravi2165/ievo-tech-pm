@@ -5,6 +5,7 @@ const {
   getUsers,
   registerUser,
   updateUser,
+  getUserCounts,
 } = require('../services/userManagementService');
 
 async function handleGetDepartments(req, res, next) {
@@ -41,9 +42,16 @@ async function handleUpdateUser(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function handleGetUserCounts(req, res, next) {
+  try {
+    res.json(await getUserCounts());
+  } catch (err) { next(err); }
+}
+
 module.exports = {
   handleGetDepartments,
   handleGetUsers,
   handleRegisterUser,
   handleUpdateUser,
+  handleGetUserCounts,
 };

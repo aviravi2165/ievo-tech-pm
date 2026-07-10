@@ -9,6 +9,10 @@ export const userApi = {
   getUsers: (params = {}) =>
     api.get('/api/users/list', { params }).then(r => r.data),
 
+  /** Aggregate counts for the admin dashboard (totals, by dept, recent). Admin only. */
+  getCounts: () =>
+    api.get('/api/users/counts').then(r => r.data),
+
   /** Register a new user. Admin only. */
   register: (data) =>
     api.post('/api/users/register', data).then(r => r.data),

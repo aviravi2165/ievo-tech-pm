@@ -37,7 +37,17 @@ function rank(role) {
  * for the given activity, walking Activity → Phase → Project.
  * `level` is one of 'activity' | 'phase' | 'project' | null.
  */
-async function getEffectiveActivityRole(userId, activityId) {
+// Admins get full Manager-equivalent access everywhere in PM, same as the
+// project-level bypass in projectRole.js/entityRole.js — but those two
+// middlewares only guard WRITE routes; every per-row `myRole` a list
+// endpoint computes (phase list, activity list) calls straight into this
+// file, which had no admin awareness at all. An admin therefore saw
+// `myRole: 'Manager'` on the project itself but `null` on every Phase/
+// Activity underneath it, collapsing the UI to view-only despite the
+// backend actually allowing the write. `isAdmin` is opt-in (defaults
+// false) so every other caller of these two functions is unaffected.
+async function getEffectiveActivityRole(userId, activityId, isAdmin = false) {
+  if (isAdmin) return { role: 'Manager', level: 'admin', projectId: null, phaseId: null };
   const pool = await getPool();
   const result = await pool.request()
     .input('activityId', sql.Int, activityId)
@@ -63,7 +73,8 @@ async function getEffectiveActivityRole(userId, activityId) {
 /**
  * Same idea, one level up — Phase → Project.
  */
-async function getEffectivePhaseRole(userId, phaseId) {
+async function getEffectivePhaseRole(userId, phaseId, isAdmin = false) {
+  if (isAdmin) return { role: 'Manager', level: 'admin', projectId: null };
   const pool = await getPool();
   const result = await pool.request()
     .input('phaseId', sql.Int, phaseId)

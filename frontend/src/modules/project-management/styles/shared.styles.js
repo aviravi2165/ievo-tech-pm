@@ -301,15 +301,42 @@ export const UserOption = styled.div`
 `;
 
 // ── Timeline ──────────────────────────────────────────────────────────────────
-export const Timeline = styled.div` overflow-x: auto; padding-bottom: 16px; `;
-export const TlRow = styled.div` display: flex; align-items: center; gap: 0; height: 36px; margin-bottom: 4px; `;
+// Frozen-label-column layout: the label column and the date/bar area are
+// two INDEPENDENT layout regions (Timeline is a flex row splitting them),
+// not one scrolling row with a sticky label inside it. An earlier attempt
+// used position:sticky on TlLabel inside the scrolling flex row — sticky
+// positioning combined with a dynamically-computed flex-item width turned
+// out unreliable here (the label still visibly scrolled instead of staying
+// pinned). Two genuinely separate regions — one that never scrolls at all,
+// one that does — sidesteps the sticky quirk entirely and is the standard
+// "frozen column" pattern every spreadsheet/Gantt UI uses.
+export const Timeline = styled.div` display: flex; padding-bottom: 16px; `;
+export const TlLabelCol = styled.div` flex-shrink: 0; width: 180px; `;
+export const TlScrollCol = styled.div` flex: 1; min-width: 0; overflow-x: auto; `;
+// border-bottom on every row gives the whole grid a consistent sectioned
+// look — previously rows only had a margin-bottom gap with no line, so
+// entities read as loosely floating rather than belonging to a table.
+export const TlRow = styled.div`
+  display: flex; align-items: center; gap: 0; height: 36px; margin-bottom: 4px;
+  border-bottom: 1px solid ${t(th => th.colors.border)}55;
+`;
 export const TlLabel = styled.div`
   width: 180px; flex-shrink: 0; font-size: 12px; color: ${t(th => th.colors.onyx)};
   padding-right: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 `;
 export const TlBarWrap = styled.div`
-  flex: 1; position: relative; height: 100%;
-  background: ${t(th => th.colors.mid)}; border-radius: ${t(th => th.radius.sm)}; overflow: hidden;
+  flex-shrink: 0;
+  /* width set inline per-render (TimelineView.js) to the computed content
+     width — proportional to the date range, in px, not a CSS percentage.
+     height likewise set inline to the exact row height (ROW_H) rather than
+     relying on height:100% here — this wrap sits in a flex row alongside
+     TlLabel with align-items:center, and a percentage height combined with
+     that made narrow single-day bar segments render with their bottom
+     rounded edge clipped off (overflow:hidden cutting into the pill shape),
+     which is why overflow:hidden is dropped too — bars are individually
+     rounded already and don't need the wrap to clip them. */
+  position: relative;
+  background: ${t(th => th.colors.mid)}; border-radius: ${t(th => th.radius.sm)};
 `;
 
 const TL_BAR_BG = {

@@ -322,3 +322,70 @@ export const AuditDetail = styled.span`
 export const AuditMeta = styled.div` font-size: 11px; color: ${p => p.theme.colors.ashLight}; margin-top: 2px; `;
 
 export const AuditProject = styled.span` font-weight: 500; color: ${p => p.theme.colors.ash}; `;
+
+// ── Admin dashboard — stat tiles ────────────────────────────────────────────────
+
+export const StatGrid = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  padding: 0 28px 20px;
+  flex-shrink: 0;
+`;
+
+export const StatTile = styled.button`
+  text-align: left;
+  font-family: inherit;
+  cursor: ${p => (p.clickable ? 'pointer' : 'default')};
+  background: ${p => p.theme.colors.white};
+  border: 1px solid ${p => p.theme.colors.border};
+  border-left: 3px solid ${p => p.accent || p.theme.colors.border};
+  border-radius: 8px;
+  padding: 12px 14px;
+  transition: box-shadow 0.12s, transform 0.12s;
+
+  ${p => p.clickable && `
+    &:hover { box-shadow: 0 2px 10px rgba(0,0,0,0.06); transform: translateY(-1px); }
+  `}
+`;
+
+export const StatValue = styled.div`
+  font-size: 24px;
+  font-weight: 700;
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  color: ${p => p.accent || p.theme.colors.onyx};
+  line-height: 1.1;
+`;
+
+export const StatLabel = styled.div`
+  font-size: 11px;
+  color: ${p => p.theme.colors.ash};
+  margin-top: 3px;
+  font-weight: 500;
+`;
+
+export const DeptRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  font-size: 12px;
+`;
+
+export const DeptBar = styled.div`
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: ${p => p.theme.colors.mid};
+  overflow: hidden;
+`;
+
+export const DeptBarFill = styled.div`
+  height: 100%;
+  border-radius: 3px;
+  background: ${p => p.theme.colors.copper};
+  width: ${p => p.pct}%;
+`;
+
+export const DeptName = styled.span` flex: 0 0 110px; color: ${p => p.theme.colors.onyx}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; `;
+export const DeptCount = styled.span` flex: 0 0 22px; text-align: right; color: ${p => p.theme.colors.ashLight}; font-size: 11px; `;

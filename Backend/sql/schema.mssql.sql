@@ -1025,3 +1025,13 @@ IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_act
 
 IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_tasks') AND name = 'is_active')
     ALTER TABLE dbo.pm_tasks ADD is_active BIT NOT NULL DEFAULT 1;
+-- ────────────────────────────────────────────────────────────
+-- pm_tasks.start_date — explicit planned start, distinct from created_at
+-- (when the row was inserted) and due_date (when it's due). The Timeline
+-- view previously used created_at as a task's bar-start, which made a
+-- task's bar render starting on whatever day it happened to be created
+-- rather than when it was actually meant to begin — this column lets a
+-- user set that intentionally, same as Phase/Activity plannedStart.
+-- ────────────────────────────────────────────────────────────
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_tasks') AND name = 'start_date')
+    ALTER TABLE dbo.pm_tasks ADD start_date date NULL;

@@ -33,6 +33,9 @@ router.patch('/:id/reorder', resolvePhaseProject, requireEntityRole('phase', 'Ma
 router.post('/:id/dependencies',              resolvePhaseProject, requireEntityRole('phase', 'Manager'), checkCircular('phase'), ctrl.addDep);
 router.delete('/:id/dependencies/:depId',     resolvePhaseProject, requireEntityRole('phase', 'Manager'), ctrl.removeDep);
 
+// ── Phase status history — Timeline segmented bars ────────────────────────────
+router.get('/:id/status-history', resolvePhaseProject, requireEntityRole('phase', 'Viewer'), ctrl.getStatusHistory);
+
 // ── Phase members ──────────────────────────────────────────────────────────────
 // Read: anyone with at least Viewer-level effective access to the phase.
 // Write: the Phase's own Manager(s), OR a project-level Manager.
@@ -43,7 +46,7 @@ router.delete('/:id/members/:uid', resolvePhaseProject, requireEntityRole('phase
 
 // Activities for a phase — previously had NO auth/membership check at all.
 router.get('/:phaseId/activities', resolvePhaseProject, requireEntityRole('phase', 'Viewer'),
-  async (req, res, next) => { try { res.json(await require('../services/activityService').getActivitiesForPhase(req.params.phaseId, req.user.userId)); } catch (e) { next(e); } });
+  async (req, res, next) => { try { res.json(await require('../services/activityService').getActivitiesForPhase(req.params.phaseId, req.user.userId, req.user.userType === 'admin')); } catch (e) { next(e); } });
 // Phase Managers can create Activities in their own phase, matching Activity
 // Managers already being able to create Tasks in their own activity.
 router.post('/:phaseId/activities', resolvePhaseProject, requireEntityRole('phase', 'Manager'), actCtrl.create);

@@ -63,7 +63,7 @@ function EntityRolePill({ role, isManager, onChange }) {
 // Activity role). A Manager can change either role inline, or clear it back
 // to "Inherited" (removes the explicit row, falling back to the level above).
 
-function MemberCard({ m, onRoleChange, onRemove, roleError, isManager, onPhaseRoleChange, onActivityRoleChange }) {
+function MemberCard({ m, onRoleChange, onRemove, roleError, isManager, isSelf, onPhaseRoleChange, onActivityRoleChange }) {
   const theme = useTheme();
   const [expanded, setExpanded] = useState(false);
   const pill = rolePill(theme, m.projectRole);
@@ -116,9 +116,14 @@ function MemberCard({ m, onRoleChange, onRemove, roleError, isManager, onPhaseRo
               style={{ background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, color: theme.colors.onyx, fontSize: 11, padding: '3px 7px', fontFamily: 'inherit', outline: 'none' }}>
               {ROLES.map(r => <option key={r}>{r}</option>)}
             </select>
-            <IconBtnDanger onClick={() => onRemove(m.userId, m.name)} title="Remove member">
-              <X size={13} strokeWidth={2.5} />
-            </IconBtnDanger>
+            {/* Removing yourself would strip your own access with no way
+                back in (short of another Manager re-adding you) — only an
+                admin should be able to do that, not a self-service click. */}
+            {!isSelf && (
+              <IconBtnDanger onClick={() => onRemove(m.userId, m.name)} title="Remove member">
+                <X size={13} strokeWidth={2.5} />
+              </IconBtnDanger>
+            )}
           </div>
         )}
       </div>
@@ -179,7 +184,7 @@ function MemberCard({ m, onRoleChange, onRemove, roleError, isManager, onPhaseRo
 
 // ── Main MemberManager ────────────────────────────────────────────────────────
 
-export default function MemberManager({ projectId, members: flatMembers = [], myRole, onRefetch }) {
+export default function MemberManager({ projectId, members: flatMembers = [], myRole, myUserId, onRefetch }) {
   const theme = useTheme();
   const [hierarchy,  setHierarchy]  = useState(null);
   const [loading,    setLoading]    = useState(false);
@@ -337,6 +342,7 @@ export default function MemberManager({ projectId, members: flatMembers = [], my
           key={m.userId}
           m={m}
           isManager={isManager}
+          isSelf={String(m.userId) === String(myUserId)}
           roleError={roleErrors[m.userId]}
           onRoleChange={handleRoleChange}
           onRemove={handleRemove}

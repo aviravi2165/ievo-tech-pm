@@ -384,7 +384,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
         {/* ── Members tab ── */}
         {tab === 'Members' && (
           canEdit
-            ? <MemberManager projectId={projectId} members={project.members || []} myRole={project.myRole} onRefetch={refetch} />
+            ? <MemberManager projectId={projectId} members={project.members || []} myRole={project.myRole} myUserId={myUserId} onRefetch={refetch} />
             : (
               <div>
                 {(project.members || []).map(m => (

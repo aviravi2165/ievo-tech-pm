@@ -86,6 +86,26 @@ export function MessagingProvider({ children }) {
     setPendingOpenGroup(groupInfo);
   }, []);
 
+  // ── Cross-module MANAGE requests (admin only) ─────────────────────────────
+  // An admin has no message-content access anywhere in this module (see
+  // MessagingPage's showThread/showGroups conditions — showThread is
+  // unconditionally false for isSuperAdmin) — they only ever get the
+  // moderation view (disable/enable/delete, participants). ChatButton (PM
+  // module) previously always called requestOpenGroup/requestOpenConversation
+  // regardless of who clicked it, which for an admin set activeConv while
+  // showThread stayed false and showGroups requires !activeConv — the panel
+  // rendered completely blank. These two open straight into the moderation
+  // panel for the specific group/thread instead, same as clicking its row
+  // in the admin's own group/thread list already does.
+  const [pendingManageGroup, setPendingManageGroup] = useState(null);
+  const requestManageGroup = useCallback((groupInfo) => {
+    setPendingManageGroup(groupInfo);
+  }, []);
+  const [pendingManageThread, setPendingManageThread] = useState(null);
+  const requestManageThread = useCallback((threadInfo) => {
+    setPendingManageThread(threadInfo);
+  }, []);
+
   // ── Inbox conversations (bcc / cc only) ───────────────────────────────────
   const [conversations,    setConversations]    = useState([]);
   const [inboxLoading,     setInboxLoading]     = useState(true);
@@ -255,6 +275,8 @@ export function MessagingProvider({ children }) {
     activeConversationId, setActiveConversationId, activeConvIdRef,
     pendingOpenConv, setPendingOpenConv, requestOpenConversation,
     pendingOpenGroup, setPendingOpenGroup, requestOpenGroup,
+    pendingManageGroup, setPendingManageGroup, requestManageGroup,
+    pendingManageThread, setPendingManageThread, requestManageThread,
   };
 
   return (

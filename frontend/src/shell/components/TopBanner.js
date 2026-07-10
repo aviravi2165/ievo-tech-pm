@@ -1,6 +1,6 @@
 import { useAuth }              from '../../modules/auth/AuthContext';
 import logo                     from '../assets/logo.png';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import ProfileMenu              from './ProfileMenu';
 import ChangePasswordModal      from './ChangePasswordModal';
 import UserManagementModal      from '../../modules/users/UserManagementModal';
@@ -19,6 +19,16 @@ export default function TopBanner({ currentUser, activeModule }) {
   const [userMgmtOpen, setUserMgmtOpen] = useState(false);
 
   const isAdmin = currentUser?.userType === 'admin';
+
+  // Opened programmatically by the admin dashboard's "Manage Users" shortcut
+  // (this modal's open state is otherwise only reachable via the topbar
+  // icon button below) — mirrors the existing 'open-messages-panel' pattern.
+  useEffect(() => {
+    if (!isAdmin) return;
+    const open = () => setUserMgmtOpen(true);
+    window.addEventListener('open-user-management', open);
+    return () => window.removeEventListener('open-user-management', open);
+  }, [isAdmin]);
 
   const displayName = [currentUser?.firstName, currentUser?.lastName]
     .filter(Boolean).join(' ') || currentUser?.username || 'User';

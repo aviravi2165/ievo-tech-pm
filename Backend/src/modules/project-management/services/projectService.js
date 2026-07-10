@@ -5,6 +5,29 @@ const audit = require('./auditService');
 const { getProjectProgress, getProjectHasActiveWork, deriveProjectStatus } = require('./progressService');
 const { getProjectDelayDays } = require('./delayService');
 const { isInactive } = require('./dependencyService');
+const pmChatService = require('./pmChatService');
+
+// resolveTaskManagerIds/resolveActivityThreadSeedIds (roleService.js)
+// cumulatively include Project Managers alongside Activity/Phase Managers —
+// so a project-level Manager change needs every activity/task thread across
+// the WHOLE project resynced, same as activityService.js already does for
+// Activity-level changes and phaseMemberService.js for Phase-level. This
+// was previously entirely missing: making someone a Project Manager never
+// gave them access to any activity/task chat in that project, and removing
+// one never revoked it, until an unrelated event happened to touch that
+// specific activity/task later.
+async function resyncProjectActivityThreads(projectId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('projectId', sql.Int, projectId)
+    .query(`
+      SELECT a.activity_id AS activityId
+      FROM pm_activities a
+      INNER JOIN pm_phases ph ON ph.phase_id = a.phase_id
+      WHERE ph.project_id = @projectId AND a.is_deleted = 0 AND ph.is_deleted = 0
+    `);
+  await Promise.all(result.recordset.map(a => pmChatService.onActivityManagersChanged(a.activityId)));
+}
 
 async function listProjects(userId, isAdmin = false) {
   const pool = await getPool();
@@ -359,6 +382,7 @@ async function addMember(projectId, targetUserId, role, actorUserId) {
         INSERT INTO pm_members (project_id,user_id,role) VALUES (@projectId,@targetUserId,@role)
     `);
   await audit.log({ entityType:'project', entityId:projectId, projectId, userId:actorUserId, action:'member_added', fieldChanged:'role', newValue:role });
+  await resyncProjectActivityThreads(projectId);
 }
 
 async function updateMemberRole(projectId, targetUserId, role, actorUserId) {
@@ -384,9 +408,19 @@ async function updateMemberRole(projectId, targetUserId, role, actorUserId) {
     .query(`UPDATE pm_members SET role=@role WHERE project_id=@projectId AND user_id=@targetUserId`);
   if (!updateResult.rowsAffected[0]) { const e = new Error('Member not found'); e.statusCode = 404; throw e; }
   await audit.log({ entityType:'project', entityId:projectId, projectId, userId:actorUserId, action:'member_role_changed', fieldChanged:'role', newValue:role });
+  await resyncProjectActivityThreads(projectId);
 }
 
 async function removeMember(projectId, targetUserId, actorUserId) {
+  // A Manager could otherwise remove themselves via this same endpoint they
+  // use to remove others — leaving the project managerless with no path
+  // back in except an admin re-adding them from outside PM entirely.
+  // Self-removal is an admin-only action (done elsewhere), not something
+  // exposed on the regular member-management UI.
+  if (String(targetUserId) === String(actorUserId)) {
+    const e = new Error('You cannot remove yourself from a project — ask an admin or another Manager.');
+    e.statusCode = 403; throw e;
+  }
   if (await isInactive('project', projectId)) {
     const e = new Error('This Project is inactive — reactivate it before making changes.');
     e.statusCode = 409; throw e;
@@ -405,11 +439,57 @@ async function removeMember(projectId, targetUserId, actorUserId) {
       e.statusCode = 400; throw e;
     }
   }
+  // Cascade, deepest first: task assignments, then Activity-level and
+  // Phase-level overrides they held anywhere in this project. Without this
+  // a project removal leaves stale rows behind at every level below it —
+  // besides the access-leak this session flagged (removed member keeps
+  // working already-assigned tasks), a stale Activity/Phase Manager row
+  // would silently reactivate if they're ever re-added to the project at
+  // a lower role, handing back access nobody explicitly re-granted.
+  await pool.request()
+    .input('projectId',    sql.Int,              projectId)
+    .input('targetUserId', sql.UniqueIdentifier, targetUserId)
+    .query(`
+      DELETE r FROM pm_task_assignment_requests r
+      INNER JOIN pm_tasks      t  ON t.task_id      = r.task_id
+      INNER JOIN pm_activities a  ON a.activity_id  = t.activity_id
+      INNER JOIN pm_phases     ph ON ph.phase_id    = a.phase_id
+      WHERE ph.project_id=@projectId AND r.assignee_id=@targetUserId
+    `);
+  await pool.request()
+    .input('projectId',    sql.Int,              projectId)
+    .input('targetUserId', sql.UniqueIdentifier, targetUserId)
+    .query(`
+      DELETE ta FROM pm_task_assignees ta
+      INNER JOIN pm_tasks      t  ON t.task_id      = ta.task_id
+      INNER JOIN pm_activities a  ON a.activity_id  = t.activity_id
+      INNER JOIN pm_phases     ph ON ph.phase_id    = a.phase_id
+      WHERE ph.project_id=@projectId AND ta.user_id=@targetUserId
+    `);
+  await pool.request()
+    .input('projectId',    sql.Int,              projectId)
+    .input('targetUserId', sql.UniqueIdentifier, targetUserId)
+    .query(`
+      DELETE am FROM pm_activity_members am
+      INNER JOIN pm_activities a  ON a.activity_id = am.activity_id
+      INNER JOIN pm_phases     ph ON ph.phase_id   = a.phase_id
+      WHERE ph.project_id=@projectId AND am.user_id=@targetUserId
+    `);
+  await pool.request()
+    .input('projectId',    sql.Int,              projectId)
+    .input('targetUserId', sql.UniqueIdentifier, targetUserId)
+    .query(`
+      DELETE pm2 FROM pm_phase_members pm2
+      INNER JOIN pm_phases ph ON ph.phase_id = pm2.phase_id
+      WHERE ph.project_id=@projectId AND pm2.user_id=@targetUserId
+    `);
+
   await pool.request()
     .input('projectId',    sql.Int,              projectId)
     .input('targetUserId', sql.UniqueIdentifier, targetUserId)
     .query(`DELETE FROM pm_members WHERE project_id=@projectId AND user_id=@targetUserId`);
   await audit.log({ entityType:'project', entityId:projectId, projectId, userId:actorUserId, action:'member_removed' });
+  await resyncProjectActivityThreads(projectId);
 }
 
 module.exports = {

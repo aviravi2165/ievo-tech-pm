@@ -36,6 +36,8 @@ export const phaseApi = {
   addMember:      (id, userId, role = 'Employee') => axiosInstance.post(`/api/phases/${id}/members`, { userId, role }).then(r => r.data),
   updateMemberRole: (id, uid, role) => axiosInstance.patch(`/api/phases/${id}/members/${uid}`, { role }).then(r => r.data),
   removeMember:   (id, uid)         => axiosInstance.delete(`/api/phases/${id}/members/${uid}`).then(r => r.data),
+  // Real status-over-time — Timeline segmented bars
+  getStatusHistory: (id)            => axiosInstance.get(`/api/phases/${id}/status-history`).then(r => r.data),
 };
 
 export const activityApi = {
@@ -55,6 +57,8 @@ export const activityApi = {
   removeMember:   (id, uid)         => axiosInstance.delete(`/api/activities/${id}/members/${uid}`).then(r => r.data),
   // Activity group chat — returns { conversationId }, auto-creating the thread if needed
   getChat:        (id)              => axiosInstance.get(`/api/activities/${id}/chat`).then(r => r.data),
+  // Real status-over-time — Timeline segmented bars
+  getStatusHistory: (id)            => axiosInstance.get(`/api/activities/${id}/status-history`).then(r => r.data),
 };
 
 export const taskApi = {
@@ -69,9 +73,16 @@ export const taskApi = {
   removeRequest: (id, uid)      => axiosInstance.delete(`/api/tasks/${id}/requests/${uid}`).then(r => r.data),
   // Task Shared/CC chat — returns { conversationId }, auto-creating the thread if needed
   getChat:       (id)           => axiosInstance.get(`/api/tasks/${id}/chat`).then(r => r.data),
+  // Real status-over-time — Timeline segmented bars
+  getStatusHistory: (id)        => axiosInstance.get(`/api/tasks/${id}/status-history`).then(r => r.data),
   // Dashboard data — no project context needed
   getMyActiveTasks: ()          => axiosInstance.get('/api/tasks/my-active-tasks').then(r => r.data),
   getMyRecentAudit: ()          => axiosInstance.get('/api/tasks/my-recent-audit').then(r => r.data),
+  // Admin dashboard — org-wide, not scoped to any project (admin-only, 403 otherwise)
+  getAdminRecentAudit:    ()    => axiosInstance.get('/api/tasks/admin-recent-audit').then(r => r.data),
+  getAdminOverdueBlocked: ()    => axiosInstance.get('/api/tasks/admin-overdue-blocked').then(r => r.data),
+  // Member dashboard — overdue/blocked tasks across every project I'm in (not just tasks assigned to me)
+  getMyProjectsOverdueBlocked: () => axiosInstance.get('/api/tasks/my-projects-overdue-blocked').then(r => r.data),
 };
 
 // Assignment request management — called from the current user's perspective

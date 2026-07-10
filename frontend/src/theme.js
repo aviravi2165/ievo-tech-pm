@@ -65,10 +65,10 @@ const colors = {
   // SEMANTIC
   // ============================================================================
 
-  success: '#3d9e64',
+  success: '#446f17',
   danger: '#c12d16',
   warning: '#d38a3c',
-  info: '#4993ce',
+  info: '#256293',
   // Secondary brand accent — warm copper/rust, the true color-wheel
   // complement to navy (this pairing — warm terracotta against deep navy —
   // is a well-established, deliberately non-clashing combination, unlike

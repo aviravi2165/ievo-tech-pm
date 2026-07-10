@@ -18,7 +18,7 @@ function parseIdList(val) {
 // userId — the REQUESTING user, used to compute their effective role per
 // activity (explicit activity-level row, else inherited from phase/project
 // role; see roleService). Same reasoning as phaseService.getPhasesForProject.
-async function getActivitiesForPhase(phaseId, userId) {
+async function getActivitiesForPhase(phaseId, userId, isAdmin = false) {
   const pool = await getPool();
   const result = await pool.request()
     .input('phaseId', sql.Int, phaseId)
@@ -31,6 +31,7 @@ async function getActivitiesForPhase(phaseId, userId) {
              a.planned_end   AS plannedEnd,
              a.status, a.status_override AS statusOverride,
              a.created_at    AS createdAt,
+             parentProj.project_id AS projectId,
              parentPh.status AS parentPhaseStatus,
              a.is_active AS ownIsActive, parentPh.is_active AS parentPhaseActive,
              parentProj.is_active AS parentProjectActive,
@@ -83,7 +84,11 @@ async function getActivitiesForPhase(phaseId, userId) {
     act.isActive = act.ownIsActive !== false && act.parentPhaseActive !== false && act.parentProjectActive !== false;
     delete act.ownIsActive; delete act.parentPhaseActive; delete act.parentProjectActive;
     act.delayDays = act.status === 'Completed' ? 0 : await getActivityDelayDays(act.activityId, act.plannedEnd);
-    act.myRole = userId ? (await getEffectiveActivityRole(userId, act.activityId)).role : null;
+    act.myRole = userId ? (await getEffectiveActivityRole(userId, act.activityId, isAdmin)).role : null;
+    // Real status-history tracking for Timeline segmented bars — see
+    // auditService.recordStatusIfChanged's comment for why this lives here
+    // (on every read) rather than only on direct write actions.
+    audit.recordStatusIfChanged('activity', act.activityId, act.projectId, act.status).catch(() => {});
   }
   return rows;
 }
@@ -159,12 +164,44 @@ async function updateActivityMemberRole(activityId, targetUserId, role, actorUse
 }
 
 async function removeActivityMember(activityId, targetUserId, actorUserId, projectId) {
+  // Same reasoning as projectService.removeMember/phaseMemberService.removePhaseMember —
+  // self-removal is admin/other-Manager-only, not self-service.
+  if (String(targetUserId) === String(actorUserId)) {
+    const e = new Error('You cannot remove yourself from an activity — ask an admin or another Manager.');
+    e.statusCode = 403; throw e;
+  }
   const pool = await getPool();
+
+  // Cascade: task access is assignee-based, not roster-based (see
+  // taskService — a task's Manager-or-assignee gets in regardless of
+  // activity membership). Leaving their assignments behind would let a
+  // removed Activity member keep working, and keep chat access to, tasks
+  // under this activity even though they no longer belong here.
+  await pool.request()
+    .input('activityId', sql.Int,              activityId)
+    .input('userId',     sql.UniqueIdentifier, targetUserId)
+    .query(`
+      DELETE r FROM pm_task_assignment_requests r
+      INNER JOIN pm_tasks t ON t.task_id = r.task_id
+      WHERE t.activity_id=@activityId AND r.assignee_id=@userId
+    `);
+  await pool.request()
+    .input('activityId', sql.Int,              activityId)
+    .input('userId',     sql.UniqueIdentifier, targetUserId)
+    .query(`
+      DELETE ta FROM pm_task_assignees ta
+      INNER JOIN pm_tasks t ON t.task_id = ta.task_id
+      WHERE t.activity_id=@activityId AND ta.user_id=@userId
+    `);
+
   await pool.request()
     .input('activityId', sql.Int,              activityId)
     .input('userId',     sql.UniqueIdentifier, targetUserId)
     .query(`DELETE FROM pm_activity_members WHERE activity_id=@activityId AND user_id=@userId`);
   await audit.log({ entityType:'activity', entityId:activityId, projectId, userId:actorUserId, action:'member_removed', oldValue:targetUserId });
+  // Resyncs the activity's group chat AND every task thread under it —
+  // now correctly drops them from any task chat too, since their assignee
+  // rows are already gone by the time this runs.
   await pmChatService.onActivityManagersChanged(activityId);
 }
 
@@ -184,6 +221,22 @@ async function createActivity(phaseId, projectId, userId, body) {
   }
 
   const pool = await getPool();
+
+  // An Activity can't be planned to start before its own Phase — same rule
+  // as Phase→Project (phaseService.createPhase) and Task→Activity
+  // (taskService.createTask), enforced here too so the chain holds at
+  // every level, not just the ends.
+  if (plannedStart) {
+    const phaseResult = await pool.request()
+      .input('phaseId', sql.Int, phaseId)
+      .query(`SELECT planned_start AS plannedStart FROM pm_phases WHERE phase_id=@phaseId`);
+    const phaseStart = phaseResult.recordset[0]?.plannedStart;
+    if (phaseStart && new Date(plannedStart) < new Date(phaseStart)) {
+      const e = new Error("Activity start date can't be before its Phase's planned start date.");
+      e.statusCode = 400; throw e;
+    }
+  }
+
   let row;
 
   await withTransaction(async (req) => {
@@ -256,6 +309,17 @@ async function updateActivity(activityId, projectId, userId, body) {
   if (await isInactive('activity', activityId) || await isInactive('project', projectId)) {
     const e = new Error('This Activity is inactive — reactivate it before making changes.');
     e.statusCode = 409; throw e;
+  }
+  if (body.plannedStart !== undefined && body.plannedStart) {
+    const pool0 = await getPool();
+    const phaseResult = await pool0.request()
+      .input('activityId', sql.Int, activityId)
+      .query(`SELECT ph.planned_start AS plannedStart FROM pm_activities a INNER JOIN pm_phases ph ON ph.phase_id=a.phase_id WHERE a.activity_id=@activityId`);
+    const phaseStart = phaseResult.recordset[0]?.plannedStart;
+    if (phaseStart && new Date(body.plannedStart) < new Date(phaseStart)) {
+      const e = new Error("Activity start date can't be before its Phase's planned start date.");
+      e.statusCode = 400; throw e;
+    }
   }
   const fields = {};
   if (body.name         !== undefined) fields.name          = body.name.trim();
@@ -404,6 +468,14 @@ async function getOrCreateActivityThread(activityId) {
   return thread || { conversationId: null, groupId: null };
 }
 
+// ── Status history — Timeline segmented bars ────────────────────────────────
+// Real tracking (see auditService.recordStatusIfChanged, called from
+// getActivitiesForPhase above on every read, and from taskService after
+// every cascading recompute) — not an approximation from child tasks.
+async function getActivityStatusHistory(activityId) {
+  return audit.getStatusHistory('activity', activityId);
+}
+
 module.exports = {
   ACTIVITY_MEMBER_ROLES,
   getOrCreateActivityThread,
@@ -418,4 +490,5 @@ module.exports = {
   reactivateActivity,
   addActivityDep,
   removeActivityDep,
+  getActivityStatusHistory,
 };

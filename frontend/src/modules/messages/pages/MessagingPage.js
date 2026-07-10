@@ -22,6 +22,8 @@ export default function MessagingPage({ currentUser }) {
     setActiveConversationId, activeConvIdRef,
     pendingOpenConv, setPendingOpenConv,
     pendingOpenGroup, setPendingOpenGroup,
+    pendingManageGroup, setPendingManageGroup,
+    pendingManageThread, setPendingManageThread,
   } = useMessaging();
 
   const { socket } = useSocket();
@@ -32,6 +34,8 @@ export default function MessagingPage({ currentUser }) {
   const [composeInitialRecipients, setComposeInitialRecipients] = useState([]);
   const [composeInitialMode,       setComposeInitialMode]       = useState('bcc');
   const [activeConvSource, setActiveConvSource] = useState(null);
+  const [autoManageGroupId,  setAutoManageGroupId]  = useState(null);
+  const [autoManageThreadId, setAutoManageThreadId] = useState(null);
 
   const layoutRef = useRef(null);
 
@@ -61,6 +65,27 @@ export default function MessagingPage({ currentUser }) {
     clearUnreadDot(conversationId);
     setPendingOpenGroup(null);
   }, [pendingOpenGroup, setPendingOpenGroup, setActiveConversationId, clearUnreadDot]);
+
+  // ── Handle cross-module MANAGE requests (from ChatButton, admin only) ──────
+  // No activeConv is set here — admins get zero content access anywhere in
+  // this module (showThread is unconditionally false for isSuperAdmin), so
+  // setting one would just render blank. Route into the groups/threads list
+  // view instead and hand GroupManager the id to auto-open into management.
+  useEffect(() => {
+    if (!pendingManageGroup) return;
+    setTab('groups');
+    setActiveConvSource('groups');
+    setAutoManageGroupId(pendingManageGroup.groupId || pendingManageGroup.conversationId);
+    setPendingManageGroup(null);
+  }, [pendingManageGroup, setPendingManageGroup]);
+
+  useEffect(() => {
+    if (!pendingManageThread) return;
+    setTab('threads');
+    setActiveConvSource('threads');
+    setAutoManageThreadId(pendingManageThread.conversationId);
+    setPendingManageThread(null);
+  }, [pendingManageThread, setPendingManageThread]);
 
   const {
     threads: adminThreads, loading: adminThreadsLoading,
@@ -241,6 +266,10 @@ export default function MessagingPage({ currentUser }) {
               onDeleteThread={handleDeleteThread}
               onHideThread={handleHideThread}
               onOpenConversation={handleOpenGroupConversation}
+              autoManageGroupId={autoManageGroupId}
+              onAutoManageGroupHandled={() => setAutoManageGroupId(null)}
+              autoManageThreadId={autoManageThreadId}
+              onAutoManageThreadHandled={() => setAutoManageThreadId(null)}
             />
         )}
       </Layout>

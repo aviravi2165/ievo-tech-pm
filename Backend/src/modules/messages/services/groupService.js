@@ -371,7 +371,16 @@ async function removeMember(groupId, actorUserId, memberUserId) {
     const err = new Error('Group not found'); err.statusCode = 404; throw err;
   }
   const { created_by, is_disabled } = groupRes.recordset[0];
-  if (String(created_by) === String(memberUserId)) {
+  // The creator-cannot-be-removed rule protects a group from a co-admin (or
+  // the creator themself) leaving it with no one left who has real
+  // authority over it. That protection doesn't apply to the org-wide super
+  // admin acting here — they have authority over every group regardless of
+  // membership (isGroupAdminOrSuperAdmin above already reflects that), so
+  // there's no "orphaned group" risk to guard against for this actor.
+  const actorIsSuperAdmin = (await pool.request()
+    .input('actorUserId', sql.UniqueIdentifier, actorUserId)
+    .query(`SELECT 1 AS ok FROM auth_users WHERE user_id=@actorUserId AND user_type='admin'`)).recordset[0]?.ok === 1;
+  if (String(created_by) === String(memberUserId) && !actorIsSuperAdmin) {
     const err = new Error('The group creator cannot be removed. Disable or delete the group instead.');
     err.statusCode = 400; throw err;
   }

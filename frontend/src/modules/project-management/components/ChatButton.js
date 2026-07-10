@@ -11,7 +11,7 @@ import { BtnGhost } from '../styles/shared.styles';
  * of the alarming red "!" badge.
  */
 export default function ChatButton({ kind, id, label, compact = false }) {
-  const { requestOpenConversation, requestOpenGroup } = useMessaging();
+  const { requestOpenConversation, requestOpenGroup, requestManageGroup, requestManageThread, isSuperAdmin } = useMessaging();
   const [loading, setLoading] = useState(false);
   const [errMsg,  setErrMsg]  = useState('');
 
@@ -24,7 +24,19 @@ export default function ChatButton({ kind, id, label, compact = false }) {
         ? await activityApi.getChat(id)
         : await taskApi.getChat(id);
 
-      if (kind === 'activity') {
+      // Admins have no message-CONTENT access anywhere in Messaging (see
+      // MessagingPage's showThread, unconditionally false for isSuperAdmin)
+      // — routing them through the normal open-conversation/open-group path
+      // here left the panel rendering completely blank. Send them straight
+      // into the moderation view for this specific group/thread instead —
+      // same view they'd land on clicking it from their own group/thread list.
+      if (isSuperAdmin) {
+        if (kind === 'activity') {
+          requestManageGroup({ conversationId: data.conversationId, groupId: data.groupId || null });
+        } else {
+          requestManageThread({ conversationId: data.conversationId });
+        }
+      } else if (kind === 'activity') {
         requestOpenGroup({
           conversationId: data.conversationId,
           groupId:        data.groupId  || null,
@@ -53,7 +65,9 @@ export default function ChatButton({ kind, id, label, compact = false }) {
   const displayLabel = compact ? null : (label || defaultLabel);
 
   const title = errMsg
-    || (loading ? 'Opening…' : (kind === 'activity' ? 'Open activity group chat' : 'Open task chat'));
+    || (loading ? 'Opening…' : isSuperAdmin
+      ? (kind === 'activity' ? 'Manage activity group chat' : 'Manage task chat')
+      : (kind === 'activity' ? 'Open activity group chat' : 'Open task chat'));
 
   return (
     <BtnGhost

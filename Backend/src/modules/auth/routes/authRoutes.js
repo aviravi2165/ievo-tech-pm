@@ -12,6 +12,7 @@ const {
   handleGetUsers,
   handleRegisterUser,
   handleUpdateUser,
+  handleGetUserCounts,
 } = require('../controllers/userManagementController');
 const { authenticate, requireAdmin } = require('../../../middleware/auth');
 
@@ -32,6 +33,7 @@ router.post('/set-initial-password', authenticate, handleSetInitialPassword);
 // dynamic /:userId param so Express doesn't swallow them as IDs.
 router.get('/departments',   authenticate, requireAdmin, handleGetDepartments);
 router.get('/list',          authenticate, requireAdmin, handleGetUsers);
+router.get('/counts',        authenticate, requireAdmin, handleGetUserCounts);
 router.post('/register',     authenticate, requireAdmin, handleRegisterUser);
 router.patch('/:userId',     authenticate, requireAdmin, handleUpdateUser);
 

@@ -443,6 +443,14 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
     try {
       await action(matchedGroup.groupId);
       window.dispatchEvent(new Event('groups-updated'));
+      // 'groups-updated' only refreshes the sidebar's group list (so the
+      // disable/enable icon itself flips state) — it does NOT refetch this
+      // open thread's own conversation data. Without this, disabling your
+      // own currently-open group left the composer live and no disabled
+      // banner until a manual reload, even though the action had actually
+      // succeeded server-side (only the OTHER participant, who reopens
+      // fresh, saw the correct frozen state).
+      if (!closesView) await refetch();
       if (closesView) onBack?.();
     } catch (err) {
       setGroupActionError(err?.response?.data?.error || 'Action failed. Try again.');
@@ -921,6 +929,7 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
       <ThreadScrollWrap>
         <GmailThreadView
           ref={containerRef}
+          className="gmail-thread-view"
           onScroll={(e) => {
             if (!showNewPill) return;
             const el = e.currentTarget;

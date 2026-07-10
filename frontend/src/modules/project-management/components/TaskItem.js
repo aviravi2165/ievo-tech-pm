@@ -123,6 +123,8 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
   const [editName,     setEditName]     = useState(task.name);
   const [editingName,  setEditingName]  = useState(false);
   const [editDue,      setEditDue]      = useState(toInput(task.dueDate));
+  const [editStart,    setEditStart]    = useState(toInput(task.startDate));
+  const [dateError,    setDateError]    = useState('');
   const [editDesc,     setEditDesc]     = useState(task.description || '');
   const [depError,     setDepError]     = useState('');
   const [assignSearch, setAssignSearch] = useState(null);
@@ -130,6 +132,7 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
 
   useEffect(() => { setLocalStatus(task.status); }, [task.status]);
   useEffect(() => { setEditDue(toInput(task.dueDate)); }, [task.dueDate]);
+  useEffect(() => { setEditStart(toInput(task.startDate)); }, [task.startDate]);
   useEffect(() => { setEditDesc(task.description || ''); }, [task.description]);
 
   const togglePanel = (p) => setPanel(v => v === p ? null : p);
@@ -158,8 +161,12 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
   // ── Due date save ──────────────────────────────────────────────────────────
   const handleDueSave = async () => {
     if (!editDue) return;
-    try { await taskApi.update(task.taskId, { dueDate: editDue }); onRefetch?.(); setPanel(null); }
-    catch (err) { showToast(apiErrorMessage(err, 'Failed to update due date.')); }
+    setDateError('');
+    try {
+      await taskApi.update(task.taskId, { startDate: editStart || null, dueDate: editDue });
+      onRefetch?.(); setPanel(null);
+    }
+    catch (err) { setDateError(apiErrorMessage(err, 'Failed to update dates.')); }
   };
 
   // ── Description save ───────────────────────────────────────────────────────
@@ -170,12 +177,14 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
 
   // ── Delete ─────────────────────────────────────────────────────────────────
   const handleDelete = async () => {
-    if (!window.confirm(`Delete task "${task.name}"?`)) return;
+    // Tasks are never hard-deleted — always deactivated, so its history and
+    // any dependency edges stay intact (and other tasks depending on it get
+    // auto-unblocked, same as if it had been completed). Reactivate to undo.
+    if (!window.confirm(`Deactivate task "${task.name}"? It will be hidden from active work but can be reactivated later.`)) return;
     try {
-      const { action } = await taskApi.delete(task.taskId);
-      if (action === 'deactivated') alert('This task has assignees — it was deactivated instead of deleted.');
+      await taskApi.delete(task.taskId);
       onRefetch?.(); onRefetchProject?.();
-    } catch (err) { showToast(apiErrorMessage(err, 'Failed to delete task.')); }
+    } catch (err) { showToast(apiErrorMessage(err, 'Failed to deactivate task.')); }
   };
 
   const handleReactivate = async () => {
@@ -338,7 +347,7 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
                   <RotateCcw size={14} strokeWidth={2} />
                 </IconBtn>
               ) : (
-                <IconBtnDanger title="Delete" onClick={handleDelete} style={{ width:20, height:20 }}>
+                <IconBtnDanger title="Deactivate" onClick={handleDelete} style={{ width:20, height:20 }}>
                   <Trash2 size={14} strokeWidth={2} />
                 </IconBtnDanger>
               )}
@@ -371,17 +380,26 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
         </SubPanel>
       )}
 
-      {/* ── Due date panel ── */}
+      {/* ── Start / Due date panel ── */}
       {panel === 'date' && canEdit && (
         <SubPanel style={{ margin: 0 }}>
-          <SubPanelTitle>Due Date <span style={{ color: theme.colors.danger }}>*</span></SubPanelTitle>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input type="date" value={editDue} onChange={e => setEditDue(e.target.value)}
-              style={{ background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '6px 10px', color: theme.colors.onyx, fontSize: 12, outline: 'none', fontFamily: 'inherit' }} />
+          <SubPanelTitle>Dates</SubPanelTitle>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 10.5, color: theme.colors.ash, marginBottom: 3 }}>Start date</div>
+              <input type="date" value={editStart} onChange={e => setEditStart(e.target.value)}
+                style={{ background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '6px 10px', color: theme.colors.onyx, fontSize: 12, outline: 'none', fontFamily: 'inherit' }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 10.5, color: theme.colors.ash, marginBottom: 3 }}>Due date <span style={{ color: theme.colors.danger }}>*</span></div>
+              <input type="date" value={editDue} onChange={e => setEditDue(e.target.value)}
+                style={{ background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '6px 10px', color: theme.colors.onyx, fontSize: 12, outline: 'none', fontFamily: 'inherit' }} />
+            </div>
             <BtnPrimary style={{ fontSize: 11, padding: '6px 14px' }} onClick={handleDueSave} disabled={!editDue}>Save</BtnPrimary>
-            <BtnGhost style={{ fontSize: 11, padding: '6px 10px' }} onClick={() => setPanel(null)}>Cancel</BtnGhost>
+            <BtnGhost style={{ fontSize: 11, padding: '6px 10px' }} onClick={() => { setPanel(null); setDateError(''); }}>Cancel</BtnGhost>
           </div>
           {!editDue && <div style={{ color: theme.colors.danger, fontSize: 11, marginTop: 4 }}>Due date is required.</div>}
+          {dateError && <div style={{ color: theme.colors.danger, fontSize: 11, marginTop: 4 }}>{dateError}</div>}
         </SubPanel>
       )}
 

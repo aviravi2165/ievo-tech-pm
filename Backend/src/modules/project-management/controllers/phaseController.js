@@ -3,7 +3,7 @@
 const svc = require('../services/phaseService');
 const memberSvc = require('../services/phaseMemberService');
 
-const list         = async (req,res,next) => { try { res.json(await svc.getPhasesForProject(req.params.projectId, req.user.userId)); } catch(e){next(e);} };
+const list         = async (req,res,next) => { try { res.json(await svc.getPhasesForProject(req.params.projectId, req.user.userId, req.user.userType === 'admin')); } catch(e){next(e);} };
 const reorder      = async (req,res,next) => { try { await svc.reorderPhase(req.pmProjectId, req.params.id, req.body.direction); res.json({ok:true}); } catch(e){next(e);} };
 const create       = async (req,res,next) => { try { res.status(201).json(await svc.createPhase(req.params.projectId, req.user.userId, req.body)); } catch(e){next(e);} };
 const update       = async (req,res,next) => { try { res.json(await svc.updatePhase(req.params.id, req.pmProjectId, req.user.userId, req.body)); } catch(e){next(e);} };
@@ -18,7 +18,9 @@ const addMember        = async (req,res,next) => { try { await memberSvc.addOrUp
 const updateMemberRole = async (req,res,next) => { try { await memberSvc.addOrUpdatePhaseMember(req.params.id, req.params.uid, req.body.role, req.user.userId, req.pmProjectId); res.json({ok:true}); } catch(e){next(e);} };
 const removeMember     = async (req,res,next) => { try { await memberSvc.removePhaseMember(req.params.id, req.params.uid, req.user.userId, req.pmProjectId); res.json({ok:true}); } catch(e){next(e);} };
 
+const getStatusHistory = async (req,res,next) => { try { res.json(await svc.getPhaseStatusHistory(req.params.id)); } catch(e){next(e);} };
+
 module.exports = {
   list, create, update, remove, reactivate, addDep, removeDep, reorder,
-  listMembers, addMember, updateMemberRole, removeMember,
+  listMembers, addMember, updateMemberRole, removeMember, getStatusHistory,
 };

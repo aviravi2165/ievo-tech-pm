@@ -411,8 +411,10 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
                 <option value="Employee">Employee</option>
                 <option value="Viewer">Viewer</option>
               </select>
-              <BtnGhost style={{ fontSize: 11, padding: '2px 8px', color: theme.colors.danger, borderColor: 'rgba(168,93,77,.35)' }}
-                onClick={() => handleRemovePhaseMember(m.userId)}>Remove</BtnGhost>
+              {String(m.userId) !== String(myUserId) && (
+                <BtnGhost style={{ fontSize: 11, padding: '2px 8px', color: theme.colors.danger, borderColor: 'rgba(168,93,77,.35)' }}
+                  onClick={() => handleRemovePhaseMember(m.userId)}>Remove</BtnGhost>
+              )}
             </div>
           ))}
           {!memberLoading && phaseMembers.length === 0 && (

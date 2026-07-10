@@ -1,7 +1,7 @@
 'use strict';
 
 const router = require('express').Router();
-const { authenticate }  = require('../../../middleware/auth');
+const { authenticate, requireAdmin } = require('../../../middleware/auth');
 const { requireRole }   = require('../middleware/projectRole');
 const { requireEntityRole } = require('../middleware/entityRole');
 const { checkCircular } = require('../middleware/circularDepCheck');
@@ -37,6 +37,12 @@ router.get('/my-requests',     ctrl.getMyRequests);
 router.get('/my-active-tasks', ctrl.getMyActiveTasks);
 // ── My recent project audit feed ─────────────────────────────────────────────
 router.get('/my-recent-audit', ctrl.getMyRecentAudit);
+// ── Overdue/blocked tasks across every project I'm involved in ───────────────
+router.get('/my-projects-overdue-blocked', ctrl.getMyProjectsOverdueBlocked);
+
+// ── Admin dashboard — org-wide, not scoped to any single project ─────────────
+router.get('/admin-recent-audit',    requireAdmin, ctrl.getAdminRecentAudit);
+router.get('/admin-overdue-blocked', requireAdmin, ctrl.getAdminOverdueBlocked);
 
 // ── Per-request respond endpoints (assignee only, no projectRole check) ───────
 // The assignee may not be a pm_member yet (they become one on accept)
@@ -56,6 +62,9 @@ router.patch('/:id/status', resolveTaskProject, requireRole('Member'),  ctrl.upd
 // ── Task chat ────────────────────────────────────────────────────────────────
 // Returns { conversationId } for the task's auto-managed Shared/CC thread.
 router.get('/:id/chat', resolveTaskProject, requireRole('Member'), ctrl.getChat);
+
+// ── Task status history — Timeline segmented bars ─────────────────────────────
+router.get('/:id/status-history', resolveTaskProject, requireRole('Viewer'), ctrl.getStatusHistory);
 
 // Assignment requests (manager sends, assignee responds above)
 router.post('/:id/requests',         resolveTaskProject, requireRole('Manager'), ctrl.sendRequest);

@@ -51,6 +51,9 @@ router.delete('/:id/members/:uid',    resolveActivityProject, requireEntityRole(
 // can open it (they're either already a participant, or about to become one).
 router.get('/:id/chat', resolveActivityProject, requireEntityRole('activity', 'Viewer'), ctrl.getChat);
 
+// ── Activity status history — Timeline segmented bars ─────────────────────────
+router.get('/:id/status-history', resolveActivityProject, requireEntityRole('activity', 'Viewer'), ctrl.getStatusHistory);
+
 // ── Activity dependencies ─────────────────────────────────────────────────────
 router.post('/:id/dependencies',          resolveActivityProject, requireEntityRole('activity', 'Manager'), checkCircular('activity'), ctrl.addDep);
 router.delete('/:id/dependencies/:depId', resolveActivityProject, requireEntityRole('activity', 'Manager'), ctrl.removeDep);

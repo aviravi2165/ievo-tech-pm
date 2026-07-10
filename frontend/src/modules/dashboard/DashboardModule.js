@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTheme } from '@emotion/react';
-import { requestApi, taskApi } from '../project-management/api/projectApi';
+import { requestApi, taskApi, projectApi } from '../project-management/api/projectApi';
+import AdminDashboard from './AdminDashboard';
 import {
   Wrap, Header, Title, Subtitle, ErrorBanner, HrLine, LoadingWrap,
   BodyGrid, LeftCol, RightCol, Section, SectionHeadRow, SectionTitle,
@@ -10,6 +11,7 @@ import {
   RespondedNote, Chip, TaskRowBtn, TaskLeft, TaskName, TaskBreadcrumb,
   TaskRight, TaskBadgeRow, TaskDue, AuditRowWrap, AuditDot, AuditBody,
   AuditLine, AuditActor, AuditDetail, AuditMeta, AuditProject,
+  StatGrid, StatTile, StatValue, StatLabel,
 } from './styles/DashboardModule.styles';
 
 function priorityColor(theme, v) {
@@ -195,6 +197,34 @@ function ActiveTaskRow({ task, isLast }) {
   );
 }
 
+// ── Attention row — org-style insight, but scoped to the user's own
+// projects: blocked/overdue tasks anywhere they're involved, not just tasks
+// assigned to them (a Manager needs to see their team's blockers too). ──────
+function AttentionTaskRow({ task, isLast }) {
+  return (
+    <>
+      <TaskRowBtn onClick={() => navigateToProject(task.projectId)}>
+        <TaskLeft>
+          <TaskName>{task.taskName}</TaskName>
+          <TaskBreadcrumb>{task.projectName} › {task.phaseName} › {task.activityName}</TaskBreadcrumb>
+        </TaskLeft>
+        <TaskRight>
+          <TaskBadgeRow>
+            {task.status === 'Blocked' && <Chip bg="#d9534f1a" color="#d9534f" border="#d9534f40">Blocked</Chip>}
+            {task.isOverdue && <Chip bg="#d9534f1a" color="#d9534f" border="#d9534f40">Overdue</Chip>}
+          </TaskBadgeRow>
+          {task.dueDate && <TaskDue overdue={task.isOverdue}>{task.isOverdue ? '⚠ ' : ''}{fmtDate(task.dueDate)}</TaskDue>}
+        </TaskRight>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" strokeWidth="2" style={{ flexShrink:0, color:'inherit', opacity:0.5 }}>
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+      </TaskRowBtn>
+      {!isLast && <HrLine />}
+    </>
+  );
+}
+
 // ── Audit row ──────────────────────────────────────────────────────────────────
 function AuditRow({ entry, isLast }) {
   const [actor, ...rest] = auditText(entry);
@@ -240,10 +270,25 @@ function TabBar({ tabs, active, onChange }) {
 
 // ── Dashboard ──────────────────────────────────────────────────────────────────
 export default function DashboardModule({ currentUser }) {
+  // Admins aren't assignees or members anywhere — every section below
+  // (Task Requests, My Active Tasks, Recent Project Activity) is scoped to
+  // the logged-in user's own project involvement and would render entirely
+  // empty for them. AdminDashboard is a genuinely different view: org-wide
+  // project/user/blocker overview instead of "your" work.
+  if (currentUser?.userType === 'admin') {
+    return <AdminDashboard currentUser={currentUser} />;
+  }
+
+  return <DashboardModuleInner currentUser={currentUser} />;
+}
+
+function DashboardModuleInner({ currentUser }) {
   const theme = useTheme();
   const [requests,    setRequests]    = useState([]);
   const [activeTasks, setActiveTasks] = useState([]);
   const [auditFeed,   setAuditFeed]   = useState([]);
+  const [projects,    setProjects]    = useState([]);
+  const [attention,   setAttention]   = useState([]);
   const [loading,     setLoading]     = useState(true);
   const [acting,      setActing]      = useState(null);
   const [error,       setError]       = useState('');
@@ -253,14 +298,18 @@ export default function DashboardModule({ currentUser }) {
   const fetchAll = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const [reqs, tasks, audit] = await Promise.all([
+      const [reqs, tasks, audit, projs, attn] = await Promise.all([
         requestApi.getMyRequests(),
         taskApi.getMyActiveTasks(),
         taskApi.getMyRecentAudit(),
+        projectApi.list(),
+        taskApi.getMyProjectsOverdueBlocked(),
       ]);
       setRequests(reqs);
       setActiveTasks(tasks);
       setAuditFeed(audit);
+      setProjects(projs);
+      setAttention(attn);
     } catch { setError('Failed to load dashboard data.'); }
     finally { setLoading(false); }
   }, []);
@@ -293,6 +342,8 @@ export default function DashboardModule({ currentUser }) {
   const filtered     = filter === 'All' ? requests : requests.filter(r => r.status === filter);
   const displayName  = [currentUser?.firstName, currentUser?.lastName].filter(Boolean).join(' ')
                      || currentUser?.username || 'there';
+  const blockedCount     = attention.filter(t => t.status === 'Blocked').length;
+  const attnOverdueCount = attention.filter(t => t.isOverdue).length;
 
   // Tab order: All | Accepted | Declined | Pending
   const reqTabs = [
@@ -311,13 +362,41 @@ export default function DashboardModule({ currentUser }) {
         <Title>Good {timeOfDay()}, {displayName}</Title>
         <Subtitle>Overview of your tasks, assignments and recent project activity.</Subtitle>
         {error && <ErrorBanner>{error}</ErrorBanner>}
-        <HrLine />
       </Header>
 
       {/* Body — scrollable */}
       {loading ? (
         <LoadingWrap>Loading…</LoadingWrap>
       ) : (
+        <>
+          <StatGrid>
+            <StatTile>
+              <StatValue>{projects.length}</StatValue>
+              <StatLabel>My Projects</StatLabel>
+            </StatTile>
+            <StatTile clickable={pendingCount > 0} accent={pendingCount ? theme.colors.warning : undefined} onClick={() => pendingCount && setFilter('Pending')}>
+              <StatValue accent={pendingCount ? theme.colors.warning : undefined}>{pendingCount}</StatValue>
+              <StatLabel>Pending Requests</StatLabel>
+            </StatTile>
+            <StatTile>
+              <StatValue>{activeTasks.length}</StatValue>
+              <StatLabel>Active Tasks</StatLabel>
+            </StatTile>
+            <StatTile accent={overdueCount ? theme.colors.danger : undefined}>
+              <StatValue accent={overdueCount ? theme.colors.danger : undefined}>{overdueCount}</StatValue>
+              <StatLabel>Overdue (mine)</StatLabel>
+            </StatTile>
+            <StatTile clickable={blockedCount > 0} accent={blockedCount ? theme.colors.danger : undefined} onClick={() => attention[0] && navigateToProject(attention[0].projectId)}>
+              <StatValue accent={blockedCount ? theme.colors.danger : undefined}>{blockedCount}</StatValue>
+              <StatLabel>Blocked in My Projects</StatLabel>
+            </StatTile>
+            <StatTile clickable={attnOverdueCount > 0} accent={attnOverdueCount ? theme.colors.danger : undefined} onClick={() => attention[0] && navigateToProject(attention[0].projectId)}>
+              <StatValue accent={attnOverdueCount ? theme.colors.danger : undefined}>{attnOverdueCount}</StatValue>
+              <StatLabel>Overdue in My Projects</StatLabel>
+            </StatTile>
+          </StatGrid>
+          <HrLine />
+
         <BodyGrid>
 
           {/* ── Left column (scrollable) ── */}
@@ -360,6 +439,26 @@ export default function DashboardModule({ currentUser }) {
                 </p>
               )}
             </Section>
+
+            {/* Needs Attention — blocked/overdue anywhere in MY projects, not
+                just tasks assigned to me (useful for Managers watching their
+                team's blockers, same framing as the admin dashboard). */}
+            <Section tight>
+              <SectionHeadRow>
+                <SectionTitle>Needs Attention — My Projects</SectionTitle>
+                {attention.length > 0 && <SectionPill bg={theme.colors.danger}>{attention.length}</SectionPill>}
+              </SectionHeadRow>
+              {attention.length === 0
+                ? <Empty text="Nothing blocked or overdue across your projects. 🎉" />
+                : (
+                  <CardWrap>
+                    {attention.map((t, i) => (
+                      <AttentionTaskRow key={t.taskId} task={t} isLast={i === attention.length - 1} />
+                    ))}
+                  </CardWrap>
+                )
+              }
+            </Section>
           </LeftCol>
 
           {/* ── Right column — Audit feed (scrollable) ── */}
@@ -379,6 +478,7 @@ export default function DashboardModule({ currentUser }) {
           </RightCol>
 
         </BodyGrid>
+        </>
       )}
     </Wrap>
   );

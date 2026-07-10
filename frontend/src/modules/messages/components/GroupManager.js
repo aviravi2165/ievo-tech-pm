@@ -75,6 +75,10 @@ export default function GroupManager({
   onDeleteThread,
   onHideThread,
   onOpenConversation,
+  autoManageGroupId,
+  onAutoManageGroupHandled,
+  autoManageThreadId,
+  onAutoManageThreadHandled,
 }) {
   const [creating,       setCreating]       = useState(false);
   const [groupSearch,    setGroupSearch]    = useState('');
@@ -173,6 +177,29 @@ export default function GroupManager({
       setThreadMembers([]);
     } finally { setThreadLoading(false); }
   };
+
+  // ── Auto-open management for a specific group/thread (PM ChatButton, admin
+  // only — see ChatButton.js/MessagingContext.js requestManageGroup/Thread).
+  // groups/threads may not have finished loading yet when the request first
+  // arrives, so this re-runs whenever either list updates until it finds a
+  // match, rather than only firing once on mount.
+  useEffect(() => {
+    if (!autoManageGroupId || !groups.length) return;
+    const match = groups.find(g => String(g.groupId) === String(autoManageGroupId));
+    if (!match) return;
+    openManage(match);
+    onAutoManageGroupHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoManageGroupId, groups]);
+
+  useEffect(() => {
+    if (!autoManageThreadId || !threads?.length) return;
+    const match = threads.find(t => String(t.conversationId) === String(autoManageThreadId));
+    if (!match) return;
+    openManageThread(match);
+    onAutoManageThreadHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoManageThreadId, threads]);
 
   const handleRemoveThreadParticipant = async (conversationId, userId) => {
     try {
@@ -522,25 +549,39 @@ export default function GroupManager({
                 </MemberName>
                 <MemberEmail>{m.email || ''}</MemberEmail>
               </MemberInfo>
-              {/* Admin toggle + Remove button — admin/super-admin only, never on the creator, never while disabled */}
-              {canManage && !isDisabled && !m.isCreator && (
+              {/* Admin toggle — never shown for the creator (they're always
+                  de-facto admin, toggling doesn't apply to them). Remove
+                  button — normally also hidden for the creator (a co-admin
+                  removing the group's own creator would leave it without
+                  its real owner), but the org-wide super admin has
+                  authority over every group regardless of membership and
+                  can remove the creator too (backend allows this
+                  specifically for a real super admin actor — see
+                  groupService.removeMember). */}
+              {canManage && !isDisabled && (
                 <MemberActions>
-                  <BtnGhost
-                    title={m.isAdmin ? `Remove ${m.firstName || ''} as admin` : `Make ${m.firstName || ''} an admin`}
-                    onClick={() => handleToggleMemberAdmin(m.userId, !m.isAdmin)}
-                    disabled={adminToggling === m.userId}
-                    style={{ fontSize: 12, padding: '6px 8px' }}
-                  >
-                    {adminToggling === m.userId ? '…' : (m.isAdmin ? 'Remove Admin' : 'Make Admin')}
-                  </BtnGhost>
+                  {!m.isCreator && (
+                    <BtnGhost
+                      title={m.isAdmin ? `Remove ${m.firstName || ''} as admin` : `Make ${m.firstName || ''} an admin`}
+                      onClick={() => handleToggleMemberAdmin(m.userId, !m.isAdmin)}
+                      disabled={adminToggling === m.userId}
+                      style={{ fontSize: 12, padding: '6px 8px' }}
+                    >
+                      {adminToggling === m.userId ? '…' : (m.isAdmin ? 'Remove Admin' : 'Make Admin')}
+                    </BtnGhost>
+                  )}
 
-                  <IconBtn danger title="Remove from group" onClick={() => handleRemoveMember(m.userId)} disabled={addSaving}>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-                      stroke="currentColor" strokeWidth="2.5">
-                      <line x1="18" y1="6" x2="6" y2="18"/>
-                      <line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
-                  </IconBtn>
+                  {(!m.isCreator || managingGroup.isSuperAdmin) && (
+                    <IconBtn danger
+                      title={m.isCreator ? `Remove ${m.firstName || ''} (group creator)` : 'Remove from group'}
+                      onClick={() => handleRemoveMember(m.userId)} disabled={addSaving}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" strokeWidth="2.5">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                    </IconBtn>
+                  )}
                 </MemberActions>
               )}
             </MemberRow>

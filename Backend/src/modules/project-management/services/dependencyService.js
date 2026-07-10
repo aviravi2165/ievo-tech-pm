@@ -8,7 +8,7 @@
  * Returns array of newly unblocked entity IDs for socket broadcast.
  */
 const { getPool, sql } = require('../../../config/db');
-const { getActivityProgress, getPhaseProgress } = require('./progressService');
+const { getActivityProgress, getPhaseProgress, getActivityHasActiveWork, getPhaseHasActiveWork } = require('./progressService');
 
 const CFG = {
   phase:    { depTable: 'pm_phase_deps',    entityTable: 'pm_phases',     idCol: 'phase_id',    depCol: 'depends_on_phase_id',    done: 'Completed' },
@@ -30,8 +30,15 @@ const CFG = {
 // Blocked forever, since the DB column it was actually being compared
 // against never equals 'Completed'. Matches the same progress-based check
 // blockIfNeeded already uses for the same reason.
-async function isEntityDone(entityType, entityId, statusFromDb) {
+// isActive=false (deactivated) counts as "done" for blocking purposes —
+// a deactivated task will never legitimately reach Complete through normal
+// work, so treating it as still-blocking would trap every dependent behind
+// it forever with no way out except an admin manually removing the
+// dependency edge. Deactivating a task functionally removes it from the
+// dependency graph's "still pending" set, same as if it had finished.
+async function isEntityDone(entityType, entityId, statusFromDb, isActive) {
   const c = CFG[entityType];
+  if (isActive === false) return true;
   if (entityType === 'task') return statusFromDb === c.done;
   const progress = entityType === 'phase'
     ? await getPhaseProgress(entityId)
@@ -51,14 +58,14 @@ async function resolveUnblocked(reqFactory, entityType, completedId) {
     const depsResult = await reqFactory()
       .input('id', sql.Int, id)
       .query(`
-        SELECT e.${c.idCol} AS depId, e.status AS depStatus
+        SELECT e.${c.idCol} AS depId, e.status AS depStatus, e.is_active AS depIsActive
         FROM ${c.depTable} d
         INNER JOIN ${c.entityTable} e ON e.${c.idCol} = d.${c.depCol}
         WHERE d.${c.idCol} = @id AND e.is_deleted = 0
       `);
     let allDone = true;
     for (const dep of depsResult.recordset) {
-      if (!(await isEntityDone(entityType, dep.depId, dep.depStatus))) { allDone = false; break; }
+      if (!(await isEntityDone(entityType, dep.depId, dep.depStatus, dep.depIsActive))) { allDone = false; break; }
     }
     if (allDone) {
       await reqFactory()
@@ -85,10 +92,14 @@ async function blockIfNeeded(reqFactory, entityType, entityId, dependsOnId) {
 
   const statusRes = await reqFactory()
     .input('dependsOnId', sql.Int, dependsOnId)
-    .query(`SELECT status FROM ${c.entityTable} WHERE ${c.idCol} = @dependsOnId`);
-  const depStatus = statusRes.recordset[0]?.status;
+    .query(`SELECT status, is_active FROM ${c.entityTable} WHERE ${c.idCol} = @dependsOnId`);
+  const depStatus   = statusRes.recordset[0]?.status;
+  const depIsActive = statusRes.recordset[0]?.is_active;
 
-  if (depStatus === c.done) {
+  if (depIsActive === false) {
+    // Deactivated dependency — see isEntityDone's comment: never blocks.
+    depDone = true;
+  } else if (depStatus === c.done) {
     depDone = true;
   } else if (entityType === 'task') {
     // Tasks: done is purely status-driven
@@ -105,16 +116,62 @@ async function blockIfNeeded(reqFactory, entityType, entityId, dependsOnId) {
   }
 
   if (!depDone) {
-    // Previously only flipped an entity to Blocked if it happened to still
-    // be 'To Do' at the moment the dependency was added — an entity already
-    // 'Ongoing' when a new unresolved dependency got attached kept its
-    // status and never visually showed as blocked (though updateTaskStatus's
-    // own dependency check below is the actual enforcement; this just keeps
-    // the status column/badge honest).
-    await reqFactory()
-      .input('entityId', sql.Int, entityId)
-      .query(`UPDATE ${c.entityTable} SET status = 'Blocked' WHERE ${c.idCol} = @entityId AND status IN ('To Do', 'Ongoing')`);
+    // Deliberately never overrides real work on the DEPENDENT — but "real
+    // work" means something different per level:
+    //  - Task: its own `status` column IS the reliable signal (a Task never
+    //    silently gains progress any other way), so status='To Do' is
+    //    sufficient to mean "untouched."
+    //  - Phase/Activity: `status` is a separate, mostly-inert column (see
+    //    isEntityDone's comment — it's only ever written by
+    //    blockIfNeeded/resolveUnblocked themselves, never by ordinary work).
+    //    A Manager can start real work on child tasks while the parent
+    //    Activity/Phase's own `status` column still literally reads 'To Do'
+    //    the whole time — checking status alone would auto-block an
+    //    Activity that already has real progress, silently hiding it. Must
+    //    check actual child progress instead: only auto-block if truly 0%.
+    let canAutoBlock;
+    if (entityType === 'task') {
+      canAutoBlock = true; // gated by the status='To Do' clause below
+    } else {
+      // "Ongoing" tasks contribute 0% to progress (progress only measures
+      // % actually COMPLETE, not % touched — see progressService.js) so a
+      // plain progress===0 check does NOT catch "someone started a task but
+      // hasn't finished it yet." getActivityHasActiveWork/getPhaseHasActiveWork
+      // check for that directly (any child task currently 'Ongoing').
+      const [ownProgress, hasActiveWork] = entityType === 'phase'
+        ? await Promise.all([getPhaseProgress(entityId), getPhaseHasActiveWork(entityId)])
+        : await Promise.all([getActivityProgress(entityId), getActivityHasActiveWork(entityId)]);
+      canAutoBlock = ownProgress === 0 && !hasActiveWork;
+    }
+    if (canAutoBlock) {
+      await reqFactory()
+        .input('entityId', sql.Int, entityId)
+        .query(`UPDATE ${c.entityTable} SET status = 'Blocked' WHERE ${c.idCol} = @entityId AND status = 'To Do'`);
+    }
   }
+}
+
+/**
+ * reevaluateDependents — re-runs blockIfNeeded for every entity that
+ * depends on `entityId`, without requiring a new dependency edge to have
+ * just been added. Needed because an entity's "done-ness" can regress
+ * after the fact (a Task moved back from Complete to Ongoing drops its
+ * Activity's progress below 100%, un-completing it) — nothing previously
+ * re-checked existing dependency edges when that happened, so a dependent
+ * that got unblocked once stayed unblocked forever even if its blocker
+ * became un-done again. Safe to call unconditionally after any status
+ * change: blockIfNeeded is a no-op whenever the dependent isn't still
+ * 'To Do' or the dependency is actually done.
+ */
+async function reevaluateDependents(reqFactory, entityType, entityId) {
+  const c = CFG[entityType]; if (!c) return [];
+  const depResult = await reqFactory()
+    .input('id', sql.Int, entityId)
+    .query(`SELECT ${c.idCol} AS id FROM ${c.depTable} WHERE ${c.depCol} = @id`);
+  for (const { id } of depResult.recordset) {
+    await blockIfNeeded(reqFactory, entityType, id, entityId);
+  }
+  return depResult.recordset.map(r => r.id);
 }
 
 /**
@@ -153,4 +210,4 @@ async function isInactive(entityType, entityId) {
   return result.recordset[0]?.is_active === false;
 }
 
-module.exports = { resolveUnblocked, blockIfNeeded, isBlocked, isInactive };
+module.exports = { resolveUnblocked, blockIfNeeded, isBlocked, isInactive, reevaluateDependents };

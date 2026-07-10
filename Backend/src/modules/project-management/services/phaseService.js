@@ -18,7 +18,7 @@ function parseIdList(val) {
 // Phase Manager should get full management controls for that phase even
 // when they're only a plain Member at the project level — it was gating
 // every "can I edit this phase" check on the flat project-level role only.
-async function getPhasesForProject(projectId, userId) {
+async function getPhasesForProject(projectId, userId, isAdmin = false) {
   const pool = await getPool();
   const result = await pool.request()
     .input('projectId', sql.Int, projectId)
@@ -69,7 +69,11 @@ async function getPhasesForProject(projectId, userId) {
     // Cascade: a Phase under an inactive Project reads as inactive too.
     ph.isActive = ph.ownIsActive !== false && ph.parentProjectActive !== false;
     delete ph.ownIsActive; delete ph.parentProjectActive;
-    ph.myRole = userId ? (await getEffectivePhaseRole(userId, ph.phaseId)).role : null;
+    ph.myRole = userId ? (await getEffectivePhaseRole(userId, ph.phaseId, isAdmin)).role : null;
+    // Real status-history tracking for Timeline segmented bars — see
+    // auditService.recordStatusIfChanged's comment for why this lives here
+    // (on every read) rather than only on direct write actions.
+    audit.recordStatusIfChanged('phase', ph.phaseId, ph.projectId, ph.status).catch(() => {});
   }
   return rows;
 }
@@ -84,6 +88,21 @@ async function createPhase(projectId, userId, body) {
   }
 
   const pool = await getPool();
+
+  // A Phase can't be planned to start before its own Project — mirrors the
+  // same rule enforced for Task→Activity (see taskService.createTask) and
+  // the Timeline's visual clamp-to-parent, but at the write boundary so the
+  // underlying data can't drift out of sync with what the UI shows.
+  if (plannedStart) {
+    const projResult = await pool.request()
+      .input('projectId', sql.Int, projectId)
+      .query(`SELECT planned_start AS plannedStart FROM pm_projects WHERE project_id=@projectId`);
+    const projectStart = projResult.recordset[0]?.plannedStart;
+    if (projectStart && new Date(plannedStart) < new Date(projectStart)) {
+      const e = new Error("Phase start date can't be before its Project's planned start date.");
+      e.statusCode = 400; throw e;
+    }
+  }
 
   // Assign display_order = next integer in sequence (1-based)
   const orderResult = await pool.request()
@@ -120,6 +139,17 @@ async function updatePhase(phaseId, projectId, userId, body) {
   if (await isInactive('phase', phaseId) || await isInactive('project', projectId)) {
     const e = new Error('This Phase is inactive — reactivate it before making changes.');
     e.statusCode = 409; throw e;
+  }
+  if (body.plannedStart !== undefined && body.plannedStart) {
+    const pool0 = await getPool();
+    const projResult = await pool0.request()
+      .input('projectId', sql.Int, projectId)
+      .query(`SELECT planned_start AS plannedStart FROM pm_projects WHERE project_id=@projectId`);
+    const projectStart = projResult.recordset[0]?.plannedStart;
+    if (projectStart && new Date(body.plannedStart) < new Date(projectStart)) {
+      const e = new Error("Phase start date can't be before its Project's planned start date.");
+      e.statusCode = 400; throw e;
+    }
   }
   const fields = {};
   if (body.name         !== undefined) fields.name          = body.name.trim();
@@ -255,4 +285,9 @@ async function reorderPhase(projectId, phaseId, direction) {
   });
 }
 
-module.exports = { getPhasesForProject, createPhase, updatePhase, deletePhase, reactivatePhase, addPhaseDep, removePhaseDep, reorderPhase };
+// ── Status history — Timeline segmented bars ────────────────────────────────
+async function getPhaseStatusHistory(phaseId) {
+  return audit.getStatusHistory('phase', phaseId);
+}
+
+module.exports = { getPhasesForProject, createPhase, updatePhase, deletePhase, reactivatePhase, addPhaseDep, removePhaseDep, reorderPhase, getPhaseStatusHistory };
