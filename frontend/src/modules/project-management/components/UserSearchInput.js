@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useTheme } from '@emotion/react';
+import { X } from 'lucide-react';
 import { userApi } from '../api/projectApi';
+import { UserDropdown, UserOption } from '../styles/shared.styles';
 
 function initials(name = '') {
   return (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
@@ -16,6 +19,7 @@ function initials(name = '') {
  *   style            — extra style on wrapper
  */
 export default function UserSearchInput({ selectedUser, onSelect, excludeUserIds = [], placeholder = 'Search by name or email…', style }) {
+  const theme = useTheme();
   const [query,   setQuery]   = useState('');
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -78,10 +82,10 @@ export default function UserSearchInput({ selectedUser, onSelect, excludeUserIds
         placeholder={placeholder}
         autoComplete="off"
         style={{
-          width: '100%', background: '#fff', border: '1px solid var(--divider)',
-          borderRadius: 'var(--radius)', padding: '7px 10px', color: 'var(--light)',
+          width: '100%', background: theme.colors.mid, border: '1px solid',
+          borderRadius: theme.radius.sm, padding: '7px 10px', color: theme.colors.onyx,
           fontSize: 12, outline: 'none', fontFamily: 'inherit',
-          borderColor: selectedUser ? 'var(--gold)' : 'var(--divider)',
+          borderColor: selectedUser ? theme.colors.espresso : theme.colors.border,
           transition: 'border-color 0.15s',
         }}
       />
@@ -91,40 +95,47 @@ export default function UserSearchInput({ selectedUser, onSelect, excludeUserIds
           onMouseDown={() => { onSelect(null); setQuery(''); }}
           style={{
             position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)',
-            background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)',
-            fontSize: 14, lineHeight: 1, padding: '0 2px',
+            background: 'none', border: 'none', cursor: 'pointer', color: theme.colors.ash,
+            display: 'flex', padding: '0 2px',
           }}
           title="Clear"
-        >✕</button>
+        ><X size={13} strokeWidth={2} /></button>
       )}
       {open && (loading || results.length > 0) && (
-        <div className="pm-user-dropdown">
+        <UserDropdown>
           {loading && (
-            <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--muted)' }}>Searching…</div>
+            <div style={{ padding: '10px 12px', fontSize: 12, color: theme.colors.ash }}>Searching…</div>
           )}
           {!loading && results.map(u => {
             const name = `${u.firstName || ''} ${u.lastName || ''}`.trim();
             return (
-              <div key={u.userId} className="pm-user-option" onMouseDown={() => handlePick(u)}>
+              <UserOption key={u.userId} onMouseDown={() => handlePick(u)}>
                 <div style={{
-                  width: 28, height: 28, borderRadius: '50%', background: 'var(--mid)',
+                  width: 28, height: 28, borderRadius: '50%', background: theme.colors.mid,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 10, fontWeight: 700, color: 'var(--gold)', flexShrink: 0,
-                  fontFamily: 'var(--font-display)',
+                  fontSize: 10, fontWeight: 700, color: theme.colors.onyx, flexShrink: 0,
+                  fontFamily: theme.font.display,
                 }}>
                   {initials(name || u.email)}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--light)', fontWeight: 500 }}>{name || '—'}</div>
-                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>{u.email}</div>
+                  <div style={{ fontSize: 12, color: theme.colors.onyx, fontWeight: 500 }}>{name || '—'}</div>
+                  <div style={{ fontSize: 11, color: theme.colors.ash }}>{u.email}</div>
                 </div>
-              </div>
+                <div style={{
+                  fontSize: 10, fontWeight: 600, color: theme.colors.ash, flexShrink: 0,
+                  background: theme.colors.mid, borderRadius: theme.radius.sm,
+                  padding: '3px 7px', textTransform: 'uppercase', letterSpacing: '0.03em',
+                }}>
+                  {u.deptName || 'No dept'}
+                </div>
+              </UserOption>
             );
           })}
           {!loading && results.length === 0 && (
-            <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--muted)' }}>No users found.</div>
+            <div style={{ padding: '10px 12px', fontSize: 12, color: theme.colors.ash }}>No users found.</div>
           )}
-        </div>
+        </UserDropdown>
       )}
     </div>
   );

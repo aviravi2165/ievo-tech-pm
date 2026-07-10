@@ -103,9 +103,20 @@ export function MessagingProvider({ children }) {
       const data = await messageApi.getInbox();
       const all  = data.conversations || data || [];
 
-      // Split into inbox (bcc/cc) and group (group_thread)
-      const inbox  = all.filter(c => c.convType !== 'group_thread' && !c.groupName);
-      const groups = all.filter(c => c.convType === 'group_thread' || !!c.groupName);
+      // Split into inbox (bcc/cc) and group (group_thread) — EXCEPT a
+      // group_thread the user has been removed from (isRemoved=true) goes
+      // to inbox instead. The Groups tab (GroupManager) only ever lists
+      // from comm_group_members, which is hard-deleted on removal, so a
+      // removed group conversation would never appear there again — this
+      // was the exact "chat disappears completely for a removed
+      // participant" bug, still present for group threads specifically
+      // (CC/BCC threads were already reachable via inbox regardless of
+      // removal). Inbox already has full soft-remove support (history
+      // window, read-only composer state), so routing it there instead
+      // keeps the removed user's history reachable.
+      const isRemovedGroupThread = c => c.convType === 'group_thread' && c.isRemoved;
+      const inbox  = all.filter(c => (c.convType !== 'group_thread' && !c.groupName) || isRemovedGroupThread(c));
+      const groups = all.filter(c => (c.convType === 'group_thread' || !!c.groupName) && !isRemovedGroupThread(c));
 
       const active = activeConvIdRef.current;
 

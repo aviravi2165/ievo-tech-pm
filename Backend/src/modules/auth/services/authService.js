@@ -122,17 +122,19 @@ async function searchUsers(q, limit = 10, excludeUserId = null) {
   if (!q || !q.trim()) {
     const result = await req.query(`
       SELECT TOP (@limit)
-        user_id    AS userId,
-        first_name AS firstName,
-        last_name  AS lastName,
-        email,
-        username,
-        user_type  AS userType
-      FROM auth_users
-      WHERE is_active = 1
-        AND user_type <> 'admin'
-        ${excludeClause}
-      ORDER BY first_name, last_name
+        u.user_id    AS userId,
+        u.first_name AS firstName,
+        u.last_name  AS lastName,
+        u.email,
+        u.username,
+        u.user_type  AS userType,
+        d.dept_name  AS deptName
+      FROM auth_users u
+      LEFT JOIN dept_master d ON d.dept_id = u.dept_id
+      WHERE u.is_active = 1
+        AND u.user_type <> 'admin'
+        ${excludeClause.replace('user_id', 'u.user_id')}
+      ORDER BY u.first_name, u.last_name
     `);
     return result.recordset;
   }
@@ -140,24 +142,26 @@ async function searchUsers(q, limit = 10, excludeUserId = null) {
   req.input('search', sql.NVarChar, `%${q.trim()}%`);
   const result = await req.query(`
     SELECT TOP (@limit)
-      user_id    AS userId,
-      first_name AS firstName,
-      last_name  AS lastName,
-      email,
-      username,
-      user_type  AS userType
-    FROM auth_users
-    WHERE is_active = 1
-      AND user_type <> 'admin'
-      ${excludeClause}
+      u.user_id    AS userId,
+      u.first_name AS firstName,
+      u.last_name  AS lastName,
+      u.email,
+      u.username,
+      u.user_type  AS userType,
+      d.dept_name  AS deptName
+    FROM auth_users u
+    LEFT JOIN dept_master d ON d.dept_id = u.dept_id
+    WHERE u.is_active = 1
+      AND u.user_type <> 'admin'
+      ${excludeClause.replace('user_id', 'u.user_id')}
       AND (
-        first_name                     LIKE @search
-        OR last_name                   LIKE @search
-        OR username                    LIKE @search
-        OR email                       LIKE @search
-        OR CONCAT(first_name, ' ', last_name) LIKE @search
+        u.first_name                     LIKE @search
+        OR u.last_name                   LIKE @search
+        OR u.username                    LIKE @search
+        OR u.email                       LIKE @search
+        OR CONCAT(u.first_name, ' ', u.last_name) LIKE @search
       )
-    ORDER BY first_name, last_name
+    ORDER BY u.first_name, u.last_name
   `);
   return result.recordset;
 }

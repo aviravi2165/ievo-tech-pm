@@ -16,6 +16,18 @@ function requireRole(minRole) {
       const projectId = req.params.projectId || req.pmProjectId;
       if (!projectId) return res.status(400).json({ error: 'projectId not resolved for role check' });
 
+      // Admins get oversight/management access to every project (mirrors
+      // the messaging module's super-admin bypass) without needing a
+      // pm_members row — but this only grants VIEW/MANAGE access to
+      // existing entities; it does not make admins selectable as
+      // assignees/members anywhere (authService.searchUsers excludes
+      // user_type='admin' from that list entirely).
+      if (req.user.userType === 'admin') {
+        req.projectRole = 'Manager';
+        req.isSuperAdmin = true;
+        return next();
+      }
+
       const pool = await getPool();
       const result = await pool.request()
         .input('projectId', sql.Int,              projectId)

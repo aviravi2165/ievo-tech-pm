@@ -7,6 +7,8 @@ import GroupManager  from '../components/GroupManager';
 import { useMessaging } from '../context/MessagingContext';
 import { useThreads }   from '../hooks/useThreads';
 import { useSocket }    from '../context/SocketContext';
+import { ModuleScreen, Layout, Main } from '../styles/MessagingPage.styles';
+import { ToastContainer, ToastItem } from '../styles/shared.styles';
 
 export default function MessagingPage({ currentUser }) {
   const {
@@ -190,10 +192,10 @@ export default function MessagingPage({ currentUser }) {
   const showGroups = (tab === 'groups' || (isSuperAdmin && tab === 'threads')) && !activeConv;
 
   return (
-    <div className="msg-module-screen">
+    <ModuleScreen>
       <MessageTabBar tab={tab} onTabChange={handleTabChange} isSuperAdmin={isSuperAdmin} />
 
-      <div ref={layoutRef} className="msg-layout msg-layout--stacked">
+      <Layout ref={layoutRef} stacked>
         {showList && (
           <InboxSidebar
             hideTabs
@@ -209,7 +211,7 @@ export default function MessagingPage({ currentUser }) {
         )}
 
         {showThread && (
-          <main className="msg-main msg-main--full">
+          <Main full data-msg-main>
             <ChatWindow
               conversation={activeConv}
               onBack={handleBack}
@@ -218,7 +220,7 @@ export default function MessagingPage({ currentUser }) {
               onDeleteGroup={handleDeleteGroup}
               onHideGroup={handleHideGroup}
             />
-          </main>
+          </Main>
         )}
 
         {showGroups && (
@@ -241,7 +243,7 @@ export default function MessagingPage({ currentUser }) {
               onOpenConversation={handleOpenGroupConversation}
             />
         )}
-      </div>
+      </Layout>
 
       {composeOpen && (
         <ComposeModal
@@ -253,16 +255,14 @@ export default function MessagingPage({ currentUser }) {
       )}
 
       {toasts.length > 0 && (
-        <div className="toast-container">
+        <ToastContainer>
           {toasts.map(t => (
-            <div key={t.id}
-              className={`toast ${t.type}${t.onClick ? ' toast-clickable' : ''}`}
-              onClick={t.onClick}>
+            <ToastItem key={t.id} kind={t.type} clickable={!!t.onClick} onClick={t.onClick}>
               {t.msg}
-            </div>
+            </ToastItem>
           ))}
-        </div>
+        </ToastContainer>
       )}
-    </div>
+    </ModuleScreen>
   );
 }

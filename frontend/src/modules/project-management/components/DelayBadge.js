@@ -11,12 +11,14 @@
  * not a replacement for it (something can be "In Progress" AND "Late by 3d"
  * at the same time; those are two different facts).
  */
+import { LateTag } from '../styles/shared.styles';
+
 export default function DelayBadge({ days, label = 'Delayed by' }) {
   if (!days || days <= 0) return null;
   return (
-    <span className="pm-late-tag" style={{ whiteSpace: 'nowrap' }}
+    <LateTag style={{ whiteSpace: 'nowrap' }}
       title={`${label} ${days} day${days === 1 ? '' : 's'}`}>
       ⚠ {label} {days}d
-    </span>
+    </LateTag>
   );
 }

@@ -28,7 +28,7 @@
  */
 
 const { getPool, withTransaction, sql } = require('../../../config/db');
-const { resolveActivityManagerIds, resolveActivityThreadSeedIds } = require('./roleService');
+const { resolveTaskManagerIds, resolveActivityThreadSeedIds } = require('./roleService');
 
 // ── Low-level: mirrors messageService's MERGE-based participant upsert ────────
 // Duplicated intentionally rather than importing from messageService — these
@@ -182,7 +182,11 @@ async function ensureTaskThread(taskId) {
   // Hierarchical subject: Project / Phase / Activity / Task
   const subject = `${task.projectName} / ${task.phaseName} / ${task.activityName} / ${task.taskName}`;
 
-  const managerIds = await resolveActivityManagerIds(task.activityId);
+  // resolveTaskManagerIds (not resolveActivityManagerIds) — cumulatively
+  // includes Phase and Project Managers too, not just the Activity's own
+  // explicit Manager. Per the role hierarchy they have authority over this
+  // task regardless of whether the Activity has its own Manager set.
+  const managerIds = await resolveTaskManagerIds(task.activityId);
   const seedIds = [...new Set([...(task.createdBy ? [String(task.createdBy)] : []), ...managerIds])];
 
   let conversationId;
@@ -203,7 +207,8 @@ async function ensureTaskThread(taskId) {
 
 /**
  * Recomputes the task thread's desired membership (accepted assignees +
- * current Activity Manager(s)) and applies additions/removals.
+ * every Manager with authority over it — Activity, Phase, and Project,
+ * cumulatively) and applies additions/removals.
  */
 async function syncTaskThreadParticipants(taskId) {
   const pool = await getPool();
@@ -218,7 +223,7 @@ async function syncTaskThreadParticipants(taskId) {
 
   const [assignees, managerIds, current] = await Promise.all([
     getAcceptedAssigneeIds(taskId),
-    resolveActivityManagerIds(activityId),
+    resolveTaskManagerIds(activityId),
     getActiveParticipantIds(conversationId),
   ]);
   const desired = new Set([...assignees, ...managerIds]);

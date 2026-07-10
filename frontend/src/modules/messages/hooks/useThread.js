@@ -13,6 +13,18 @@ export function useThread(conversationId) {
   // Callback ref so ChatWindow can react to incoming messages (scroll, mark-read pill)
   const onNewMessageRef = useRef(null);
 
+  // BUG FIX: `loading` alone can't distinguish "haven't started fetching
+  // yet" from "finished fetching" — both read as `false` (it's initialized
+  // false, and only flips true *inside* the async fetchThread call, which
+  // doesn't take effect until a later render). A consumer effect reading
+  // `loading` in the very first render after conversationId changes sees
+  // the stale `false` and can act as if data has loaded when `messages` is
+  // still `[]`. loadedForRef is a ref (mutated synchronously, no render
+  // delay) tracking which conversationId we've actually finished fetching
+  // for, so callers can derive a reliable "ready" signal below instead of
+  // racing the loading flag's own render timing.
+  const loadedForRef = useRef(null);
+
   const fetchThread = useCallback(async () => {
     if (!conversationId) return;
     try {
@@ -24,6 +36,7 @@ export function useThread(conversationId) {
     } catch (err) {
       setError(err?.response?.data?.error || err.message || 'Failed to load conversation.');
     } finally {
+      loadedForRef.current = conversationId;
       setLoading(false);
     }
   }, [conversationId]);
@@ -34,6 +47,13 @@ export function useThread(conversationId) {
     setError(null);
     setMessages([]);
     setConversation(null);
+    // Reset synchronously (not just inside fetchThread's finally) so `ready`
+    // reads false immediately for this new conversationId, even if it's one
+    // we'd already loaded before (e.g. re-opening a conversation) — without
+    // this, loadedForRef.current could already equal the new conversationId
+    // from a previous visit, making `ready` true for one render before the
+    // fresh fetch actually starts, while messages is still the just-reset [].
+    loadedForRef.current = null;
     markedReadRef.current = new Set();
     fetchThread();
     if (socket) socket.emit('join_conversation', { conversationId });
@@ -184,8 +204,14 @@ export function useThread(conversationId) {
     });
   }, []);
 
+  // True only once fetchThread has actually resolved (success or error)
+  // for the CURRENT conversationId — unlike raw `loading`, this can't be
+  // read as "done" before the fetch has even started. See loadedForRef's
+  // comment above.
+  const ready = loadedForRef.current === conversationId;
+
   return {
-    messages, conversation, loading, error,
+    messages, conversation, loading, error, ready,
     markRead, markAllRead, sendReply, editMessage: editMessageLocal,
     appendMessage,
     refetch: fetchThread,

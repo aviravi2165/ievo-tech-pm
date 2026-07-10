@@ -1,20 +1,36 @@
 import { useState, useEffect } from 'react';
+import { useTheme } from '@emotion/react';
+import { ArrowRight, FileText, RotateCcw, Trash2 } from 'lucide-react';
 import StatusBadge, { InactiveBadge } from './StatusBadge';
 import PriorityBadge from './PriorityBadge';
-import OverdueBadge from './OverdueBadge';
 import UserSearchInput from './UserSearchInput';
 import ChatButton from './ChatButton';
 import { taskApi } from '../api/projectApi';
+import { showToast, apiErrorMessage } from '../hooks/toastStore';
+import { TaskTableRow, Cell, COL, Assignees, Avatar, RowActions } from '../styles/Table.styles';
+import { TaskName } from '../styles/TaskItem.styles';
+import {
+  DepBadge, IconBtn, IconBtnDanger, BtnPrimary, BtnGhost, SubPanel, SubPanelTitle, SubPanelHint,
+  MemberRow, LateTag, DueSoonTag,
+} from '../styles/shared.styles';
 
 // Statuses: To Do / Ongoing / Complete / Blocked (renamed from In Progress / Done)
-const STATUS_OPTIONS = ['To Do', 'Ongoing', 'Complete', 'Blocked'];
+// Blocked is system-managed (set/cleared automatically by the dependency
+// graph, same as Phase/Activity status) — not a manual choice. Selecting it
+// by hand did nothing useful and, worse, let a Blocked task be dragged
+// straight to Complete via the dropdown, bypassing prerequisite enforcement.
+const STATUS_OPTIONS = ['To Do', 'Ongoing', 'Complete'];
 
-// Badge shown per request status alongside an assignee's name
-const REQUEST_BADGE = {
-  Pending:  { color: '#a85f00', bg: '#fff3dc', label: 'Pending'  },
-  Accepted: { color: '#1a6e36', bg: '#e8faf0', label: 'Accepted' },
-  Declined: { color: '#7b1d1d', bg: '#fdecea', label: 'Declined' },
-};
+// Badge shown per request status alongside an assignee's name — theme-driven
+// (module-level object can't call useTheme(), so this takes theme as a param).
+function requestBadge(theme, status) {
+  const map = {
+    Pending:  { color: theme.colors.warning, bg: `${theme.colors.warning}24`, label: 'Pending'  },
+    Accepted: { color: theme.colors.success, bg: `${theme.colors.success}24`, label: 'Accepted' },
+    Declined: { color: theme.colors.danger,  bg: `${theme.colors.danger}24`,  label: 'Declined' },
+  };
+  return map[status] || map.Pending;
+}
 
 function parseLocalDate(d) {
   if (!d) return null;
@@ -29,27 +45,46 @@ function fmtDate(d) {
 function toInput(d) { return d ? String(d).split('T')[0] : ''; }
 function initials(name = '') { return (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(); }
 
+// Previously hid the date entirely behind a bare "—" whenever status was
+// 'Complete', REGARDLESS of whether a due date actually existed — so a
+// completed task with a real due date and one with no due date at all
+// looked identical, hiding real information the column exists to show.
+// Now only genuinely missing dates show "—"; a completed task still shows
+// its actual date, just without the urgency styling (no point flagging a
+// finished task as "late").
 function DueDateBadge({ dueDate, status }) {
-  if (!dueDate || status === 'Complete') return null;
+  const theme = useTheme();
+  if (!dueDate) return <span style={{ fontSize: 11, color: theme.colors.ashLight }}>—</span>;
+  if (status === 'Complete') return <span style={{ fontSize: 11, color: theme.colors.ashLight }}>{fmtDate(dueDate)}</span>;
   const dt   = parseLocalDate(dueDate);
   const now  = new Date(); now.setHours(0, 0, 0, 0);
   const diff = Math.round((dt - now) / 86400000);
-  if (diff < 0)  return <span className="pm-late-tag">⚠ {Math.abs(diff)}d late</span>;
-  if (diff <= 2) return <span className="pm-due-soon">Due {diff === 0 ? 'today' : `in ${diff}d`}</span>;
-  return <span style={{ fontSize: 11, color: 'var(--muted)' }}>Due {fmtDate(dueDate)}</span>;
+  if (diff < 0)  return <LateTag>⚠ {Math.abs(diff)}d late</LateTag>;
+  if (diff <= 2) return <DueSoonTag>Due {diff === 0 ? 'today' : `in ${diff}d`}</DueSoonTag>;
+  return <span style={{ fontSize: 11, color: theme.colors.ash }}>{fmtDate(dueDate)}</span>;
 }
 
-function Avatars({ assignees = [] }) {
-  if (!assignees.length) return <span style={{ fontSize: 11, color: 'var(--muted)', fontStyle: 'italic' }}>Unassigned</span>;
+// pending — Pending (not yet accepted) requests, shown as dashed/muted
+// avatars alongside accepted ones instead of the row falling back to
+// "Unassigned" the moment you send a request. Without this, sending an
+// assignment request looked like it silently did nothing until the other
+// person accepted it.
+function Avatars({ assignees = [], pending = [] }) {
+  const theme = useTheme();
+  if (!assignees.length && !pending.length) {
+    return <span style={{ fontSize: 11, color: theme.colors.ash, fontStyle: 'italic' }}>Unassigned</span>;
+  }
+  const shown = [...assignees, ...pending].slice(0, 4);
+  const extra = (assignees.length + pending.length) - shown.length;
   return (
-    <div className="pm-assignees">
-      {assignees.slice(0, 4).map(a => (
-        <div key={a.userId} className="pm-avatar" title={`${a.name} (${a.requestStatus || 'Accepted'})`}>
+    <Assignees>
+      {shown.map(a => (
+        <Avatar key={a.userId} pending={!assignees.includes(a)} title={`${a.name} (${a.requestStatus || 'Accepted'})`}>
           {initials(a.name)}
-        </div>
+        </Avatar>
       ))}
-      {assignees.length > 4 && <div className="pm-avatar">+{assignees.length - 4}</div>}
-    </div>
+      {extra > 0 && <Avatar>+{extra}</Avatar>}
+    </Assignees>
   );
 }
 
@@ -61,14 +96,26 @@ function Avatars({ assignees = [] }) {
  * assignees    — only Accepted requests (rendered as confirmed participants)
  * activityMembers — members of the parent activity; task assignees are picked from this list
  *                   (or a new user can be selected, which auto-adds them to the activity on accept)
+ *
+ * Renders as one real table row (Name / Assignee / Due Date / Priority /
+ * Status columns, matching the shared TableHeadCell widths in
+ * ProjectDetailPage.js) followed by whichever inline edit panel is open —
+ * same panels, same handlers as before, just no longer wrapped in a
+ * bordered "card" div.
  */
-export default function TaskItem({ task, myRole, myUserId, allTasks = [], activityMembers = [], onRefetch, onRefetchProject }) {
+// activityRole — the user's EFFECTIVE role on the PARENT activity (a task
+// has no role of its own; per roleService, task access is decided by
+// assignee-or-Activity-Manager-or-above). Previously this was the flat
+// project-level myRole, so an Activity Manager who was only a project
+// Member never got management controls on tasks in their own activity.
+export default function TaskItem({ task, activityRole, myUserId, allTasks = [], activityMembers = [], onRefetch, onRefetchProject }) {
+  const theme = useTheme();
   // Check if current user has an accepted request for this task
   const isAssigned = (task.assignees || []).some(a => String(a.userId) === String(myUserId));
-  const canManager = myRole === 'Manager';
-  const canMember  = myRole === 'Member' && isAssigned;
+  const canManager = activityRole === 'Manager';
+  const canMember  = (activityRole === 'Employee' || activityRole === 'Member') && isAssigned;
   const canEdit    = canManager || canMember;
-  const canStatus  = canEdit || (myRole === 'Member' && isAssigned);
+  const canStatus  = canEdit;
   const isInactive = task.isActive === false;
 
   const [localStatus,  setLocalStatus]  = useState(task.status);
@@ -95,24 +142,30 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
     try {
       await taskApi.updateStatus(task.taskId, s);
       onRefetch?.(); onRefetchProject?.();
-    } catch { setLocalStatus(prev); }
+    } catch (err) {
+      setLocalStatus(prev);
+      showToast(apiErrorMessage(err, 'Failed to update status.'));
+    }
   };
 
   // ── Name edit ──────────────────────────────────────────────────────────────
   const handleNameSave = async () => {
     if (!editName.trim()) return;
-    try { await taskApi.update(task.taskId, { name: editName }); onRefetch?.(); setEditingName(false); } catch {}
+    try { await taskApi.update(task.taskId, { name: editName }); onRefetch?.(); setEditingName(false); }
+    catch (err) { showToast(apiErrorMessage(err, 'Failed to rename task.')); }
   };
 
   // ── Due date save ──────────────────────────────────────────────────────────
   const handleDueSave = async () => {
     if (!editDue) return;
-    try { await taskApi.update(task.taskId, { dueDate: editDue }); onRefetch?.(); setPanel(null); } catch {}
+    try { await taskApi.update(task.taskId, { dueDate: editDue }); onRefetch?.(); setPanel(null); }
+    catch (err) { showToast(apiErrorMessage(err, 'Failed to update due date.')); }
   };
 
   // ── Description save ───────────────────────────────────────────────────────
   const handleDescSave = async () => {
-    try { await taskApi.update(task.taskId, { description: editDesc }); onRefetch?.(); setPanel(null); } catch {}
+    try { await taskApi.update(task.taskId, { description: editDesc }); onRefetch?.(); setPanel(null); }
+    catch (err) { showToast(apiErrorMessage(err, 'Failed to update description.')); }
   };
 
   // ── Delete ─────────────────────────────────────────────────────────────────
@@ -122,11 +175,12 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
       const { action } = await taskApi.delete(task.taskId);
       if (action === 'deactivated') alert('This task has assignees — it was deactivated instead of deleted.');
       onRefetch?.(); onRefetchProject?.();
-    } catch {}
+    } catch (err) { showToast(apiErrorMessage(err, 'Failed to delete task.')); }
   };
 
   const handleReactivate = async () => {
-    try { await taskApi.reactivate(task.taskId); onRefetch?.(); onRefetchProject?.(); } catch {}
+    try { await taskApi.reactivate(task.taskId); onRefetch?.(); onRefetchProject?.(); }
+    catch (err) { showToast(apiErrorMessage(err, 'Failed to reactivate task.')); }
   };
 
   // ── Assignment requests ────────────────────────────────────────────────────
@@ -134,9 +188,6 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
   // who declined and re-assign. assignees (Accepted only) are the confirmed participants.
   const allRequests = task.allRequests || [];
   const requestedIds = new Set(allRequests.map(r => String(r.userId)));
-
-  // Activity member IDs for filtering the search to only show activity members
-  const activityMemberIds = new Set(activityMembers.map(m => String(m.userId)));
 
   const handleSendRequest = async () => {
     if (!assignSearch) return;
@@ -151,7 +202,8 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
   };
 
   const handleRemoveRequest = async (uid) => {
-    try { await taskApi.removeRequest(task.taskId, uid); onRefetch?.(); } catch {}
+    try { await taskApi.removeRequest(task.taskId, uid); onRefetch?.(); }
+    catch (err) { showToast(apiErrorMessage(err, 'Failed to remove request.')); }
   };
 
   // ── Dependencies ───────────────────────────────────────────────────────────
@@ -161,71 +213,109 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
   const handleAddDep = async (depId) => {
     setDepError('');
     try { await taskApi.addDep(task.taskId, depId); onRefetch?.(); }
-    catch (err) { setDepError(err?.response?.data?.error || 'Cannot add dependency — would create a deadlock or cycle.'); }
+    catch (err) { setDepError(apiErrorMessage(err, 'Cannot add dependency — would create a deadlock or cycle.')); }
   };
   const handleRemoveDep = async (depId) => {
-    try { await taskApi.removeDep(task.taskId, depId); onRefetch?.(); } catch {}
+    try { await taskApi.removeDep(task.taskId, depId); onRefetch?.(); }
+    catch (err) { showToast(apiErrorMessage(err, 'Failed to remove dependency.')); }
   };
 
   return (
-    <div className="pm-task">
-      {/* ── Main row ── */}
-      <div className="pm-task-row">
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {/* Task name */}
-          {editingName ? (
-            <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
-              <input value={editName} onChange={e => setEditName(e.target.value)}
-                autoFocus
-                style={{ flex: 1, background: '#fff', border: '1px solid var(--gold)', borderRadius: 'var(--radius)', padding: '4px 8px', color: 'var(--light)', fontSize: 13, fontFamily: 'inherit', outline: 'none' }}
-                onKeyDown={e => { if (e.key === 'Enter') handleNameSave(); if (e.key === 'Escape') { setEditingName(false); setEditName(task.name); } }} />
-              <button className="pm-btn pm-btn-primary" style={{ padding: '3px 10px', fontSize: 11 }} onClick={handleNameSave}>✓</button>
-              <button className="pm-btn pm-btn-ghost"   style={{ padding: '3px 8px',  fontSize: 11 }} onClick={() => { setEditingName(false); setEditName(task.name); }}>✕</button>
-            </div>
-          ) : (
-            <div className="pm-task-name" style={{ textDecoration: localStatus === 'Complete' ? 'line-through' : 'none', opacity: localStatus === 'Complete' ? 0.5 : 1 }}>
+    <>
+      <TaskTableRow>
+        {/* Name column — inline rename preserved */}
+        {editingName ? (
+          <Cell onClick={e => e.stopPropagation()}>
+            <input value={editName} onChange={e => setEditName(e.target.value)}
+              autoFocus
+              style={{ width:150, background: theme.colors.mid, border: `1px solid ${theme.colors.espresso}`, borderRadius: theme.radius.sm, padding: '4px 8px', color: theme.colors.onyx, fontSize: 13, fontFamily: 'inherit', outline: 'none' }}
+              onKeyDown={e => { if (e.key === 'Enter') handleNameSave(); if (e.key === 'Escape') { setEditingName(false); setEditName(task.name); } }} />
+            <BtnPrimary style={{ padding: '3px 10px', fontSize: 11 }} onClick={handleNameSave}>✓</BtnPrimary>
+            <BtnGhost style={{ padding: '3px 8px',  fontSize: 11 }} onClick={() => { setEditingName(false); setEditName(task.name); }}>✕</BtnGhost>
+          </Cell>
+        ) : (
+          // canManager && !isInactive — same permission the old dedicated
+          // "Rename" icon required. Clicking the name itself now opens the
+          // same inline rename input that icon used to open; no separate
+          // icon needed for an action whose target is already the thing
+          // you're clicking on.
+          <Cell
+            onClick={(canManager && !isInactive) ? (e) => { e.stopPropagation(); setEditingName(true); } : undefined}
+            style={{ cursor: (canManager && !isInactive) ? 'pointer' : 'default' }}
+            title={(canManager && !isInactive) ? 'Click to rename' : undefined}
+          >
+            <TaskName title={task.name} style={{
+              overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+              textDecoration: localStatus === 'Complete' ? 'line-through' : 'none', opacity: localStatus === 'Complete' ? 0.5 : 1,
+            }}>
               {task.name}
-            </div>
-          )}
-
-          {/* Meta row — only essential inline badges, no wrapping */}
-          <div className="pm-task-meta">
-            <PriorityBadge priority={task.priority} />
+            </TaskName>
             {isInactive && <InactiveBadge />}
-            <DueDateBadge dueDate={task.dueDate} status={localStatus} />
-            {task.isOverdue && localStatus !== 'Complete' && <OverdueBadge />}
-            {task.estimatedHours && <span style={{ flexShrink:0 }}>{task.estimatedHours}h</span>}
-            <Avatars assignees={task.assignees} />
             {task.dependsOn?.length > 0 && (
-              <span className="pm-dep-badge" onClick={e => { e.stopPropagation(); togglePanel('deps'); }}
-                title="This task has prerequisites">
-                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+              <DepBadge onClick={e => { e.stopPropagation(); togglePanel('deps'); }}
+                title="This task has prerequisites" style={{ cursor: 'pointer', flexShrink: 0 }}>
+                <ArrowRight size={10} strokeWidth={2.5} />
                 {task.dependsOn.length}
-              </span>
+              </DepBadge>
             )}
-          </div>
-        </div>
+            {task.estimatedHours && <span style={{ fontSize: 10, color: theme.colors.ashLight, flexShrink: 0 }}>{task.estimatedHours}h</span>}
+          </Cell>
+        )}
 
-        {/* Status select / badge — frozen (no select) while inactive */}
-        <div style={{ flexShrink:0 }} onClick={e => e.stopPropagation()}>
-          {canStatus && !isInactive ? (
+        {/* Assignee column — clicking the avatar stack (however many
+            assignees, pending or accepted) opens the same "manage
+            assignees" panel the old dedicated "Assign" icon opened. One
+            click target instead of a stack of avatars PLUS a separate
+            icon that does the same thing. */}
+        <Cell w={COL.assignee}
+          onClick={(canManager && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('assign'); } : undefined}
+          style={{ cursor: (canManager && !isInactive) ? 'pointer' : 'default' }}
+          title={(canManager && !isInactive) ? 'Click to manage assignees' : undefined}
+        >
+          <Avatars assignees={task.assignees} pending={allRequests.filter(r => r.requestStatus === 'Pending')} />
+        </Cell>
+
+        {/* Due date column — clicking the date/badge opens the same edit
+            panel the old dedicated "Due date" icon opened. */}
+        <Cell w={COL.due}
+          onClick={(canEdit && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('date'); } : undefined}
+          style={{ cursor: (canEdit && !isInactive) ? 'pointer' : 'default' }}
+          title={(canEdit && !isInactive) ? 'Click to edit due date' : undefined}
+        >
+          <DueDateBadge dueDate={task.dueDate} status={localStatus} />
+        </Cell>
+
+        {/* Priority column */}
+        <Cell w={COL.priority}><PriorityBadge priority={task.priority} /></Cell>
+
+        {/* Status column */}
+        <Cell w={COL.status} onClick={e => e.stopPropagation()}>
+          {canStatus && !isInactive && localStatus !== 'Blocked' ? (
             <select value={localStatus} onChange={handleStatusChange}
-              style={{ background:'#fff', border:'1px solid var(--divider)', borderRadius:'var(--radius)', color:'var(--light)', fontSize:11, padding:'3px 6px', fontFamily:'inherit', outline:'none' }}>
+              style={{ width: '100%', background:theme.colors.mid, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm, color:theme.colors.onyx, fontSize:11, padding:'3px 6px', fontFamily:'inherit', outline:'none' }}>
               {STATUS_OPTIONS.map(s => <option key={s}>{s}</option>)}
             </select>
-          ) : <StatusBadge status={localStatus} />}
-        </div>
+          ) : (
+            <span title={localStatus === 'Blocked' ? 'Waiting on a prerequisite task — resolve its dependencies to unblock automatically.' : undefined}>
+              <StatusBadge status={localStatus} />
+            </span>
+          )}
+        </Cell>
 
-        {/* Hover-reveal action buttons */}
-        <div className={`pm-row-actions${panel ? ' open' : ''}`} onClick={e => e.stopPropagation()}>
+        {/* Action toolbar — always visible. Rename/Assign/Due-date icons
+            removed: their targets (name, assignee avatars, due date) are
+            now directly clickable in the row itself, so a separate icon
+            duplicating the same action was pure redundancy. Description
+            stays — there's no visible description text in the row to
+            click on instead. */}
+        <RowActions onClick={e => e.stopPropagation()}>
           {canEdit && (
             <>
-              <button className={`icon-btn${panel === 'desc' ? ' active' : ''}`} title="Description" onClick={() => togglePanel('desc')} style={{ width:24, height:24 }}>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-              </button>
-              <button className={`icon-btn${panel === 'date' ? ' active' : ''}`} title="Due date" onClick={() => togglePanel('date')} style={{ width:24, height:24 }}>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-              </button>
+              {!isInactive && (
+                <IconBtn active={panel === 'desc'} title="Description" onClick={() => togglePanel('desc')} style={{ width:20, height:20 }}>
+                  <FileText size={14} strokeWidth={2} />
+                </IconBtn>
+              )}
               {(canEdit || isAssigned) && (
                 <ChatButton kind="task" id={task.taskId} compact />
               )}
@@ -233,68 +323,75 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
           )}
           {canManager && (
             <>
-              <button className={`icon-btn${panel === 'assign' ? ' active' : ''}`} title="Assign" onClick={() => togglePanel('assign')} style={{ width:24, height:24 }}>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-              </button>
-              {otherTasks.length > 0 && (
-                <button className={`icon-btn${panel === 'deps' ? ' active' : ''}`} title="Prerequisites"
-                  onClick={() => togglePanel('deps')} style={{ width:24, height:24 }}>
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-                </button>
+              {/* Divider — visually separates the shared view/edit icons above
+                  from the manager-only actions below, instead of all 5-7
+                  icons reading as one undifferentiated cluster. */}
+              <div style={{ width:1, height:16, background:theme.colors.border, margin:'0 1px', flexShrink:0 }} />
+              {!isInactive && otherTasks.length > 0 && (
+                <IconBtn active={panel === 'deps'} title="Prerequisites"
+                  onClick={() => togglePanel('deps')} style={{ width:20, height:20 }}>
+                  <ArrowRight size={14} strokeWidth={2} />
+                </IconBtn>
               )}
-              <button className="icon-btn" title="Rename" onClick={() => setEditingName(true)} style={{ width:24, height:24 }}>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-              </button>
               {isInactive ? (
-                <button className="icon-btn" title="Reactivate" onClick={handleReactivate} style={{ width:24, height:24 }}>
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-                </button>
+                <IconBtn title="Reactivate" onClick={handleReactivate} style={{ width:20, height:20 }}>
+                  <RotateCcw size={14} strokeWidth={2} />
+                </IconBtn>
               ) : (
-                <button className="icon-btn danger" title="Delete" onClick={handleDelete} style={{ width:24, height:24 }}>
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-                </button>
+                <IconBtnDanger title="Delete" onClick={handleDelete} style={{ width:20, height:20 }}>
+                  <Trash2 size={14} strokeWidth={2} />
+                </IconBtnDanger>
               )}
             </>
           )}
-        </div>
-      </div>
+        </RowActions>
+      </TaskTableRow>
 
-      {/* ── Description panel ── */}
+      {/* ── Description panel — viewable by anyone canEdit (assignee or
+          Manager), but only a Manager can actually edit it. An assigned
+          Member could previously open AND save changes here, which wasn't
+          the intended split: assignee access is view-only for
+          descriptions, editing is Manager-only. */}
       {panel === 'desc' && canEdit && (
-        <div className="pm-sub-panel" style={{ marginTop: 8 }}>
-          <div className="pm-sub-panel-title">Task Notes / Description</div>
+        <SubPanel style={{ margin: 0 }}>
+          <SubPanelTitle>Task Notes / Description</SubPanelTitle>
           <textarea value={editDesc} onChange={e => setEditDesc(e.target.value)}
-            placeholder="Add context, acceptance criteria, links, notes…" rows={4}
-            style={{ width: '100%', background: '#fff', border: '1px solid var(--divider)', borderRadius: 'var(--radius)', padding: '8px 10px', color: 'var(--light)', fontSize: 12, fontFamily: 'inherit', outline: 'none', resize: 'vertical', lineHeight: 1.5 }}
+            readOnly={!canManager}
+            placeholder={canManager ? 'Add context, acceptance criteria, links, notes…' : 'No description yet.'} rows={4}
+            style={{ width: '100%', background: canManager ? theme.colors.mid : theme.colors.greige, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '8px 10px', color: theme.colors.onyx, fontSize: 12, fontFamily: 'inherit', outline: 'none', resize: 'vertical', lineHeight: 1.5, cursor: canManager ? 'text' : 'default' }}
           />
           <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-            <button className="pm-btn pm-btn-primary" style={{ fontSize: 11, padding: '5px 14px' }} onClick={handleDescSave}>Save</button>
-            <button className="pm-btn pm-btn-ghost"   style={{ fontSize: 11, padding: '5px 10px' }} onClick={() => { setPanel(null); setEditDesc(task.description || ''); }}>Cancel</button>
+            {canManager
+              ? <>
+                  <BtnPrimary style={{ fontSize: 11, padding: '5px 14px' }} onClick={handleDescSave}>Save</BtnPrimary>
+                  <BtnGhost style={{ fontSize: 11, padding: '5px 10px' }} onClick={() => { setPanel(null); setEditDesc(task.description || ''); }}>Cancel</BtnGhost>
+                </>
+              : <BtnGhost style={{ fontSize: 11, padding: '5px 10px' }} onClick={() => setPanel(null)}>Close</BtnGhost>}
           </div>
-        </div>
+        </SubPanel>
       )}
 
       {/* ── Due date panel ── */}
       {panel === 'date' && canEdit && (
-        <div className="pm-sub-panel" style={{ marginTop: 8 }}>
-          <div className="pm-sub-panel-title">Due Date <span style={{ color: '#aa1010' }}>*</span></div>
+        <SubPanel style={{ margin: 0 }}>
+          <SubPanelTitle>Due Date <span style={{ color: theme.colors.danger }}>*</span></SubPanelTitle>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input type="date" value={editDue} onChange={e => setEditDue(e.target.value)}
-              style={{ background: '#fff', border: '1px solid var(--divider)', borderRadius: 'var(--radius)', padding: '6px 10px', color: 'var(--light)', fontSize: 12, outline: 'none', fontFamily: 'inherit' }} />
-            <button className="pm-btn pm-btn-primary" style={{ fontSize: 11, padding: '6px 14px' }} onClick={handleDueSave} disabled={!editDue}>Save</button>
-            <button className="pm-btn pm-btn-ghost"   style={{ fontSize: 11, padding: '6px 10px' }} onClick={() => setPanel(null)}>Cancel</button>
+              style={{ background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '6px 10px', color: theme.colors.onyx, fontSize: 12, outline: 'none', fontFamily: 'inherit' }} />
+            <BtnPrimary style={{ fontSize: 11, padding: '6px 14px' }} onClick={handleDueSave} disabled={!editDue}>Save</BtnPrimary>
+            <BtnGhost style={{ fontSize: 11, padding: '6px 10px' }} onClick={() => setPanel(null)}>Cancel</BtnGhost>
           </div>
-          {!editDue && <div style={{ color: '#aa1010', fontSize: 11, marginTop: 4 }}>Due date is required.</div>}
-        </div>
+          {!editDue && <div style={{ color: theme.colors.danger, fontSize: 11, marginTop: 4 }}>Due date is required.</div>}
+        </SubPanel>
       )}
 
       {/* ── Assignee / request panel ── */}
       {panel === 'assign' && canManager && (
-        <div className="pm-sub-panel" style={{ marginTop: 8 }}>
-          <div className="pm-sub-panel-title">Task Assignees</div>
-          <div className="pm-sub-panel-hint">
+        <SubPanel style={{ margin: 0 }}>
+          <SubPanelTitle>Task Assignees</SubPanelTitle>
+          <SubPanelHint>
             Select from activity members below, or search any user — they'll be added to the activity automatically when they accept.
-          </div>
+          </SubPanelHint>
 
           {/* Quick-pick from activity members */}
           {activityMembers.length > 0 && (
@@ -302,18 +399,18 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
               {activityMembers
                 .filter(m => !requestedIds.has(String(m.userId)))
                 .map(m => (
-                  <button key={m.userId} className="pm-btn pm-btn-ghost" style={{ fontSize: 11, padding: '3px 10px', display: 'flex', alignItems: 'center', gap: 5 }}
+                  <BtnGhost key={m.userId} style={{ fontSize: 11, padding: '3px 10px', display: 'flex', alignItems: 'center', gap: 5 }}
                     onClick={async () => {
                       setAssignError('');
                       try { await taskApi.sendRequest(task.taskId, m.userId); onRefetch?.(); }
                       catch (err) { setAssignError(err?.response?.data?.error || 'Failed'); }
                     }}>
-                    <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--mid)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 700, color: 'var(--gold)' }}>
+                    <span style={{ width: 18, height: 18, borderRadius: '50%', background: theme.colors.mid, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 700, color: theme.colors.onyx }}>
                       {initials(m.name)}
                     </span>
                     {m.name}
-                    <span style={{ fontSize: 9, color: 'var(--muted)' }}>+ Request</span>
-                  </button>
+                    <span style={{ fontSize: 9, color: theme.colors.ash }}>+ Request</span>
+                  </BtnGhost>
                 ))
               }
             </div>
@@ -327,45 +424,45 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
               excludeUserIds={[...requestedIds]}
               placeholder="Search users outside activity…"
             />
-            <button className="pm-btn pm-btn-primary" style={{ fontSize: 11, padding: '6px 12px', flexShrink: 0 }}
+            <BtnPrimary style={{ fontSize: 11, padding: '6px 12px', flexShrink: 0 }}
               onClick={handleSendRequest} disabled={!assignSearch}>
               Send Request
-            </button>
+            </BtnPrimary>
           </div>
-          {assignError && <div style={{ color: '#aa1010', fontSize: 11, marginBottom: 8 }}>{assignError}</div>}
+          {assignError && <div style={{ color: theme.colors.danger, fontSize: 11, marginBottom: 8 }}>{assignError}</div>}
 
           {/* All requests with status badges */}
           {allRequests.length === 0 && (
-            <div style={{ fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>No assignment requests sent yet.</div>
+            <div style={{ fontSize: 12, color: theme.colors.ash, fontStyle: 'italic' }}>No assignment requests sent yet.</div>
           )}
           {allRequests.map(r => {
-            const badge = REQUEST_BADGE[r.requestStatus] || REQUEST_BADGE.Pending;
+            const badge = requestBadge(theme, r.requestStatus);
             return (
-              <div key={r.userId} className="pm-member-row selected" style={{ marginBottom: 4 }}>
-                <div className="pm-avatar" style={{ flexShrink: 0 }}>{initials(r.name)}</div>
-                <span style={{ flex: 1, fontSize: 12, color: 'var(--light)' }}>{r.name}</span>
+              <MemberRow key={r.userId} selected style={{ marginBottom: 4 }}>
+                <Avatar style={{ flexShrink: 0, marginLeft: 0 }}>{initials(r.name)}</Avatar>
+                <span style={{ flex: 1, fontSize: 12, color: theme.colors.onyx }}>{r.name}</span>
                 <span style={{ fontSize: 10, fontWeight: 600, color: badge.color, background: badge.bg, borderRadius: 8, padding: '2px 8px', flexShrink: 0 }}>
                   {badge.label}
                 </span>
-                <button className="pm-btn pm-btn-ghost" style={{ fontSize: 11, padding: '2px 8px', color: '#aa1010', borderColor: 'rgba(170,16,16,.3)', flexShrink: 0 }}
+                <BtnGhost style={{ fontSize: 11, padding: '2px 8px', color: theme.colors.danger, borderColor: 'rgba(168,93,77,.35)', flexShrink: 0 }}
                   onClick={() => handleRemoveRequest(r.userId)}>
                   Remove
-                </button>
-              </div>
+                </BtnGhost>
+              </MemberRow>
             );
           })}
-        </div>
+        </SubPanel>
       )}
 
       {/* ── Dependency panel — viewable by anyone, editable by Manager only ── */}
       {panel === 'deps' && (
-        <div className="pm-sub-panel" style={{ marginTop: 8 }}>
-          <div className="pm-sub-panel-title">Prerequisites — Tasks that must complete first</div>
-          <div className="pm-sub-panel-hint">
+        <SubPanel style={{ margin: 0 }}>
+          <SubPanelTitle>Prerequisites — Tasks that must complete first</SubPanelTitle>
+          <SubPanelHint>
             {canManager
               ? <>Selecting a predecessor auto-<strong>blocks</strong> this task until it reaches Complete, then auto-unblocks. Cycles are prevented.</>
               : 'This task is blocked until the tasks below reach Complete.'}
-          </div>
+          </SubPanelHint>
 
           {/* Current dep chips */}
           {currentDeps.size > 0 ? (
@@ -374,38 +471,38 @@ export default function TaskItem({ task, myRole, myUserId, allTasks = [], activi
                 const t = otherTasks.find(x => x.taskId === depId);
                 if (!t) return null;
                 return (
-                  <span key={depId} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, background: 'var(--mid)', border: '1px solid var(--divider)', borderRadius: 12, padding: '2px 8px 2px 10px' }}>
+                  <span key={depId} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: 12, padding: '2px 8px 2px 10px' }}>
                     {t.name}
                     {canManager && (
                       <button type="button" onClick={() => handleRemoveDep(depId)}
-                        style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
+                        style={{ background: 'none', border: 'none', color: theme.colors.ash, cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
                     )}
                   </span>
                 );
               })}
             </div>
           ) : (
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: canManager ? 8 : 0 }}>No prerequisites set.</div>
+            <div style={{ fontSize: 12, color: theme.colors.ash, marginBottom: canManager ? 8 : 0 }}>No prerequisites set.</div>
           )}
 
           {/* Add via dropdown — Manager only */}
           {canManager && (
             otherTasks.filter(t => !currentDeps.has(t.taskId)).length > 0 ? (
               <select defaultValue="" onChange={e => { if (e.target.value) { handleAddDep(Number(e.target.value)); e.target.value = ''; } }}
-                style={{ width: '100%', background: '#fff', border: '1px solid var(--divider)', borderRadius: 'var(--radius)', padding: '6px 10px', color: 'var(--light)', fontSize: 12, fontFamily: 'inherit', outline: 'none' }}>
+                style={{ width: '100%', background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '6px 10px', color: theme.colors.onyx, fontSize: 12, fontFamily: 'inherit', outline: 'none' }}>
                 <option value="">+ Add a predecessor task…</option>
                 {otherTasks.filter(t => !currentDeps.has(t.taskId)).map(t => (
                   <option key={t.taskId} value={t.taskId}>{t.name} ({t.status})</option>
                 ))}
               </select>
             ) : (
-              <div style={{ fontSize: 12, color: 'var(--muted)' }}>All tasks already added as prerequisites.</div>
+              <div style={{ fontSize: 12, color: theme.colors.ash }}>All tasks already added as prerequisites.</div>
             )
           )}
 
-          {depError && <div style={{ color: '#aa1010', fontSize: 11, marginTop: 6 }}>{depError}</div>}
-        </div>
+          {depError && <div style={{ color: theme.colors.danger, fontSize: 11, marginTop: 6 }}>{depError}</div>}
+        </SubPanel>
       )}
-    </div>
+    </>
   );
 }

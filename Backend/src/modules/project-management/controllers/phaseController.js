@@ -3,7 +3,7 @@
 const svc = require('../services/phaseService');
 const memberSvc = require('../services/phaseMemberService');
 
-const list         = async (req,res,next) => { try { res.json(await svc.getPhasesForProject(req.params.projectId)); } catch(e){next(e);} };
+const list         = async (req,res,next) => { try { res.json(await svc.getPhasesForProject(req.params.projectId, req.user.userId)); } catch(e){next(e);} };
 const reorder      = async (req,res,next) => { try { await svc.reorderPhase(req.pmProjectId, req.params.id, req.body.direction); res.json({ok:true}); } catch(e){next(e);} };
 const create       = async (req,res,next) => { try { res.status(201).json(await svc.createPhase(req.params.projectId, req.user.userId, req.body)); } catch(e){next(e);} };
 const update       = async (req,res,next) => { try { res.json(await svc.updatePhase(req.params.id, req.pmProjectId, req.user.userId, req.body)); } catch(e){next(e);} };

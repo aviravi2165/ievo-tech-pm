@@ -1,8 +1,8 @@
 const svc   = require('../services/projectService');
 const audit = require('../services/auditService');
 
-const list   = async (req,res,next) => { try { res.json(await svc.listProjects(req.user.userId)); } catch(e){next(e);} };
-const get    = async (req,res,next) => { try { res.json(await svc.getProject(req.params.id, req.user.userId)); } catch(e){next(e);} };
+const list   = async (req,res,next) => { try { res.json(await svc.listProjects(req.user.userId, req.user.userType === 'admin')); } catch(e){next(e);} };
+const get    = async (req,res,next) => { try { res.json(await svc.getProject(req.params.id, req.user.userId, req.user.userType === 'admin')); } catch(e){next(e);} };
 const create = async (req,res,next) => { try { res.status(201).json(await svc.createProject(req.user.userId, req.body)); } catch(e){next(e);} };
 const update = async (req,res,next) => { try { res.json(await svc.updateProject(req.params.id, req.user.userId, req.body)); } catch(e){next(e);} };
 const remove = async (req,res,next) => { try { res.json(await svc.deleteProject(req.params.id, req.user.userId)); } catch(e){next(e);} };

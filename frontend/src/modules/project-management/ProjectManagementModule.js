@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import '../project-management/assets/pm.css';
 import ProjectListPage   from './pages/ProjectListPage';
 import ProjectDetailPage from './pages/ProjectDetailPage';
+import ToastHost from './components/ToastHost';
 
 /**
  * ProjectManagementModule
@@ -23,17 +23,23 @@ export default function ProjectManagementModule({ currentUser }) {
 
   if (activeProjectId) {
     return (
-      <ProjectDetailPage
-        projectId={activeProjectId}
-        onBack={() => setActiveProjectId(null)}
-        currentUser={currentUser}
-      />
+      <>
+        <ProjectDetailPage
+          projectId={activeProjectId}
+          onBack={() => setActiveProjectId(null)}
+          currentUser={currentUser}
+        />
+        <ToastHost />
+      </>
     );
   }
 
   return (
-    <ProjectListPage
-      onSelectProject={(id) => setActiveProjectId(id)}
-    />
+    <>
+      <ProjectListPage
+        onSelectProject={(id) => setActiveProjectId(id)}
+      />
+      <ToastHost />
+    </>
   );
 }

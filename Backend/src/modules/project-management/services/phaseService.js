@@ -2,16 +2,23 @@
 
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
-const { blockIfNeeded } = require('./dependencyService');
-const { getPhaseProgress, deriveStatus } = require('./progressService');
+const { blockIfNeeded, isInactive } = require('./dependencyService');
+const { getPhaseProgress, deriveStatus, getPhaseHasActiveWork } = require('./progressService');
 const { getPhaseDelayDays } = require('./delayService');
+const { getEffectivePhaseRole } = require('./roleService');
 
 function parseIdList(val) {
   if (!val) return [];
   return String(val).split(',').filter(Boolean).map(Number);
 }
 
-async function getPhasesForProject(projectId) {
+// userId is the REQUESTING user — used to compute their effective role on
+// each phase (explicit phase-level row, else inherited from their project
+// role; see roleService). Without this, the frontend had no way to know a
+// Phase Manager should get full management controls for that phase even
+// when they're only a plain Member at the project level — it was gating
+// every "can I edit this phase" check on the flat project-level role only.
+async function getPhasesForProject(projectId, userId) {
   const pool = await getPool();
   const result = await pool.request()
     .input('projectId', sql.Int, projectId)
@@ -26,7 +33,20 @@ async function getPhasesForProject(projectId) {
              (
                SELECT STRING_AGG(CAST(depends_on_phase_id AS VARCHAR(20)), ',')
                FROM pm_phase_deps WHERE phase_id = ph.phase_id
-             ) AS dependsOn
+             ) AS dependsOn,
+             -- Phase member count + Manager names, same fields
+             -- activityService already exposes — used so the Assignee
+             -- column has something real to show for a Phase row instead
+             -- of sitting blank with no explanation of what it even means.
+             (
+               SELECT COUNT(*) FROM pm_phase_members WHERE phase_id = ph.phase_id
+             ) AS memberCount,
+             (
+               SELECT STRING_AGG(COALESCE(NULLIF(TRIM(CONCAT(mu.first_name,' ',mu.last_name)),''), mu.email), ', ')
+               FROM pm_phase_members mgr
+               INNER JOIN auth_users mu ON mu.user_id = mgr.user_id
+               WHERE mgr.phase_id = ph.phase_id AND mgr.role = 'Manager'
+             ) AS managerNames
       FROM pm_phases ph
       INNER JOIN pm_projects parentProj ON parentProj.project_id = ph.project_id
       WHERE ph.project_id=@projectId AND ph.is_deleted=0
@@ -44,11 +64,12 @@ async function getPhasesForProject(projectId) {
         .query(`UPDATE pm_phases SET status = 'To Do' WHERE phase_id = @phaseId AND status = 'Blocked'`);
       ph.status = 'To Do'; // will become Completed via deriveStatus below
     }
-    ph.status = deriveStatus(ph.progress, ph.status);
+    ph.status = deriveStatus(ph.progress, ph.status, await getPhaseHasActiveWork(ph.phaseId));
     ph.delayDays = ph.status === 'Completed' ? 0 : await getPhaseDelayDays(ph.phaseId, ph.plannedEnd);
     // Cascade: a Phase under an inactive Project reads as inactive too.
     ph.isActive = ph.ownIsActive !== false && ph.parentProjectActive !== false;
     delete ph.ownIsActive; delete ph.parentProjectActive;
+    ph.myRole = userId ? (await getEffectivePhaseRole(userId, ph.phaseId)).role : null;
   }
   return rows;
 }
@@ -56,6 +77,11 @@ async function getPhasesForProject(projectId) {
 async function createPhase(projectId, userId, body) {
   const { name, description, plannedStart, plannedEnd, displayOrder } = body;
   if (!name?.trim()) { const e = new Error('Phase name required'); e.statusCode = 400; throw e; }
+
+  if (await isInactive('project', projectId)) {
+    const e = new Error('This Project is inactive — reactivate it before adding phases.');
+    e.statusCode = 409; throw e;
+  }
 
   const pool = await getPool();
 
@@ -91,6 +117,10 @@ const PHASE_FIELD_TYPES = {
 };
 
 async function updatePhase(phaseId, projectId, userId, body) {
+  if (await isInactive('phase', phaseId) || await isInactive('project', projectId)) {
+    const e = new Error('This Phase is inactive — reactivate it before making changes.');
+    e.statusCode = 409; throw e;
+  }
   const fields = {};
   if (body.name         !== undefined) fields.name          = body.name.trim();
   if (body.description  !== undefined) fields.description   = body.description;

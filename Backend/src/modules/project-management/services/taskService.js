@@ -4,6 +4,7 @@ const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
 const { resolveUnblocked, blockIfNeeded, isBlocked, isInactive } = require('./dependencyService');
 const { getActivityProgress, getPhaseProgress } = require('./progressService');
+const { getEffectiveActivityRole } = require('./roleService');
 const { broadcastStatusChanged, broadcastUnblocked, broadcastAssignmentRequest, broadcastProgressUpdated } = require('../socket/socketHandler');
 const pmChatService = require('./pmChatService');
 
@@ -39,6 +40,7 @@ async function getTasksForActivity(activityId) {
              t.created_at   AS createdAt,
              pa.status AS parentActivityStatus, pph.status AS parentPhaseStatus,
              t.is_active AS ownIsActive, pa.is_active AS parentActivityActive, pph.is_active AS parentPhaseActive,
+             pproj.is_active AS parentProjectActive,
              CASE WHEN t.due_date < CAST(GETDATE() AS DATE) AND t.status <> 'Complete'
                   THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS isOverdue,
              -- Accepted assignees (confirmed participants)
@@ -74,6 +76,7 @@ async function getTasksForActivity(activityId) {
       FROM pm_tasks t
       INNER JOIN pm_activities pa ON pa.activity_id = t.activity_id
       INNER JOIN pm_phases     pph ON pph.phase_id  = pa.phase_id
+      INNER JOIN pm_projects   pproj ON pproj.project_id = pph.project_id
       WHERE t.activity_id = @activityId AND t.is_deleted = 0
       ORDER BY t.created_at
     `);
@@ -85,12 +88,13 @@ async function getTasksForActivity(activityId) {
     // reflected downward at read time instead of writing every descendant row.
     const cascadeBlocked = r.status !== 'Complete'
       && (r.parentActivityStatus === 'Blocked' || r.parentPhaseStatus === 'Blocked');
-    // Cascade: a task under an inactive Activity or Phase (or itself
-    // deactivated) reads as inactive too, frozen until reactivated.
+    // Cascade: a task under an inactive Activity, Phase, or Project (or
+    // itself deactivated) reads as inactive too, frozen until reactivated.
     const cascadeInactive = r.ownIsActive === false
       || r.parentActivityActive === false
-      || r.parentPhaseActive === false;
-    const { parentActivityStatus, parentPhaseStatus, ownIsActive, parentActivityActive, parentPhaseActive, ...rest } = r;
+      || r.parentPhaseActive === false
+      || r.parentProjectActive === false;
+    const { parentActivityStatus, parentPhaseStatus, ownIsActive, parentActivityActive, parentPhaseActive, parentProjectActive, ...rest } = r;
     return {
       ...rest,
       assignees:   parseJsonArray(r.assignees),
@@ -141,7 +145,7 @@ async function createTask(activityId, projectId, userId, body) {
     const e = new Error('This Activity is inactive — reactivate it before adding tasks.');
     e.statusCode = 409; throw e;
   }
-  if (await isInactive('phase', parent.phaseId)) {
+  if (await isInactive('phase', parent.phaseId) || await isInactive('project', projectId)) {
     const e = new Error('This Phase is inactive — reactivate it before adding tasks.');
     e.statusCode = 409; throw e;
   }
@@ -357,6 +361,29 @@ const TASK_FIELD_TYPES = {
 };
 
 async function updateTask(taskId, projectId, userId, body) {
+  if (await isInactive('task', taskId) || await isInactive('project', projectId)) {
+    const e = new Error('This Task is inactive — reactivate it before making changes.');
+    e.statusCode = 409; throw e;
+  }
+  // Description is view-only for assignees, editable only by a Manager
+  // (Activity/Phase/Project, by the same effective-role hierarchy used
+  // everywhere else) — this route is otherwise only gated by the generic
+  // "requireRole('Member')" at the router level, which doesn't distinguish
+  // an assignee from a Manager, so without this check any project Member
+  // could edit the description via a direct API call even though the
+  // frontend now hides that ability from assignees.
+  if (body.description !== undefined) {
+    const pool0 = await getPool();
+    const actResult = await pool0.request()
+      .input('taskId', sql.Int, taskId)
+      .query(`SELECT activity_id AS activityId FROM pm_tasks WHERE task_id=@taskId`);
+    const activityId = actResult.recordset[0]?.activityId;
+    const effective = activityId ? await getEffectiveActivityRole(userId, activityId) : { role: null };
+    if (effective.role !== 'Manager') {
+      const e = new Error('Only a Manager can edit the task description.');
+      e.statusCode = 403; throw e;
+    }
+  }
   const fields = {};
   if (body.name           !== undefined) fields.name            = body.name.trim();
   if (body.description    !== undefined) fields.description     = body.description;
@@ -405,6 +432,34 @@ async function updateTaskStatus(taskId, projectId, userId, newStatus, projectRol
   }
   if (await isBlocked('phase', phaseId)) {
     const e = new Error('This task\'s Phase is blocked by an unresolved dependency — resolve it before changing status.');
+    e.statusCode = 409; throw e;
+  }
+
+  // Task's OWN prerequisite dependencies — this is the actual enforcement
+  // point that was missing. blockIfNeeded/resolveUnblocked only maintain
+  // the task's `status` column as a best-effort reflection of the
+  // dependency graph (and only catch the transition at the moment a dep is
+  // added/removed) — nothing previously stopped a manual status change
+  // (e.g. via the dropdown, or a direct API call) from moving a task
+  // straight past 'Blocked' to 'Complete' while its prerequisites were
+  // still unresolved. This re-checks the live dependency graph on every
+  // status change, regardless of what the cached status column says.
+  const depCheck = await pool.request()
+    .input('taskId', sql.Int, taskId)
+    .input('done',   sql.NVarChar(30), DONE_STATUS)
+    .query(`
+      SELECT 1 AS x FROM pm_task_deps d
+      INNER JOIN pm_tasks e ON e.task_id = d.depends_on_task_id
+      WHERE d.task_id = @taskId AND e.status <> @done AND e.is_deleted = 0
+    `);
+  if (depCheck.recordset.length && newStatus !== 'Blocked') {
+    const e = new Error('This task has unresolved prerequisite dependencies — complete them first.');
+    e.statusCode = 409; throw e;
+  }
+
+  if (await isInactive('task', taskId) || await isInactive('activity', activityId)
+      || await isInactive('phase', phaseId) || await isInactive('project', projectId)) {
+    const e = new Error('This task is inactive — reactivate it before changing status.');
     e.statusCode = 409; throw e;
   }
 

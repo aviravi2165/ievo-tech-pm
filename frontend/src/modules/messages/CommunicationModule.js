@@ -1,5 +1,5 @@
-import './assets/messaging.css';
 import MessagingPage from './pages/MessagingPage';
+import { ModuleRoot } from './styles/MessagingPage.styles';
 
 /**
  * Communication / messaging module — mounts inside the right drawer.
@@ -7,8 +7,8 @@ import MessagingPage from './pages/MessagingPage';
  */
 export default function CommunicationModule({ currentUser }) {
   return (
-    <div className="msg-module-root">
+    <ModuleRoot>
       <MessagingPage currentUser={currentUser} />
-    </div>
+    </ModuleRoot>
   );
 }

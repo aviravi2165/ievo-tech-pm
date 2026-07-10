@@ -26,8 +26,27 @@ function today() {
   return d;
 }
 
+// This ran server-side against raw mssql query results, NOT the frontend's
+// JSON-serialized API responses — the mssql driver returns native JS Date
+// objects for DATE/DATETIME columns, not ISO strings. String(dateObject)
+// calls .toString(), producing something like "Thu Jul 16 2026 00:00:00
+// GMT+0000 (Coordinated Universal Time)" — no 'T', so .split('T')[0] did
+// nothing, and .split('-') then either found no hyphen at all (positive
+// UTC offset servers) or split on the wrong part of a timezone string
+// (negative offset), so [y, m, day] came out as garbage and every date
+// comparison in this file silently evaluated to NaN. Math.max() with a
+// NaN argument always returns NaN, so every *DelayDays function had been
+// returning NaN this whole time — which always fails a `> 0` check on the
+// frontend, so no delay ever appeared to be visible regardless of the
+// actual schedule data. UTC getters (not local) because SQL Server DATE
+// columns carry no time/timezone component and the driver represents them
+// as UTC midnight — local getters would shift the date by one in servers
+// running behind UTC.
 function parseDate(d) {
   if (!d) return null;
+  if (d instanceof Date) {
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  }
   const s = String(d).split('T')[0];
   const [y, m, day] = s.split('-').map(Number);
   return new Date(y, m - 1, day);

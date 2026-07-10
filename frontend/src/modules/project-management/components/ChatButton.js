@@ -1,6 +1,8 @@
 import { useState } from 'react';
+import { MessageSquare } from 'lucide-react';
 import { activityApi, taskApi } from '../api/projectApi';
 import { useMessaging } from '../../messages/context/MessagingContext';
+import { BtnGhost } from '../styles/shared.styles';
 
 /**
  * ChatButton
@@ -54,9 +56,8 @@ export default function ChatButton({ kind, id, label, compact = false }) {
     || (loading ? 'Opening…' : (kind === 'activity' ? 'Open activity group chat' : 'Open task chat'));
 
   return (
-    <button
+    <BtnGhost
       type="button"
-      className="pm-btn pm-btn-ghost"
       onClick={handleClick}
       disabled={loading}
       title={title}
@@ -69,11 +70,8 @@ export default function ChatButton({ kind, id, label, compact = false }) {
         padding: compact ? '4px 6px' : undefined,
       }}
     >
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" strokeWidth="2.2">
-        <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-      </svg>
+      <MessageSquare size={13} strokeWidth={2.2} />
       {displayLabel && (loading ? '…' : displayLabel)}
-    </button>
+    </BtnGhost>
   );
 }

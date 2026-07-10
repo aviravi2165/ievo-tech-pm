@@ -14,7 +14,30 @@ const CFG = {
   phase:    { depTable: 'pm_phase_deps',    entityTable: 'pm_phases',     idCol: 'phase_id',    depCol: 'depends_on_phase_id',    done: 'Completed' },
   activity: { depTable: 'pm_activity_deps', entityTable: 'pm_activities', idCol: 'activity_id', depCol: 'depends_on_activity_id', done: 'Completed' },
   task:     { depTable: 'pm_task_deps',     entityTable: 'pm_tasks',      idCol: 'task_id',     depCol: 'depends_on_task_id',     done: 'Complete'  },
+  // No dependency graph at project level — only entityTable/idCol are used,
+  // exclusively by isInactive() below.
+  project:  { entityTable: 'pm_projects',   idCol: 'project_id' },
 };
+
+// Whether a given dependency entity actually counts as "done". For tasks
+// this is a direct, reliably-persisted status column check. For
+// Phase/Activity it CANNOT be — pm_phases.status/pm_activities.status are
+// never written as 'Completed' anywhere (that value only ever exists in
+// the in-memory result of deriveStatus, computed fresh on every read from
+// child progress). Checking the raw column here — as this used to do —
+// meant a Phase/Activity dependency could sit at 100% progress and show
+// "Completed" everywhere in the UI while anything depending on it stayed
+// Blocked forever, since the DB column it was actually being compared
+// against never equals 'Completed'. Matches the same progress-based check
+// blockIfNeeded already uses for the same reason.
+async function isEntityDone(entityType, entityId, statusFromDb) {
+  const c = CFG[entityType];
+  if (entityType === 'task') return statusFromDb === c.done;
+  const progress = entityType === 'phase'
+    ? await getPhaseProgress(entityId)
+    : await getActivityProgress(entityId);
+  return progress >= 100;
+}
 
 async function resolveUnblocked(reqFactory, entityType, completedId) {
   const c = CFG[entityType]; if (!c) return [];
@@ -25,16 +48,19 @@ async function resolveUnblocked(reqFactory, entityType, completedId) {
 
   const unblocked = [];
   for (const { id } of depResult.recordset) {
-    const unresolved = await reqFactory()
-      .input('id',   sql.Int,          id)
-      .input('done', sql.NVarChar(30), c.done)
+    const depsResult = await reqFactory()
+      .input('id', sql.Int, id)
       .query(`
-        SELECT 1 AS x
+        SELECT e.${c.idCol} AS depId, e.status AS depStatus
         FROM ${c.depTable} d
         INNER JOIN ${c.entityTable} e ON e.${c.idCol} = d.${c.depCol}
-        WHERE d.${c.idCol} = @id AND e.status <> @done AND e.is_deleted = 0
+        WHERE d.${c.idCol} = @id AND e.is_deleted = 0
       `);
-    if (!unresolved.recordset.length) {
+    let allDone = true;
+    for (const dep of depsResult.recordset) {
+      if (!(await isEntityDone(entityType, dep.depId, dep.depStatus))) { allDone = false; break; }
+    }
+    if (allDone) {
       await reqFactory()
         .input('id', sql.Int, id)
         .query(`UPDATE ${c.entityTable} SET status = 'To Do' WHERE ${c.idCol} = @id AND status = 'Blocked'`);
@@ -79,9 +105,15 @@ async function blockIfNeeded(reqFactory, entityType, entityId, dependsOnId) {
   }
 
   if (!depDone) {
+    // Previously only flipped an entity to Blocked if it happened to still
+    // be 'To Do' at the moment the dependency was added — an entity already
+    // 'Ongoing' when a new unresolved dependency got attached kept its
+    // status and never visually showed as blocked (though updateTaskStatus's
+    // own dependency check below is the actual enforcement; this just keeps
+    // the status column/badge honest).
     await reqFactory()
       .input('entityId', sql.Int, entityId)
-      .query(`UPDATE ${c.entityTable} SET status = 'Blocked' WHERE ${c.idCol} = @entityId AND status = 'To Do'`);
+      .query(`UPDATE ${c.entityTable} SET status = 'Blocked' WHERE ${c.idCol} = @entityId AND status IN ('To Do', 'Ongoing')`);
   }
 }
 

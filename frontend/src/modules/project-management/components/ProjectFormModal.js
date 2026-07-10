@@ -1,5 +1,8 @@
 import { useState } from 'react';
+import { useTheme } from '@emotion/react';
+import { X } from 'lucide-react';
 import { projectApi } from '../api/projectApi';
+import { ModalOverlay, Modal, Field, FieldHint, ModalFooter, BtnGhost, BtnPrimary } from '../styles/shared.styles';
 
 /**
  * ProjectFormModal — fixed:
@@ -9,6 +12,7 @@ import { projectApi } from '../api/projectApi';
  * 4. Description is included
  */
 export default function ProjectFormModal({ onClose, onCreated }) {
+  const theme = useTheme();
   const [form, setForm] = useState({ name:'', description:'', plannedStart:'', plannedEnd:'' });
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
@@ -42,17 +46,17 @@ export default function ProjectFormModal({ onClose, onCreated }) {
   };
 
   return (
-    <div className="pm-modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="pm-modal">
+    <ModalOverlay onClick={e => e.target === e.currentTarget && onClose()}>
+      <Modal>
         <button
           onClick={onClose}
-          style={{ position:'absolute', top:16, right:16, background:'none', border:'none', cursor:'pointer', color:'var(--muted)', fontSize:18, lineHeight:1 }}
+          style={{ position:'absolute', top:16, right:16, background:'none', border:'none', cursor:'pointer', color:theme.colors.ash, display:'flex' }}
           title="Close"
-        >✕</button>
+        ><X size={18} strokeWidth={2} /></button>
 
         <h3>New Project</h3>
 
-        <div className="pm-field">
+        <Field>
           <label>Project Name <span className="req">*</span></label>
           <input
             value={form.name}
@@ -62,10 +66,10 @@ export default function ProjectFormModal({ onClose, onCreated }) {
             className={errors.name ? 'error' : ''}
             onKeyDown={e => e.key === 'Enter' && handleSubmit()}
           />
-          {errors.name && <div className="pm-field-hint" style={{color:'#aa1010'}}>{errors.name}</div>}
-        </div>
+          {errors.name && <FieldHint style={{color:theme.colors.danger}}>{errors.name}</FieldHint>}
+        </Field>
 
-        <div className="pm-field">
+        <Field>
           <label>Description</label>
           <textarea
             value={form.description}
@@ -73,10 +77,10 @@ export default function ProjectFormModal({ onClose, onCreated }) {
             placeholder="Brief overview of what this project aims to achieve…"
             rows={3}
           />
-        </div>
+        </Field>
 
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
-          <div className="pm-field">
+          <Field>
             <label>Start Date <span className="req">*</span></label>
             <input
               type="date"
@@ -84,9 +88,9 @@ export default function ProjectFormModal({ onClose, onCreated }) {
               onChange={e => set('plannedStart', e.target.value)}
               className={errors.plannedStart ? 'error' : ''}
             />
-            {errors.plannedStart && <div className="pm-field-hint" style={{color:'#aa1010'}}>{errors.plannedStart}</div>}
-          </div>
-          <div className="pm-field">
+            {errors.plannedStart && <FieldHint style={{color:theme.colors.danger}}>{errors.plannedStart}</FieldHint>}
+          </Field>
+          <Field>
             <label>End Date <span className="req">*</span></label>
             <input
               type="date"
@@ -95,23 +99,23 @@ export default function ProjectFormModal({ onClose, onCreated }) {
               min={form.plannedStart || undefined}
               className={errors.plannedEnd ? 'error' : ''}
             />
-            {errors.plannedEnd && <div className="pm-field-hint" style={{color:'#aa1010'}}>{errors.plannedEnd}</div>}
-          </div>
+            {errors.plannedEnd && <FieldHint style={{color:theme.colors.danger}}>{errors.plannedEnd}</FieldHint>}
+          </Field>
         </div>
 
         {apiError && (
-          <div style={{ color:'#aa1010', fontSize:12, marginBottom:8, padding:'8px 12px', background:'rgba(170,16,16,.06)', borderRadius:'var(--radius)', border:'1px solid rgba(170,16,16,.2)' }}>
+          <div style={{ color:theme.colors.danger, fontSize:12, marginBottom:8, padding:'8px 12px', background:'rgba(168,93,77,.08)', borderRadius:theme.radius.sm, border:'1px solid rgba(168,93,77,.25)' }}>
             {apiError}
           </div>
         )}
 
-        <div className="pm-modal-footer">
-          <button className="pm-btn pm-btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="pm-btn pm-btn-primary" onClick={handleSubmit} disabled={saving}>
+        <ModalFooter>
+          <BtnGhost onClick={onClose}>Cancel</BtnGhost>
+          <BtnPrimary onClick={handleSubmit} disabled={saving}>
             {saving ? 'Creating…' : 'Create Project'}
-          </button>
-        </div>
-      </div>
-    </div>
+          </BtnPrimary>
+        </ModalFooter>
+      </Modal>
+    </ModalOverlay>
   );
 }

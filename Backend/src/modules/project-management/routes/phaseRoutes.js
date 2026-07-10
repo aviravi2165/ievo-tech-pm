@@ -43,7 +43,7 @@ router.delete('/:id/members/:uid', resolvePhaseProject, requireEntityRole('phase
 
 // Activities for a phase — previously had NO auth/membership check at all.
 router.get('/:phaseId/activities', resolvePhaseProject, requireEntityRole('phase', 'Viewer'),
-  async (req, res, next) => { try { res.json(await require('../services/activityService').getActivitiesForPhase(req.params.phaseId)); } catch (e) { next(e); } });
+  async (req, res, next) => { try { res.json(await require('../services/activityService').getActivitiesForPhase(req.params.phaseId, req.user.userId)); } catch (e) { next(e); } });
 // Phase Managers can create Activities in their own phase, matching Activity
 // Managers already being able to create Tasks in their own activity.
 router.post('/:phaseId/activities', resolvePhaseProject, requireEntityRole('phase', 'Manager'), actCtrl.create);

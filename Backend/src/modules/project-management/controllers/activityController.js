@@ -2,7 +2,7 @@
 
 const svc = require('../services/activityService');
 
-const list          = async (req,res,next) => { try { res.json(await svc.getActivitiesForPhase(req.params.phaseId)); } catch(e){next(e);} };
+const list          = async (req,res,next) => { try { res.json(await svc.getActivitiesForPhase(req.params.phaseId, req.user.userId)); } catch(e){next(e);} };
 const create        = async (req,res,next) => { try { res.status(201).json(await svc.createActivity(req.params.phaseId, req.pmProjectId, req.user.userId, req.body)); } catch(e){next(e);} };
 const update        = async (req,res,next) => { try { res.json(await svc.updateActivity(req.params.id, req.pmProjectId, req.user.userId, req.body)); } catch(e){next(e);} };
 const remove        = async (req,res,next) => { try { res.json(await svc.deleteActivity(req.params.id, req.pmProjectId, req.user.userId)); } catch(e){next(e);} };

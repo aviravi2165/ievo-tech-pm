@@ -3,9 +3,10 @@
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
 const { blockIfNeeded, isBlocked, isInactive } = require('./dependencyService');
-const { getActivityProgress, deriveStatus } = require('./progressService');
+const { getActivityProgress, deriveStatus, getActivityHasActiveWork } = require('./progressService');
 const { getActivityDelayDays } = require('./delayService');
 const pmChatService = require('./pmChatService');
+const { getEffectiveActivityRole } = require('./roleService');
 
 function parseIdList(val) {
   if (!val) return [];
@@ -14,7 +15,10 @@ function parseIdList(val) {
 
 // ── Fetch activities ──────────────────────────────────────────────────────────
 
-async function getActivitiesForPhase(phaseId) {
+// userId — the REQUESTING user, used to compute their effective role per
+// activity (explicit activity-level row, else inherited from phase/project
+// role; see roleService). Same reasoning as phaseService.getPhasesForProject.
+async function getActivitiesForPhase(phaseId, userId) {
   const pool = await getPool();
   const result = await pool.request()
     .input('phaseId', sql.Int, phaseId)
@@ -29,6 +33,7 @@ async function getActivitiesForPhase(phaseId) {
              a.created_at    AS createdAt,
              parentPh.status AS parentPhaseStatus,
              a.is_active AS ownIsActive, parentPh.is_active AS parentPhaseActive,
+             parentProj.is_active AS parentProjectActive,
              CASE WHEN a.planned_end < CAST(GETDATE() AS DATE) AND a.status <> 'Completed'
                   THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS isOverdue,
              COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''), u.email) AS ownerName,
@@ -50,6 +55,7 @@ async function getActivitiesForPhase(phaseId) {
       FROM pm_activities a
       LEFT JOIN auth_users u ON u.user_id = a.owner_id
       INNER JOIN pm_phases parentPh ON parentPh.phase_id = a.phase_id
+      INNER JOIN pm_projects parentProj ON parentProj.project_id = parentPh.project_id
       WHERE a.phase_id = @phaseId AND a.is_deleted = 0
       ORDER BY a.display_order
     `);
@@ -63,16 +69,21 @@ async function getActivitiesForPhase(phaseId) {
         .query(`UPDATE pm_activities SET status = 'To Do' WHERE activity_id = @activityId AND status = 'Blocked'`);
       act.status = 'To Do';
     }
-    act.status = deriveStatus(act.progress, act.status);
+    act.status = deriveStatus(act.progress, act.status, await getActivityHasActiveWork(act.activityId));
     // Cascade blocking: an Activity under a Blocked Phase reads as Blocked
     // too, until the Phase's own dependency resolves — reflected at read
     // time rather than writing every descendant row.
     if (act.status !== 'Completed' && act.parentPhaseStatus === 'Blocked') act.status = 'Blocked';
     delete act.parentPhaseStatus;
-    // Cascade: an Activity under an inactive Phase reads as inactive too.
-    act.isActive = act.ownIsActive !== false && act.parentPhaseActive !== false;
-    delete act.ownIsActive; delete act.parentPhaseActive;
+    // Cascade: an Activity under an inactive Phase OR Project reads as
+    // inactive too (checks the full ancestor chain, not just the immediate
+    // parent's own column — a deactivated Project never touches
+    // pm_phases.is_active/pm_activities.is_active, so skipping the
+    // grandparent here would leave everything under it looking active).
+    act.isActive = act.ownIsActive !== false && act.parentPhaseActive !== false && act.parentProjectActive !== false;
+    delete act.ownIsActive; delete act.parentPhaseActive; delete act.parentProjectActive;
     act.delayDays = act.status === 'Completed' ? 0 : await getActivityDelayDays(act.activityId, act.plannedEnd);
+    act.myRole = userId ? (await getEffectiveActivityRole(userId, act.activityId)).role : null;
   }
   return rows;
 }
@@ -167,7 +178,7 @@ async function createActivity(phaseId, projectId, userId, body) {
     const e = new Error('This Phase is blocked by an unresolved dependency — resolve it before adding activities.');
     e.statusCode = 409; throw e;
   }
-  if (await isInactive('phase', phaseId)) {
+  if (await isInactive('phase', phaseId) || await isInactive('project', projectId)) {
     const e = new Error('This Phase is inactive — reactivate it before adding activities.');
     e.statusCode = 409; throw e;
   }
@@ -242,6 +253,10 @@ const ACTIVITY_FIELD_TYPES = {
 };
 
 async function updateActivity(activityId, projectId, userId, body) {
+  if (await isInactive('activity', activityId) || await isInactive('project', projectId)) {
+    const e = new Error('This Activity is inactive — reactivate it before making changes.');
+    e.statusCode = 409; throw e;
+  }
   const fields = {};
   if (body.name         !== undefined) fields.name          = body.name.trim();
   if (body.description  !== undefined) fields.description   = body.description;

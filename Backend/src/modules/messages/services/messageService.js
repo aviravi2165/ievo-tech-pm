@@ -1107,6 +1107,10 @@ async function getThread(conversationId, userId) {
   }
 
   const isThreadDisabled = Boolean(convRow.isThreadDisabled);
+  const leftAt     = curPartRes.recordset[0]?.leftAt     || null;
+  const joinedAt   = curPartRes.recordset[0]?.joinedAt   || null;
+  const rejoinedAt = curPartRes.recordset[0]?.rejoinedAt || null;
+  const isRemoved  = Boolean(curPartRes.recordset[0]?.isRemoved);
   let userCanReply  = Boolean(convRow.allowReply);
   let isGroupDisabled = false;
 
@@ -1129,13 +1133,15 @@ async function getThread(conversationId, userId) {
     userCanReply    = userCanReply && Boolean(mr?.memberUserId) && !isGroupDisabled;
   } else {
     isGroupDisabled = isThreadDisabled;
-    userCanReply    = userCanReply && !isThreadDisabled;
+    // CC/BCC "shared" threads have no separate membership table to check
+    // (unlike group_thread's comm_group_members) — previously this only
+    // checked isThreadDisabled, so a removed participant (comm_participants
+    // .is_deleted=1) reopening their history window still got a live
+    // compose box; only the reactive 403 from assertActiveParticipant on
+    // actual send caught it. Gate on isRemoved here too so the frontend can
+    // show "no longer a participant" proactively instead of a live composer.
+    userCanReply    = userCanReply && !isThreadDisabled && !isRemoved;
   }
-
-  const leftAt     = curPartRes.recordset[0]?.leftAt     || null;
-  const joinedAt   = curPartRes.recordset[0]?.joinedAt   || null;
-  const rejoinedAt = curPartRes.recordset[0]?.rejoinedAt || null;
-  const isRemoved  = Boolean(curPartRes.recordset[0]?.isRemoved);
 
   const visibilityFloor = joinedAt || new Date('1753-01-01T00:00:00Z');
 
@@ -1209,6 +1215,7 @@ async function getThread(conversationId, userId) {
       participants:   partRes.recordset,
       userCanReply,
       isGroupDisabled,
+      isRemoved,
       leftAt,
     },
     messages: msgRes.recordset.map(mapThreadMessage),

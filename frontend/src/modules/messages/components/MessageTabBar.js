@@ -1,43 +1,33 @@
 import { useMessaging } from '../context/MessagingContext';
+import { TabBarNav } from '../styles/MessagingPage.styles';
+import { NavBtn, Badge } from '../styles/shared.styles';
 
 export default function MessageTabBar({ tab, onTabChange, isSuperAdmin = false }) {
   const { inboxUnreadCount, groupUnreadCount } = useMessaging();
 
   if (isSuperAdmin) {
     return (
-      <nav className="msg-tab-bar" aria-label="Message views">
-        <button type="button"
-          className={`msg-nav-btn ${tab === 'threads' ? 'active' : ''}`}
-          onClick={() => onTabChange('threads')}>
+      <TabBarNav aria-label="Message views">
+        <NavBtn type="button" active={tab === 'threads'} onClick={() => onTabChange('threads')}>
           Threads
-        </button>
-        <button type="button"
-          className={`msg-nav-btn ${tab === 'groups' ? 'active' : ''}`}
-          onClick={() => onTabChange('groups')}>
+        </NavBtn>
+        <NavBtn type="button" active={tab === 'groups'} onClick={() => onTabChange('groups')}>
           Groups
-        </button>
-      </nav>
+        </NavBtn>
+      </TabBarNav>
     );
   }
 
   return (
-    <nav className="msg-tab-bar" aria-label="Message views">
-      <button type="button"
-        className={`msg-nav-btn ${tab === 'inbox' ? 'active' : ''}`}
-        onClick={() => onTabChange('inbox')}>
+    <TabBarNav aria-label="Message views">
+      <NavBtn type="button" active={tab === 'inbox'} onClick={() => onTabChange('inbox')}>
         Inbox
-        {inboxUnreadCount > 0 && (
-          <span className="badge">{inboxUnreadCount > 99 ? '99+' : inboxUnreadCount}</span>
-        )}
-      </button>
-      <button type="button"
-        className={`msg-nav-btn ${tab === 'groups' ? 'active' : ''}`}
-        onClick={() => onTabChange('groups')}>
+        {inboxUnreadCount > 0 && <Badge>{inboxUnreadCount > 99 ? '99+' : inboxUnreadCount}</Badge>}
+      </NavBtn>
+      <NavBtn type="button" active={tab === 'groups'} onClick={() => onTabChange('groups')}>
         Groups
-        {groupUnreadCount > 0 && (
-          <span className="badge">{groupUnreadCount > 99 ? '99+' : groupUnreadCount}</span>
-        )}
-      </button>
-    </nav>
+        {groupUnreadCount > 0 && <Badge>{groupUnreadCount > 99 ? '99+' : groupUnreadCount}</Badge>}
+      </NavBtn>
+    </TabBarNav>
   );
 }

@@ -1,7 +1,10 @@
 import { useMemo, useState, useRef, useCallback } from 'react';
+import { useTheme } from '@emotion/react';
+import { CalendarRange } from 'lucide-react';
 import { phaseApi } from '../api/projectApi';
+import { Empty, Timeline, TlRow, TlLabel, TlBarWrap, TlBar } from '../styles/shared.styles';
 
-const LABEL_W = 180; // must match .pm-tl-label width in pm.css
+const LABEL_W = 180; // must match TlLabel width in styles/shared.styles.js
 
 /** Fix: parse YYYY-MM-DD as local date — avoids off-by-one in +UTC timezones */
 function parseDate(d) {
@@ -30,6 +33,7 @@ function fmtFull(d) {
 }
 
 export default function TimelineView({ phases = [], projectStart, projectEnd }) {
+  const theme = useTheme();
   const [expanded,   setExpanded]   = useState({});
   // Use a ref for activities cache — avoids stale closure on fetchActivities
   const activitiesRef = useRef({});
@@ -112,24 +116,21 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
 
   if (!phases.length) {
     return (
-      <div className="pm-empty">
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2">
-          <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/>
-          <line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
-        </svg>
+      <Empty>
+        <CalendarRange size={40} strokeWidth={1.2} />
         <p>No phases yet. Add phases with planned dates to see the timeline.</p>
-      </div>
+      </Empty>
     );
   }
 
   return (
-    <div className="pm-timeline" style={{ userSelect: 'none' }}>
+    <Timeline style={{ userSelect: 'none' }}>
 
       {!hasDates && (
         <div style={{
-          background: 'rgba(201,169,110,0.08)', border: '1px solid var(--gold-dim)',
-          borderRadius: 'var(--radius)', padding: '8px 14px', marginBottom: 12,
-          fontSize: 12, color: 'var(--gold-dim)',
+          background: `${theme.colors.warning}1a`, border: `1px solid ${theme.colors.warning}`,
+          borderRadius: theme.radius.sm, padding: '8px 14px', marginBottom: 12,
+          fontSize: 12, color: theme.colors.warning,
         }}>
           No planned dates set on phases. Add start and end dates to phases to see bars on the timeline.
         </div>
@@ -147,7 +148,7 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
               left: `${m.pct}%`,
               transform: 'translateX(-50%)',
               fontSize: 10,
-              color: 'var(--muted)',
+              color: theme.colors.ash,
               whiteSpace: 'nowrap',
             }}>
               {m.label}
@@ -165,106 +166,104 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
           top: 0, bottom: 0,
           left: `calc(${LABEL_W}px + ${todayPct}% * (100% - ${LABEL_W}px) / 100)`,
           width: 2,
-          background: 'rgba(220,60,60,.75)',
+          background: 'rgba(168,93,77,.75)',
           zIndex: 10,
           pointerEvents: 'none',
         }}>
           <div style={{
             position: 'absolute', top: 0, left: 3,
-            fontSize: 9, color: 'rgba(220,60,60,.9)', whiteSpace: 'nowrap',
+            fontSize: 9, color: 'rgba(168,93,77,.9)', whiteSpace: 'nowrap',
           }}>Today</div>
         </div>
 
         {phases.map(phase => (
           <div key={phase.phaseId}>
             {/* Phase row */}
-            <div
-              className="pm-tl-row"
+            <TlRow
               style={{ cursor: 'pointer' }}
               onClick={() => togglePhase(phase.phaseId)}
               title={phase.plannedStart
                 ? `${fmtFull(phase.plannedStart)} → ${fmtFull(phase.plannedEnd)}`
                 : 'No dates set'}
             >
-              <div className="pm-tl-label">
-                <span style={{ marginRight: 5, color: 'var(--muted)', fontSize: 9 }}>
+              <TlLabel>
+                <span style={{ marginRight: 5, color: theme.colors.ash, fontSize: 9 }}>
                   {expanded[phase.phaseId] ? '▼' : '▶'}
                 </span>
                 {phase.name}
-              </div>
+              </TlLabel>
 
-              <div className="pm-tl-bar-wrap">
+              <TlBarWrap>
                 {barStyle(phase.plannedStart, phase.plannedEnd) ? (
-                  <div
-                    className="pm-tl-bar phase"
+                  <TlBar
+                    kind="phase"
                     style={barStyle(phase.plannedStart, phase.plannedEnd)}
                     title={`${phase.name} · ${phase.status}`}
                   >
                     <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', fontSize: 10 }}>
                       {phase.status}
                     </span>
-                  </div>
+                  </TlBar>
                 ) : (
                   /* No dates — show a ghost bar */
                   <div style={{
                     position: 'absolute', left: '2%', right: '2%', top: 6, height: 24,
-                    background: 'var(--mid)', borderRadius: 'var(--radius)',
+                    background: theme.colors.mid, borderRadius: theme.radius.sm,
                     display: 'flex', alignItems: 'center', padding: '0 8px',
                   }}>
-                    <span style={{ fontSize: 10, color: 'var(--muted)' }}>No dates — {phase.status}</span>
+                    <span style={{ fontSize: 10, color: theme.colors.ash }}>No dates — {phase.status}</span>
                   </div>
                 )}
-              </div>
-            </div>
+              </TlBarWrap>
+            </TlRow>
 
             {/* Activity rows (expanded) */}
             {expanded[phase.phaseId] && (actCache[phase.phaseId] || []).map(act => (
-              <div
+              <TlRow
                 key={act.activityId}
-                className="pm-tl-row"
                 title={act.plannedStart
                   ? `${fmtFull(act.plannedStart)} → ${fmtFull(act.plannedEnd)}`
                   : 'No dates set'}
               >
-                <div className="pm-tl-label" style={{ paddingLeft: 22, fontSize: 11, color: 'var(--muted)' }}>
+                <TlLabel style={{ paddingLeft: 22, fontSize: 11, color: theme.colors.ash }}>
                   {act.name}
-                </div>
-                <div className="pm-tl-bar-wrap">
+                </TlLabel>
+                <TlBarWrap>
                   {barStyle(act.plannedStart, act.plannedEnd) ? (
-                    <div
-                      className="pm-tl-bar activity"
+                    <TlBar
+                      kind="activity"
                       style={barStyle(act.plannedStart, act.plannedEnd)}
                       title={`${act.name} · ${act.status}`}
                     >
                       <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', fontSize: 10 }}>
                         {act.status}
                       </span>
-                    </div>
+                    </TlBar>
                   ) : (
                     <div style={{
                       position: 'absolute', left: '4%', right: '4%', top: 6, height: 22,
-                      background: 'var(--charcoal)', border: '1px dashed var(--divider)',
-                      borderRadius: 'var(--radius)', display: 'flex', alignItems: 'center', padding: '0 8px',
+                      background: theme.colors.white, border: `1px dashed ${theme.colors.border}`,
+                      borderRadius: theme.radius.sm, display: 'flex', alignItems: 'center', padding: '0 8px',
                     }}>
-                      <span style={{ fontSize: 10, color: 'var(--muted)' }}>No dates</span>
+                      <span style={{ fontSize: 10, color: theme.colors.ash }}>No dates</span>
                     </div>
                   )}
-                </div>
-              </div>
+                </TlBarWrap>
+              </TlRow>
             ))}
 
             {/* Loading indicator while activities fetch */}
             {expanded[phase.phaseId] && !actCache[phase.phaseId] && (
-              <div className="pm-tl-row">
-                <div className="pm-tl-label" style={{ paddingLeft: 22, fontSize: 11, color: 'var(--muted)' }}>
+              <TlRow>
+                <TlLabel style={{ paddingLeft: 22, fontSize: 11, color: theme.colors.ash }}>
                   Loading…
-                </div>
-                <div className="pm-tl-bar-wrap" />
-              </div>
+                </TlLabel>
+                <TlBarWrap />
+              </TlRow>
             )}
           </div>
         ))}
       </div>
-    </div>
+    </Timeline>
   );
 }

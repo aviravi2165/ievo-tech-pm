@@ -131,6 +131,39 @@ async function getProjectManagerIdsForActivity(activityId) {
   return result.recordset.map(r => String(r.userId));
 }
 
+/** Phase Managers for the phase a given activity belongs to. */
+async function getPhaseManagerIdsForActivity(activityId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('activityId', sql.Int, activityId)
+    .query(`
+      SELECT pm2.user_id AS userId
+      FROM pm_activities a
+      INNER JOIN pm_phases ph ON ph.phase_id = a.phase_id
+      INNER JOIN pm_phase_members pm2 ON pm2.phase_id = ph.phase_id AND pm2.role = 'Manager'
+      WHERE a.activity_id = @activityId
+    `);
+  return result.recordset.map(r => String(r.userId));
+}
+
+/**
+ * Every Manager with authority over a task via its parent activity: the
+ * activity's own explicit Manager(s), the Phase's Manager(s), and the
+ * project's Manager(s) — always unioned together, not a fallback chain.
+ * Per the role hierarchy a Phase/Project Manager already has full
+ * authority over everything underneath them (see requireEntityRole), so
+ * they belong in a task's chat regardless of whether that task's Activity
+ * happens to have its own explicit Manager set.
+ */
+async function resolveTaskManagerIds(activityId) {
+  const [activityManagers, phaseManagers, projectManagers] = await Promise.all([
+    getActivityManagerIds(activityId),
+    getPhaseManagerIdsForActivity(activityId),
+    getProjectManagerIdsForActivity(activityId),
+  ]);
+  return [...new Set([...activityManagers, ...phaseManagers, ...projectManagers])];
+}
+
 /**
  * The full set of people who currently belong in this activity's chat:
  * every explicit activity member (any role). This is deliberately broader
@@ -143,22 +176,27 @@ async function getProjectManagerIdsForActivity(activityId) {
  * (if momentarily one-person) chat rather than failing to create one.
  */
 async function resolveActivityThreadSeedIds(activityId) {
-  // Project Managers are ALWAYS included — they hold project-wide oversight and
-  // must never be locked out of an activity group chat regardless of whether
-  // they appear in pm_activity_members.
-  // Bug that was here: project managers were only a last-resort fallback and got
-  // skipped the moment a single pm_activity_members row existed, causing project
-  // Managers (including the project owner) to fail assertConversationParticipant
-  // and see "Failed to load" when opening any activity chat they weren't
-  // explicitly listed in.
-  const [members, projectManagers] = await Promise.all([
+  // Phase Managers and Project Managers are ALWAYS included, cumulatively —
+  // not a fallback that only kicks in when the activity has no members of
+  // its own. They hold authority over this activity by hierarchy (same
+  // reasoning as resolveTaskManagerIds above) regardless of whether they
+  // happen to also appear in pm_activity_members.
+  // Bug that was here previously: project managers were only a last-resort
+  // fallback and got skipped the moment a single pm_activity_members row
+  // existed, causing project Managers (including the project owner) to fail
+  // assertConversationParticipant and see "Failed to load" when opening any
+  // activity chat they weren't explicitly listed in. Phase Managers had the
+  // exact same gap and were never included at all until now.
+  const [members, phaseManagers, projectManagers] = await Promise.all([
     getAllActivityMemberIds(activityId),
+    getPhaseManagerIdsForActivity(activityId),
     getProjectManagerIdsForActivity(activityId),
   ]);
-  const seed = new Set([...members, ...projectManagers]);
+  const seed = new Set([...members, ...phaseManagers, ...projectManagers]);
   if (seed.size) return [...seed];
-  // Final fallback only when the project itself has no Managers yet (edge case
-  // during initial setup): use the activity-level manager / owner_id column.
+  // Final fallback only when literally nobody qualifies yet (edge case
+  // during initial setup, before the project even has a Manager): use the
+  // activity-level manager / owner_id column.
   return resolveActivityManagerIds(activityId);
 }
 
@@ -170,5 +208,7 @@ module.exports = {
   resolveActivityManagerIds,
   getAllActivityMemberIds,
   getProjectManagerIdsForActivity,
+  getPhaseManagerIdsForActivity,
+  resolveTaskManagerIds,
   resolveActivityThreadSeedIds,
 };

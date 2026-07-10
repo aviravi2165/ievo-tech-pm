@@ -12,11 +12,19 @@ export function useProject(projectId) {
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState(null);
   const socketRef = useRef(null);
+  // Every create/save/delete anywhere in the Phase/Activity/Task tree calls
+  // this same refetch to pick up server-computed fields (progress, etc.).
+  // setLoading(true) on EVERY one of those calls made ProjectDetailPage's
+  // `if (loading) return <Loading…>` unmount the whole Phases tree on every
+  // single save, wiping which phases/activities were expanded and which
+  // edit panel was open. Only the true first load should show that
+  // full-page loading state; later refetches update data in place.
+  const hasLoadedRef = useRef(false);
 
   const fetchProject = useCallback(async () => {
     if (!projectId) return;
     try {
-      setLoading(true);
+      if (!hasLoadedRef.current) setLoading(true);
       const [proj, phs] = await Promise.all([
         projectApi.get(projectId),
         projectApi.getPhases(projectId),
@@ -26,9 +34,17 @@ export function useProject(projectId) {
       setError(null);
     } catch (err) {
       setError(err.message);
-    } finally { setLoading(false); }
+    } finally {
+      hasLoadedRef.current = true;
+      setLoading(false);
+    }
   }, [projectId]);
 
+  // Reset the "have we loaded" flag when projectId itself changes (e.g. the
+  // global 'open-project' event can swap projects without unmounting this
+  // hook) so switching to a different project still shows the full-page
+  // loading state instead of silently reusing the previous project's data.
+  useEffect(() => { hasLoadedRef.current = false; }, [projectId]);
   useEffect(() => { fetchProject(); }, [fetchProject]);
 
   // Socket.io /pm namespace

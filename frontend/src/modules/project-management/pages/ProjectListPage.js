@@ -1,10 +1,17 @@
 import { useState } from 'react';
+import { useTheme } from '@emotion/react';
+import { FolderKanban, RotateCcw, Trash2 } from 'lucide-react';
 import StatusBadge, { InactiveBadge } from '../components/StatusBadge';
 import ProgressBar from '../components/ProgressBar';
 import OverdueBadge from '../components/OverdueBadge';
 import ProjectFormModal from '../components/ProjectFormModal';
 import { useProjectList } from '../hooks/useProject';
 import { projectApi } from '../api/projectApi';
+import { Table, TableHead, TableHeadCell, ListRow, Cell } from '../styles/Table.styles';
+import { Topbar, TopbarH1, TopbarActions, List } from '../styles/ProjectListPage.styles';
+import { Wrap, Empty, BtnPrimary, DepBadge, IconBtn, IconBtnDanger } from '../styles/shared.styles';
+
+const COL = { owner: 105, dates: 140, progress: 100, status: 96, role: 74, actions: 28 };
 
 function parseLocalDate(d) {
   if (!d) return null;
@@ -19,6 +26,7 @@ function fmtDate(d) {
 }
 
 export default function ProjectListPage({ onSelectProject }) {
+  const theme = useTheme();
   const { projects, loading, error, refetch } = useProjectList();
   const [showCreate, setShowCreate] = useState(false);
   const [search, setSearch] = useState('');
@@ -26,6 +34,7 @@ export default function ProjectListPage({ onSelectProject }) {
   const filtered = projects.filter(p =>
     p.name.toLowerCase().includes(search.toLowerCase())
   );
+  const isAdminView = projects.some(p => p.isSuperAdmin);
 
   const handleDelete = async (e, project) => {
     e.stopPropagation();
@@ -45,100 +54,126 @@ export default function ProjectListPage({ onSelectProject }) {
   };
 
   return (
-    <div className="pm-wrap">
-      <div className="pm-topbar">
-        <h1>Projects</h1>
+    <Wrap>
+      <Topbar>
+        <TopbarH1>Projects</TopbarH1>
+        {isAdminView && (
+          <DepBadge as="span" title="You're seeing every project in the org, not just ones you're a member of." style={{ background: theme.colors.warning, color: '#fff' }}>
+            Admin view — all projects
+          </DepBadge>
+        )}
         <input
           placeholder="Search projects…"
           value={search}
           onChange={e => setSearch(e.target.value)}
           style={{
-            background: 'var(--slate)', border: '1px solid var(--divider)',
-            borderRadius: 'var(--radius)', padding: '6px 12px', color: 'var(--light)',
+            background: theme.colors.greige, border: `1px solid ${theme.colors.border}`,
+            borderRadius: theme.radius.sm, padding: '6px 12px', color: theme.colors.onyx,
             fontSize: 12, width: 200, outline: 'none',
           }}
         />
-        <div className="pm-topbar-actions">
-          <button className="pm-btn pm-btn-primary" onClick={() => setShowCreate(true)}>
+        <TopbarActions>
+          <BtnPrimary onClick={() => setShowCreate(true)}>
             + New Project
-          </button>
-        </div>
-      </div>
+          </BtnPrimary>
+        </TopbarActions>
+      </Topbar>
 
-      <div className="pm-list">
-        {loading && <div style={{ color: 'var(--muted)', fontSize: 13 }}>Loading projects…</div>}
-        {error   && <div style={{ color: '#aa1010', fontSize: 13 }}>{error}</div>}
+      <List>
+        {loading && <div style={{ color: theme.colors.ash, fontSize: 13 }}>Loading projects…</div>}
+        {error   && <div style={{ color: theme.colors.danger, fontSize: 13 }}>{error}</div>}
 
         {!loading && !filtered.length && (
-          <div className="pm-empty">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2">
-              <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/>
-              <line x1="9" y1="21" x2="9" y2="9"/>
-            </svg>
+          <Empty>
+            <FolderKanban size={44} strokeWidth={1.2} />
             <p>{search ? 'No projects match your search.' : 'No projects yet. Create one to get started.'}</p>
-          </div>
+          </Empty>
         )}
 
-        <div className="pm-list-grid">
-          {filtered.map(p => (
-            <div key={p.projectId} className="pm-card" onClick={() => onSelectProject(p.projectId)}>
-              <div className="pm-card-name">{p.name}</div>
-              <div className="pm-card-meta">
-                {p.ownerName && <span>Owner: {p.ownerName}</span>}
-                {p.plannedStart && <span> · {fmtDate(p.plannedStart)} → {fmtDate(p.plannedEnd)}</span>}
-                {p.description && (
-                  <div style={{ marginTop: 4, color: 'var(--muted)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-                    {p.description}
-                  </div>
-                )}
-              </div>
-              <div style={{ marginBottom: 12 }}>
-                <ProgressBar value={p.progress || 0} />
-              </div>
-              <div className="pm-card-footer">
-                <StatusBadge status={p.status} />
-                {p.isActive === false && <InactiveBadge />}
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>{p.phaseCount} phase{p.phaseCount !== 1 ? 's' : ''}</span>
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>{p.memberCount} member{p.memberCount !== 1 ? 's' : ''}</span>
-                <span style={{
-                  fontSize: 11, color: 'var(--muted)',
-                  background: 'var(--mid)', padding: '2px 8px', borderRadius: 10,
-                  border: '1px solid var(--divider)',
-                }}>{p.myRole}</span>
-                {p.isOverdue && <OverdueBadge />}
-              </div>
+        {filtered.length > 0 && (
+          <Table>
+            {/* cols is required now that TableHead is CSS Grid — without
+                it, this defaulted silently to the Phase/Activity table's
+                5-column GROUP_GRID_COLS template while actually rendering
+                7 columns of completely different widths, which is why
+                this page's header (and by extension its row alignment)
+                broke when TableHead was converted to grid. This page's
+                rows (ListRow/Cell) are still flexbox, not grid — that's
+                fine, both layout modes agree on exact pixel widths for a
+                fixed-width column, they just need to be told the SAME
+                widths, which this cols string now does. */}
+            <TableHead cols={`1fr ${COL.owner}px ${COL.dates}px ${COL.progress}px ${COL.status}px ${COL.role}px ${COL.actions}px`}>
+              <TableHeadCell>Name</TableHeadCell>
+              <TableHeadCell>Owner</TableHeadCell>
+              <TableHeadCell>Dates</TableHeadCell>
+              <TableHeadCell center>Progress</TableHeadCell>
+              <TableHeadCell center>Status</TableHeadCell>
+              <TableHeadCell center>Role</TableHeadCell>
+              <TableHeadCell />
+            </TableHead>
 
-              {/* Delete/Reactivate button — only visible on hover, only for Managers */}
-              {p.myRole === 'Manager' && (
-                p.isActive === false ? (
-                  <button
-                    className="pm-card-delete icon-btn"
-                    title="Reactivate project"
-                    onClick={(e) => handleReactivate(e, p)}
-                    style={{ width: 26, height: 26 }}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-                    </svg>
-                  </button>
-                ) : (
-                  <button
-                    className="pm-card-delete icon-btn danger"
-                    title="Delete project"
-                    onClick={(e) => handleDelete(e, p)}
-                    style={{ width: 26, height: 26 }}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/>
-                      <path d="M9 6V4h6v2"/>
-                    </svg>
-                  </button>
-                )
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
+            {filtered.map(p => (
+              <ListRow key={p.projectId} onClick={() => onSelectProject(p.projectId)} style={{ minHeight: 36, padding: '5px 10px' }}>
+                {/* Explicit 2-line stack (title row, meta row) rather than
+                    packing name+badges+meta all inline on one line — an
+                    unconstrained flex row of text spans doesn't reliably
+                    shrink/wrap, which is what caused rows to overflow their
+                    fixed height and visually bleed into the row below. */}
+                <Cell style={{ minWidth: 0, flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: '100%' }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: theme.colors.onyx, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }} title={p.name}>
+                      {p.name}
+                    </span>
+                    {p.isActive === false && <InactiveBadge />}
+                    {p.isOverdue && <OverdueBadge />}
+                  </div>
+                  <span style={{ fontSize: 9, color: theme.colors.ashLight }}>
+                    {p.phaseCount} phase{p.phaseCount !== 1 ? 's' : ''} · {p.memberCount} member{p.memberCount !== 1 ? 's' : ''}
+                  </span>
+                </Cell>
+
+                <Cell w={COL.owner}>
+                  <span style={{ fontSize: 10, color: theme.colors.ash, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {p.ownerName || '—'}
+                  </span>
+                </Cell>
+
+                <Cell w={COL.dates}>
+                  <span style={{ fontSize: 9.5, color: theme.colors.ash, whiteSpace: 'nowrap' }}>
+                    {p.plannedStart ? `${fmtDate(p.plannedStart)} → ${fmtDate(p.plannedEnd)}` : '—'}
+                  </span>
+                </Cell>
+
+                <Cell w={COL.progress} center>
+                  <ProgressBar value={p.progress || 0} />
+                </Cell>
+
+                <Cell w={COL.status} center>
+                  <StatusBadge status={p.status} />
+                </Cell>
+
+                <Cell w={COL.role} center>
+                  <DepBadge as="span">{p.myRole}</DepBadge>
+                </Cell>
+
+                <Cell w={COL.actions} onClick={e => e.stopPropagation()}>
+                  {p.myRole === 'Manager' && (
+                    p.isActive === false ? (
+                      <IconBtn title="Reactivate project" onClick={(e) => handleReactivate(e, p)} style={{ width: 26, height: 26 }}>
+                        <RotateCcw size={13} strokeWidth={2} />
+                      </IconBtn>
+                    ) : (
+                      <IconBtnDanger title="Delete project" onClick={(e) => handleDelete(e, p)} style={{ width: 26, height: 26 }}>
+                        <Trash2 size={13} strokeWidth={2} />
+                      </IconBtnDanger>
+                    )
+                  )}
+                </Cell>
+              </ListRow>
+            ))}
+          </Table>
+        )}
+      </List>
 
       {showCreate && (
         <ProjectFormModal
@@ -146,6 +181,6 @@ export default function ProjectListPage({ onSelectProject }) {
           onCreated={(project) => { setShowCreate(false); refetch(); onSelectProject(project.projectId); }}
         />
       )}
-    </div>
+    </Wrap>
   );
 }

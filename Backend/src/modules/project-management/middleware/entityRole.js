@@ -26,6 +26,16 @@ function requireEntityRole(level, minRole) {
     try {
       const userId = req.user.userId;
 
+      // Admins get the same oversight bypass as project-level Managers
+      // (mirrors the messaging module's super-admin pattern) — see
+      // projectRole.js requireRole for the equivalent at the project level.
+      if (req.user.userType === 'admin') {
+        req.effectiveRole = 'Manager';
+        req.effectiveLevel = 'admin';
+        req.isSuperAdmin = true;
+        return next();
+      }
+
       // A project-level Manager can always administer Phases/Activities
       // inside their own project — check this first, it's a single cheap query.
       if (req.pmProjectId) {

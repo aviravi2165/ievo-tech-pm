@@ -126,7 +126,13 @@ async function registerUser(data) {
     err.statusCode = 400; throw err;
   }
 
-  const VALID_TYPES = ['employee', 'manager', 'admin'];
+  // Account-level type is deliberately just Admin/Employee — "Manager" as a
+  // global account type was redundant and confusing alongside the per-project
+  // Manager role the PM module already grants (anyone can be made a Manager
+  // of a specific project/phase/activity there without needing a different
+  // account type), and alongside auth_users.mgr_user_id (the separate
+  // "who do you report to" org-chart field).
+  const VALID_TYPES = ['employee', 'admin'];
   if (!VALID_TYPES.includes(userType)) {
     const err = new Error(`user_type must be one of: ${VALID_TYPES.join(', ')}`);
     err.statusCode = 400; throw err;
@@ -226,6 +232,11 @@ async function updateUser(userId, data) {
     .query(`SELECT user_id FROM auth_users WHERE user_id = @userId`);
   if (!check.recordset[0]) {
     const err = new Error('User not found'); err.statusCode = 404; throw err;
+  }
+
+  if ('userType' in data && !['employee', 'admin'].includes(data.userType)) {
+    const err = new Error('user_type must be one of: employee, admin');
+    err.statusCode = 400; throw err;
   }
 
   // Build SET clause dynamically — only update fields that were supplied

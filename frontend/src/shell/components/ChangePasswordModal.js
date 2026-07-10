@@ -1,5 +1,9 @@
 import { useState } from 'react';
 import { useAuth } from '../../modules/auth/AuthContext';
+import {
+  Overlay, ModalCard, ModalTitle, FormField, FieldLabel, FieldInput,
+  ErrorText, SuccessText, FormActions, CancelBtn, SubmitBtn,
+} from '../styles/ChangePasswordModal.styles';
 
 export default function ChangePasswordModal({
   open,
@@ -70,181 +74,52 @@ export default function ChangePasswordModal({
     }
   };
 
-  const inputStyle = {
-    width: '100%',
-    height: '40px',
-    padding: '0 12px',
-    marginTop: '6px',
-    border: '1px solid #d0d5dd',
-    borderRadius: '6px',
-    boxSizing: 'border-box',
-    fontSize: '14px',
-  };
-
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,0.35)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 99999,
-      }}
-    >
-      <div
-        style={{
-          width: '500px',
-          background: '#fff',
-          borderRadius: '8px',
-          border: '1px solid #d9d9d9',
-          padding: '24px',
-          boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
-        }}
-      >
-        <h3
-          style={{
-            margin: '0 0 20px 0',
-            fontSize: '22px',
-            fontWeight: 600,
-            color: '#222',
-          }}
-        >
-          Change Password
-        </h3>
+    <Overlay>
+      <ModalCard>
+        <ModalTitle>Change Password</ModalTitle>
 
         <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: '16px' }}>
-            <label
-              style={{
-                display: 'block',
-                fontWeight: 500,
-                color: '#444',
-              }}
-            >
-              Current Password
-            </label>
-
-            <input
+          <FormField>
+            <FieldLabel>Current Password</FieldLabel>
+            <FieldInput
               type="password"
               value={currentPassword}
-              onChange={(e) =>
-                setCurrentPassword(e.target.value)
-              }
-              style={inputStyle}
+              onChange={(e) => setCurrentPassword(e.target.value)}
             />
-          </div>
+          </FormField>
 
-          <div style={{ marginBottom: '16px' }}>
-            <label
-              style={{
-                display: 'block',
-                fontWeight: 500,
-                color: '#444',
-              }}
-            >
-              New Password
-            </label>
-
-            <input
+          <FormField>
+            <FieldLabel>New Password</FieldLabel>
+            <FieldInput
               type="password"
               value={newPassword}
-              onChange={(e) =>
-                setNewPassword(e.target.value)
-              }
-              style={inputStyle}
+              onChange={(e) => setNewPassword(e.target.value)}
             />
-          </div>
+          </FormField>
 
-          <div style={{ marginBottom: '16px' }}>
-            <label
-              style={{
-                display: 'block',
-                fontWeight: 500,
-                color: '#444',
-              }}
-            >
-              Confirm Password
-            </label>
-
-            <input
+          <FormField>
+            <FieldLabel>Confirm Password</FieldLabel>
+            <FieldInput
               type="password"
               value={confirmPassword}
-              onChange={(e) =>
-                setConfirmPassword(e.target.value)
-              }
-              style={inputStyle}
+              onChange={(e) => setConfirmPassword(e.target.value)}
             />
-          </div>
+          </FormField>
 
-          {error && (
-            <div
-              style={{
-                color: '#dc2626',
-                marginBottom: '16px',
-                fontSize: '14px',
-              }}
-            >
-              {error}
-            </div>
-          )}
+          {error && <ErrorText>{error}</ErrorText>}
+          {success && <SuccessText>{success}</SuccessText>}
 
-          {success && (
-            <div
-              style={{
-                color: '#16a34a',
-                marginBottom: '16px',
-                fontSize: '14px',
-              }}
-            >
-              {success}
-            </div>
-          )}
-
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'flex-end',
-              gap: '10px',
-              marginTop: '20px',
-            }}
-          >
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={loading}
-              style={{
-                padding: '10px 18px',
-                border: '1px solid #d0d5dd',
-                borderRadius: '6px',
-                background: '#fff',
-                cursor: 'pointer',
-                fontSize: '14px',
-              }}
-            >
+          <FormActions>
+            <CancelBtn type="button" onClick={onClose} disabled={loading}>
               Cancel
-            </button>
-
-            <button
-              type="submit"
-              disabled={loading}
-              style={{
-                padding: '10px 18px',
-                border: 'none',
-                borderRadius: '6px',
-                background: '#e31b23',
-                color: '#fff',
-                fontWeight: 600,
-                cursor: 'pointer',
-                fontSize: '14px',
-              }}
-            >
+            </CancelBtn>
+            <SubmitBtn type="submit" disabled={loading}>
               {loading ? 'Saving...' : 'Change Password'}
-            </button>
-          </div>
+            </SubmitBtn>
+          </FormActions>
         </form>
-      </div>
-    </div>
+      </ModalCard>
+    </Overlay>
   );
 }

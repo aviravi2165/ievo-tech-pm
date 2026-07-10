@@ -6,6 +6,7 @@ import ModulePlaceholder from '../modules/shared/ModulePlaceholder';
 import { ERP_MODULES, DEFAULT_MODULE_ID } from './config/modules';
 import { SocketProvider }    from '../modules/messages/context/SocketContext';
 import { MessagingProvider } from '../modules/messages/context/MessagingContext';
+import { ErpShell, ErpShellBody, ErpMain } from './styles/Shell.styles';
 
 export default function AppShell({ currentUser }) {
   const [activeModuleId, setActiveModuleId] = useState(DEFAULT_MODULE_ID);
@@ -40,16 +41,16 @@ export default function AppShell({ currentUser }) {
   return (
     <SocketProvider>
       <MessagingProvider>
-        <div className="erp-shell">
+        <ErpShell>
           <TopBanner currentUser={currentUser} activeModule={activeModule} />
 
-          <div className="erp-shell-body">
+          <ErpShellBody>
             <ModuleDrawer
               activeModuleId={activeModuleId}
               onSelectModule={setActiveModuleId}
             />
 
-            <main className="erp-main" role="main">
+            <ErpMain role="main">
               {ActiveComponent ? (
                 <ActiveComponent currentUser={currentUser} />
               ) : (
@@ -58,15 +59,15 @@ export default function AppShell({ currentUser }) {
                   description={activeModule.description}
                 />
               )}
-            </main>
+            </ErpMain>
 
             <MessagePanel
               currentUser={currentUser}
               open={messagesOpen}
               onToggle={() => setMessagesOpen(v => !v)}
             />
-          </div>
-        </div>
+          </ErpShellBody>
+        </ErpShell>
       </MessagingProvider>
     </SocketProvider>
   );

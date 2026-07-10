@@ -2,14 +2,22 @@
 
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
-const { getProjectProgress } = require('./progressService');
+const { getProjectProgress, getProjectHasActiveWork, deriveProjectStatus } = require('./progressService');
 const { getProjectDelayDays } = require('./delayService');
+const { isInactive } = require('./dependencyService');
 
-async function listProjects(userId) {
+async function listProjects(userId, isAdmin = false) {
   const pool = await getPool();
-  const result = await pool.request()
-    .input('userId', sql.UniqueIdentifier, userId)
-    .query(`
+  const req = pool.request().input('userId', sql.UniqueIdentifier, userId);
+  // Admins see every project (oversight view, mirrors the messaging
+  // module's super-admin "all groups" behavior) — LEFT JOIN instead of
+  // INNER JOIN so projects with no pm_members row for this admin still
+  // show up; myRole is NULL for those (frontend treats isSuperAdmin as
+  // implicit Manager-level access, it doesn't rely on myRole for admins).
+  const joinClause = isAdmin
+    ? 'LEFT JOIN pm_members pm ON pm.project_id=p.project_id AND pm.user_id=@userId'
+    : 'INNER JOIN pm_members pm ON pm.project_id=p.project_id AND pm.user_id=@userId';
+  const result = await req.query(`
       SELECT p.project_id AS projectId, p.name, p.description, p.status,
              p.planned_start AS plannedStart, p.planned_end AS plannedEnd,
              p.created_at AS createdAt, pm.role AS myRole, p.is_active AS isActive,
@@ -17,36 +25,47 @@ async function listProjects(userId) {
              CASE WHEN p.planned_end < CAST(GETDATE() AS DATE) AND p.status NOT IN ('Completed','Cancelled')
                   THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS isOverdue,
              (SELECT COUNT(*) FROM pm_phases ph WHERE ph.project_id=p.project_id AND ph.is_deleted=0) AS phaseCount,
-             (SELECT COUNT(*) FROM pm_members WHERE project_id=p.project_id) AS memberCount,
-             -- Progress: average of (per-phase average of task completion %)
-             COALESCE((
-               SELECT ROUND(AVG(phase_progress), 0)
-               FROM (
-                 SELECT ph2.phase_id,
-                   COALESCE((
-                     SELECT AVG(CASE WHEN t.status='Complete' THEN 100.0 ELSE 0 END)
-                     FROM pm_tasks t
-                     INNER JOIN pm_activities a ON a.activity_id=t.activity_id
-                     WHERE a.phase_id=ph2.phase_id AND t.is_deleted=0 AND a.is_deleted=0
-                   ), 0) AS phase_progress
-                 FROM pm_phases ph2
-                 WHERE ph2.project_id=p.project_id AND ph2.is_deleted=0
-               ) sub
-             ), 0) AS progress
+             (SELECT COUNT(*) FROM pm_members WHERE project_id=p.project_id) AS memberCount
       FROM pm_projects p
-      INNER JOIN pm_members pm ON pm.project_id=p.project_id AND pm.user_id=@userId
+      ${joinClause}
       LEFT JOIN auth_users u ON u.user_id=p.owner_id
       WHERE p.is_deleted=0 ORDER BY p.modified_at DESC
     `);
-  return result.recordset;
+  const rows = result.recordset;
+  // Admins always get full manage access regardless of any explicit
+  // (lower) pm_members role they might separately hold.
+  if (isAdmin) rows.forEach(r => { r.isSuperAdmin = true; r.myRole = 'Manager'; });
+  // Progress here used to be a separate, hand-rolled flat-pool SQL query
+  // (every grandchild task pooled directly, unweighted by phase/activity
+  // count) — a different, less correct number than the Detail page's
+  // getProjectProgress (which properly averages each level's own already-
+  // computed progress). Reusing the same shared function keeps List and
+  // Detail pages showing the same number for the same project, and lets
+  // status derivation below use a progress figure that's actually right.
+  //
+  // PERF: this used to be a sequential `for...await` loop — one project's
+  // progress/active-work check waited for the previous project's to fully
+  // finish, and each of those was itself a whole recursive phase→activity
+  // fan-out (see progressService.js). For a list of P projects that's P
+  // full recursive chains run back-to-back, which is what made this
+  // endpoint measurably the slowest thing in the PM module (~1.5s with a
+  // few dozen projects, and it only gets worse as more are created).
+  // Promise.all-ing across projects runs all of those chains concurrently
+  // instead — same queries, same math, just not serialized.
+  await Promise.all(rows.map(async (p) => {
+    p.progress = await getProjectProgress(p.projectId);
+    p.status = deriveProjectStatus(p.progress, p.status, await getProjectHasActiveWork(p.projectId));
+  }));
+  return rows;
 }
 
-async function getProject(projectId, userId) {
+async function getProject(projectId, userId, isAdmin = false) {
   const pool = await getPool();
-  const projResult = await pool.request()
-    .input('projectId', sql.Int,              projectId)
-    .input('userId',    sql.UniqueIdentifier, userId)
-    .query(`
+  const req = pool.request().input('projectId', sql.Int, projectId).input('userId', sql.UniqueIdentifier, userId);
+  const joinClause = isAdmin
+    ? 'LEFT JOIN pm_members pm ON pm.project_id=p.project_id AND pm.user_id=@userId'
+    : 'INNER JOIN pm_members pm ON pm.project_id=p.project_id AND pm.user_id=@userId';
+  const projResult = await req.query(`
       SELECT p.project_id AS projectId, p.name, p.description, p.status,
              p.planned_start AS plannedStart, p.planned_end AS plannedEnd,
              p.dept_id AS deptId, p.created_at AS createdAt, p.modified_at AS modifiedAt,
@@ -55,12 +74,13 @@ async function getProject(projectId, userId) {
              CASE WHEN p.planned_end < CAST(GETDATE() AS DATE) AND p.status NOT IN ('Completed','Cancelled')
                   THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS isOverdue
       FROM pm_projects p
-      INNER JOIN pm_members pm ON pm.project_id=p.project_id AND pm.user_id=@userId
+      ${joinClause}
       LEFT JOIN auth_users u ON u.user_id=p.owner_id
       WHERE p.project_id=@projectId AND p.is_deleted=0
     `);
   const proj = projResult.recordset[0];
   if (!proj) { const e = new Error('Project not found or access denied'); e.statusCode = 404; throw e; }
+  if (isAdmin) { proj.isSuperAdmin = true; proj.myRole = 'Manager'; }
 
   const membersResult = await pool.request()
     .input('projectId', sql.Int, projectId)
@@ -71,6 +91,7 @@ async function getProject(projectId, userId) {
       WHERE m.project_id=@projectId ORDER BY m.role, u.first_name
     `);
   const progress = await getProjectProgress(projectId);
+  proj.status = deriveProjectStatus(progress, proj.status, await getProjectHasActiveWork(projectId));
   const delayDays = (proj.status === 'Completed' || proj.status === 'Cancelled')
     ? 0
     : await getProjectDelayDays(projectId, proj.plannedEnd);
@@ -116,6 +137,10 @@ const PROJECT_FIELD_TYPES = {
 };
 
 async function updateProject(projectId, userId, body) {
+  if (await isInactive('project', projectId)) {
+    const e = new Error('This Project is inactive — reactivate it before making changes.');
+    e.statusCode = 409; throw e;
+  }
   const fields = {};
   if (body.name         !== undefined) fields.name          = body.name.trim();
   if (body.description  !== undefined) fields.description   = body.description;
@@ -318,6 +343,10 @@ async function getProjectMembersHierarchy(projectId) {
 }
 
 async function addMember(projectId, targetUserId, role, actorUserId) {
+  if (await isInactive('project', projectId)) {
+    const e = new Error('This Project is inactive — reactivate it before making changes.');
+    e.statusCode = 409; throw e;
+  }
   const pool = await getPool();
   await pool.request()
     .input('projectId',    sql.Int,              projectId)
@@ -333,6 +362,10 @@ async function addMember(projectId, targetUserId, role, actorUserId) {
 }
 
 async function updateMemberRole(projectId, targetUserId, role, actorUserId) {
+  if (await isInactive('project', projectId)) {
+    const e = new Error('This Project is inactive — reactivate it before making changes.');
+    e.statusCode = 409; throw e;
+  }
   const pool = await getPool();
   if (role !== 'Manager') {
     const managersResult = await pool.request()
@@ -354,6 +387,10 @@ async function updateMemberRole(projectId, targetUserId, role, actorUserId) {
 }
 
 async function removeMember(projectId, targetUserId, actorUserId) {
+  if (await isInactive('project', projectId)) {
+    const e = new Error('This Project is inactive — reactivate it before making changes.');
+    e.statusCode = 409; throw e;
+  }
   const pool = await getPool();
   const memberResult = await pool.request()
     .input('projectId',    sql.Int,              projectId)

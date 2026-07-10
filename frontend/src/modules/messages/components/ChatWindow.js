@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useMemo, useState, useCallback } from 'react';
+import { useTheme } from '@emotion/react';
 import MessageBubble from './MessageBubble';
 import Composer      from './Composer';
 import { useThread }    from '../hooks/useThread';
@@ -7,21 +8,37 @@ import { useSocket }    from '../context/SocketContext';
 import { messageApi } from '../api/messageApi';
 import { groupApi }   from '../api/groupApi';
 import api            from '../api/axiosInstance';
+import { IconBtn, LoaderWrap, Spinner } from '../styles/shared.styles';
+import {
+  ThreadHeader, ThreadHeaderInfo, ThreadSubject, TypeBadge, ThreadMetaText,
+  DescText, DescInner, MessageCount, ThreadActions, ReadOnlyTag,
+  GroupEditPanel, EditFieldLabel, EditFieldInput, ParticipantsPanel,
+  ParticipantsHeading, AddParticipantBtn, ParticipantSearchInput,
+  ParticipantSearchResults, ParticipantSearchRow, ParticipantChipsWrap,
+  ParticipantChip, ChipMeta, ChipAdminBadge, ChipCoAdminBadge, ChipIconBtn,
+  ThreadScrollWrap, GmailThreadView, NewMsgPill, UnreadDivider,
+  NoAccessWrap, RetryBtn, DisabledBanner,
+} from '../styles/ChatWindow.styles';
+import { ErrorBox as ComposeErrorBox } from '../styles/ComposeModal.styles';
+import { BtnGhost, BtnPrimary } from '../styles/shared.styles';
 
 // How many minutes after sending a message it remains editable.
 // Configurable via VITE_MESSAGE_EDIT_DEADLINE_MINUTES (frontend env);
 // the actual enforcement happens server-side using the same window.
 const editDeadlineMinutes = parseInt(import.meta.env.VITE_MESSAGE_EDIT_DEADLINE_MINUTES || '10', 10);
 
-const CONV_TYPE_LABEL = {
-  bcc:          { label: 'Private',    bg: 'var(--accent-glow)',   color: 'var(--accent)',  border: 'rgba(224,28,36,0.3)' },
-  cc:           { label: 'Shared',     bg: 'rgba(26,115,232,0.1)', color: '#1a73e8',        border: 'rgba(26,115,232,0.35)' },
-  group_thread: { label: 'Group Chat', bg: 'rgba(249,171,0,0.1)',  color: 'var(--gold)',    border: 'rgba(249,171,0,0.35)' },
-};
+function convTypeLabel(theme) {
+  return {
+    bcc:          { label: 'Private',    bg: `${theme.colors.espresso}1f`, color: theme.colors.espresso, border: theme.colors.espresso },
+    cc:           { label: 'Shared',     bg: 'rgba(124,143,160,0.15)', color: theme.colors.info, border: theme.colors.info },
+    group_thread: { label: 'Group Chat', bg: 'rgba(196,154,108,0.15)', color: theme.colors.warning, border: theme.colors.warning },
+  };
+}
 
 export default function ChatWindow({ conversation, onBack, onDisableGroup, onEnableGroup, onDeleteGroup, onHideGroup }) {
+  const theme = useTheme();
   const { currentUserId, toast, groups = [] } = useMessaging();
-  const { messages, conversation: threadConv, loading, error, markAllRead, sendReply, editMessage, appendMessage, refetch, onNewMessageRef } =
+  const { messages, conversation: threadConv, loading, ready, error, markAllRead, sendReply, editMessage, appendMessage, refetch, onNewMessageRef } =
     useThread(conversation?.conversationId);
   const { socket } = useSocket();
 
@@ -101,7 +118,7 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
       document.removeEventListener('click', clear);
     };
   }, [highlightedId]);
- 
+
 
   // Merge inbox-row data with thread-loaded data (thread data wins for convType/createdBy)
   const conv = useMemo(() => ({
@@ -118,6 +135,7 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
   const isSender   = String(createdBy) === String(currentUserId);
   const canReply   = conv.userCanReply ?? conv.allowReply;
   const isGroupDisabled = Boolean(conv.isGroupDisabled);
+  const isRemoved  = Boolean(conv.isRemoved);
 
   // Find the matching group from the groups list to determine admin rights
   const matchedGroup = isGroupThread
@@ -311,17 +329,39 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
     markedAllRef.current = null;
   }, [conversation?.conversationId]);
 
-  // Mark all unread on open — fires once per conversation open
+  // Mark all unread on open — fires once per conversation open.
+  //
+  // BUG FIX: this used to fire off a flat setTimeout(..., 100) racing an
+  // unbounded network+DB fetch (useThread's initial load), instead of
+  // actually waiting for that fetch to finish. On anything slower than
+  // 100ms — the normal case for a real round trip, not just a bad-network
+  // edge case — `markAllRead` ran against a still-empty `messages` array
+  // and silently marked nothing as read server-side. The unread dot still
+  // *looked* cleared because `clearUnreadDot` (called separately, in
+  // handleSelectConv) is a purely local optimistic UI update — it doesn't
+  // touch the server at all. So the dot reappeared on the next inbox
+  // refetch (tab switch, reload, socket-triggered refresh), because the
+  // server's own unread count — computed from actual read-receipt rows —
+  // never changed.
+  //
+  // Switching this to depend on `loading` instead of a timeout was NOT
+  // enough by itself: `loading` starts `false` and only flips `true`
+  // *inside* the async fetch, one render later than this effect's own
+  // first run in the same commit — so this effect could still see a
+  // stale `loading===false` on the very first render (before the fetch
+  // had even started) and fire prematurely anyway, permanently consuming
+  // the markedAllRef guard with nothing to show for it. `ready` (from
+  // useThread) is a ref-backed signal that's only true once the fetch has
+  // actually resolved for the CURRENT conversationId, with no such
+  // same-commit race.
   useEffect(() => {
-    if (!currentUserId) return;
+    if (!currentUserId || !ready) return;
     const cid = conversation?.conversationId;
     if (!cid) return;
     if (markedAllRef.current === cid) return;
     markedAllRef.current = cid;
-    // Small delay to let messages render first
-    const t = setTimeout(() => markAllRead(currentUserId), 100);
-    return () => clearTimeout(t);
-  }, [conversation?.conversationId, currentUserId, markAllRead]);
+    markAllRead(currentUserId);
+  }, [conversation?.conversationId, currentUserId, ready, markAllRead]);
 
   const lastSentByMeId = useMemo(() => {
     const mine = messages.filter(m => String(m.senderId) === String(currentUserId));
@@ -575,106 +615,81 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
   const participantNames = others.length > MAX_HEADER_NAMES
     ? `${others.slice(0, MAX_HEADER_NAMES).join(', ')} +${others.length - MAX_HEADER_NAMES} more`
     : (others.join(', ') || conv.participantNames || '');
-  const typeInfo = CONV_TYPE_LABEL[convType] || CONV_TYPE_LABEL.bcc;
+  const typeInfo = convTypeLabel(theme)[convType] || convTypeLabel(theme).bcc;
 
   return (
     <>
       {/* ── Thread header ── */}
-      <div className="thread-header">
+      <ThreadHeader>
         {onBack && (
-          <button className="icon-btn" onClick={onBack} title="Back">
+          <IconBtn onClick={onBack} title="Back">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="2">
               <polyline points="15 18 9 12 15 6"/>
             </svg>
-          </button>
+          </IconBtn>
         )}
 
-       <div className="thread-header-info" style={{ flex: 1, minWidth: 0 }}>
+       <ThreadHeaderInfo>
           {/* Subject line */}
-          <div className="thread-subject">
+          <ThreadSubject>
             {isGroupThread ? (liveGroupName || conv.groupName || conv.subject) : conv.subject}
-          </div>
+          </ThreadSubject>
 
           {/* Meta row: type badge + participants/description */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
             {/* Type badge — filled, same across all types */}
-            <span style={{
-              fontSize: 10, fontWeight: 700, letterSpacing: '.06em',
-              textTransform: 'uppercase', flexShrink: 0,
-              background: typeInfo.bg, color: typeInfo.color,
-              border: `1px solid ${typeInfo.border}`,
-              borderRadius: 6, padding: '2px 7px',
-            }}>
+            <TypeBadge bg={typeInfo.bg} color={typeInfo.color} border={typeInfo.border}>
               {typeInfo.label}
-            </span>
+            </TypeBadge>
 
             {/* Participants (non-group) */}
             {!isGroupThread && participantNames && (
-              <span style={{ color: 'var(--text-muted)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <ThreadMetaText>
                 {isCcThread ? `With: ${participantNames}` : participantNames}
-              </span>
+              </ThreadMetaText>
             )}
 
             {/* Group description — expandable */}
             {isGroupThread && (liveGroupDesc !== null ? liveGroupDesc : matchedGroup?.description) && (
-              <span
+              <DescText
+                truncatable={isDescTruncated}
+                expanded={descExpanded}
                 onClick={() => {
                   if (isDescTruncated) setDescExpanded(v => !v);
                 }}
-                style={{
-                  color: 'var(--text-muted)', fontSize: 12,
-                  cursor: isDescTruncated ? 'pointer' : 'default',
-                  maxWidth: descExpanded ? '100%' : undefined,
-                  fontStyle: 'italic',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  overflow: 'hidden',
-                }}
                 title={isDescTruncated ? (descExpanded ? 'Click to collapse' : 'Click to expand') : ''}
               >
-                <span
-                  ref={descRef}
-                  style={{
-                    overflow: descExpanded ? 'visible' : 'hidden',
-                    textOverflow: descExpanded ? 'clip' : 'ellipsis',
-                    whiteSpace: descExpanded ? 'normal' : 'nowrap',
-                  }}
-                >
+                <DescInner ref={descRef} expanded={descExpanded}>
                   {liveGroupDesc !== null ? liveGroupDesc : matchedGroup?.description}
-                </span>
-                
+                </DescInner>
+
                 {/* Only render if truncated, and color changed to grey (text-muted) */}
                 {isDescTruncated && !descExpanded && (
-                  <span style={{ color: 'var(--text-muted)', marginLeft: 4, fontStyle: 'normal', fontSize: 11, flexShrink: 0 }}>
+                  <span style={{ color: theme.colors.ash, marginLeft: 4, fontStyle: 'normal', fontSize: 11, flexShrink: 0 }}>
                     …more
                   </span>
                 )}
-              </span>
+              </DescText>
             )}
           </div>
 
           {/* Message count — lighter, below */}
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, fontWeight: 400 }}>
+          <MessageCount>
             {messages.length} message{messages.length !== 1 ? 's' : ''}
-          </div>
-        </div>
+          </MessageCount>
+        </ThreadHeaderInfo>
 
-        <div className="thread-actions" style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+        <ThreadActions>
           {!canReply && (
-            <span style={{
-              fontSize: 10, color: 'var(--gold-dim)', padding: '2px 8px',
-              border: '1px solid var(--gold-dim)', borderRadius: 8,
-              letterSpacing: '.06em', textTransform: 'uppercase',
-            }}>
+            <ReadOnlyTag>
               {isGroupDisabled ? (isGroupThread ? 'Group Disabled' : 'Thread Disabled') : conv.allowReply ? 'Read only' : 'Broadcast'}
-            </span>
+            </ReadOnlyTag>
           )}
 
           {/* Group edit button — admin only */}
           {isGroupThread && isGroupAdmin && !isGroupDisabled && (
-            <button
-              className={`icon-btn ${editingGroup ? 'active' : ''}`}
+            <IconBtn
               title="Edit group name / description"
               onClick={editingGroup ? handleGroupEditCancel : handleGroupEditStart}
               style={{ width: 30, height: 30 }}
@@ -683,13 +698,12 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
                 <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
                 <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
               </svg>
-            </button>
+            </IconBtn>
           )}
 
           {/* Participants panel toggle — CC and group threads */}
           {(isCcThread || isGroupThread) && (
-            <button
-              className={`icon-btn ${showParticipants ? 'active' : ''}`}
+            <IconBtn
               title="Participants"
               onClick={() => setShowParticipants(v => !v)}
               style={{ width: 30, height: 30 }}
@@ -700,15 +714,15 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
                 <circle cx="9" cy="7" r="4"/>
                 <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
               </svg>
-            </button>
+            </IconBtn>
           )}
 
 
           {/* Group governance — disable/enable/delete/hide. */}
           {isGroupThread && (matchedGroup?.isCreator || matchedGroup?.isSuperAdmin) && (
             !isGroupDisabled ? (
-              <button
-                className="icon-btn danger"
+              <IconBtn
+                danger
                 title="Disable group"
                 disabled={groupActing}
                 onClick={handleDisableGroupClick}
@@ -719,11 +733,10 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
                   <circle cx="12" cy="12" r="10"/>
                   <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
                 </svg>
-              </button>
+              </IconBtn>
             ) : (
               <>
-                <button
-                  className="icon-btn"
+                <IconBtn
                   title="Re-enable group"
                   disabled={groupActing}
                   onClick={handleEnableGroupClick}
@@ -734,9 +747,9 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
                     <polyline points="1 4 1 10 7 10"/>
                     <path d="M3.51 15a9 9 0 102.13-9.36L1 10"/>
                   </svg>
-                </button>
-                <button
-                  className="icon-btn danger"
+                </IconBtn>
+                <IconBtn
+                  danger
                   title="Delete group"
                   disabled={groupActing}
                   onClick={handleDeleteGroupClick}
@@ -749,13 +762,13 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
                     <path d="M10 11v6M14 11v6"/>
                     <path d="M9 6V4h6v2"/>
                   </svg>
-                </button>
+                </IconBtn>
               </>
             )
           )}
           {isGroupThread && !(matchedGroup?.isCreator || matchedGroup?.isSuperAdmin) && isGroupDisabled && (
-            <button
-              className="icon-btn danger"
+            <IconBtn
+              danger
               title="Remove from my tabs"
               disabled={groupActing}
               onClick={handleHideGroupClick}
@@ -768,215 +781,145 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
                 <path d="M10 11v6M14 11v6"/>
                 <path d="M9 6V4h6v2"/>
               </svg>
-            </button>
+            </IconBtn>
           )}
-        </div>
-      </div>
+        </ThreadActions>
+      </ThreadHeader>
 
       {/* ── Group edit panel ── */}
       {isGroupThread && editingGroup && isGroupAdmin && (
-        <div style={{
-          padding: '12px 20px', borderBottom: '1px solid var(--divider)',
-          background: 'var(--charcoal)', flexShrink: 0,
-        }}>
+        <GroupEditPanel>
           <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
             <div style={{ flex: 1 }}>
-              <label style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.06em', display: 'block', marginBottom: 4 }}>Group Name</label>
-              <input
+              <EditFieldLabel>Group Name</EditFieldLabel>
+              <EditFieldInput
                 value={editGroupName}
                 onChange={e => setEditGroupName(e.target.value)}
-                style={{ width: '100%', padding: '6px 10px', borderRadius: 8, border: '1px solid var(--divider)', background: 'var(--mid)', color: 'var(--light)', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
               />
             </div>
             <div style={{ flex: 2 }}>
-              <label style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.06em', display: 'block', marginBottom: 4 }}>Description <span style={{ textTransform: 'none', letterSpacing: 0 }}>(optional)</span></label>
-              <input
+              <EditFieldLabel>Description <span style={{ textTransform: 'none', letterSpacing: 0 }}>(optional)</span></EditFieldLabel>
+              <EditFieldInput
                 value={editGroupDesc}
                 onChange={e => setEditGroupDesc(e.target.value)}
                 placeholder="What is this group for?"
-                style={{ width: '100%', padding: '6px 10px', borderRadius: 8, border: '1px solid var(--divider)', background: 'var(--mid)', color: 'var(--light)', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
               />
             </div>
           </div>
-          {editGroupError && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 6 }}>{editGroupError}</div>}
+          {editGroupError && <ComposeErrorBox style={{ marginBottom: 6 }}>{editGroupError}</ComposeErrorBox>}
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button onClick={handleGroupEditCancel} style={{ padding: '5px 14px', borderRadius: 8, border: '1px solid var(--divider)', background: 'transparent', color: 'var(--muted)', cursor: 'pointer', fontSize: 12 }}>Cancel</button>
-            <button onClick={handleGroupEditSave} disabled={editGroupSaving} style={{ padding: '5px 14px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+            <BtnGhost onClick={handleGroupEditCancel} style={{ padding: '5px 14px', fontSize: 12 }}>Cancel</BtnGhost>
+            <BtnPrimary onClick={handleGroupEditSave} disabled={editGroupSaving} style={{ padding: '5px 14px', fontSize: 12 }}>
               {editGroupSaving ? 'Saving…' : 'Save changes'}
-            </button>
+            </BtnPrimary>
           </div>
-        </div>
+        </GroupEditPanel>
       )}
 
       {/* ── Participants panel (CC: removable by sender; group threads: view only) ── */}
       {showParticipants && (isCcThread || isGroupThread) && (
-        <div style={{
-          padding: '10px 16px 12px',
-          borderBottom: '1px solid var(--divider)',
-          background: 'var(--charcoal)',
-          flexShrink: 0,
-        }}>
-          <div style={{
-            fontSize: 11, color: 'var(--muted)',
-            textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 8, fontWeight: 600,
-          }}>
+        <ParticipantsPanel>
+          <ParticipantsHeading>
             Participants ({conv.participants.length})
             {isCcThread && isSender && !isGroupDisabled && (
-              <button
-                onClick={() => { setAddingMember(v => !v); setMemberSearch(''); setSearchResults([]); }}
-                style={{
-                  marginLeft: 10, background: 'var(--mid)', border: '1px solid var(--divider)',
-                  borderRadius: 12, padding: '2px 10px', fontSize: 11, color: 'var(--gold)',
-                  cursor: 'pointer', fontWeight: 600,
-                }}
-              >
+              <AddParticipantBtn onClick={() => { setAddingMember(v => !v); setMemberSearch(''); setSearchResults([]); }}>
                 + Add participant
-              </button>
+              </AddParticipantBtn>
             )}
             {isCcThread && isSender && (
-              <span style={{ marginLeft: 6, color: 'var(--muted)', fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 11 }}>
+              <span style={{ marginLeft: 6, color: theme.colors.ash, fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 11 }}>
                 · You can remove others
               </span>
             )}
             {isGroupThread && isGroupAdmin && !isGroupDisabled && (
-              <button
-                onClick={() => { setAddingMember(v => !v); setMemberSearch(''); setSearchResults([]); }}
-                style={{
-                  marginLeft: 10, background: 'var(--mid)', border: '1px solid var(--divider)',
-                  borderRadius: 12, padding: '2px 10px', fontSize: 11, color: 'var(--gold)',
-                  cursor: 'pointer', fontWeight: 600,
-                }}
-              >
+              <AddParticipantBtn onClick={() => { setAddingMember(v => !v); setMemberSearch(''); setSearchResults([]); }}>
                 + Add member
-              </button>
+              </AddParticipantBtn>
             )}
             {isGroupThread && !isGroupAdmin && (
-              <span style={{ marginLeft: 6, color: 'var(--muted)', fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 11 }}>
+              <span style={{ marginLeft: 6, color: theme.colors.ash, fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 11 }}>
                 · Managed in the Groups tab
               </span>
             )}
-          </div>
+          </ParticipantsHeading>
           {(removeError || groupActionError) && (
-            <div style={{ color: 'var(--danger)', fontSize: 11, marginBottom: 6 }}>{removeError || groupActionError}</div>
+            <ComposeErrorBox style={{ marginBottom: 6, fontSize: 11, padding: '4px 8px' }}>{removeError || groupActionError}</ComposeErrorBox>
           )}
           {/* Inline add member/participant — group admin or CC thread creator */}
           {((isGroupThread && isGroupAdmin) || (isCcThread && isSender)) && addingMember && (
             <div style={{ marginBottom: 10 }}>
-              <input
+              <ParticipantSearchInput
                 autoFocus
                 value={memberSearch}
                 onChange={e => handleMemberSearch(e.target.value)}
                 placeholder="Search users to add…"
-                style={{
-                  width: '100%', padding: '6px 10px', borderRadius: 8,
-                  border: '1px solid var(--divider)', background: 'var(--mid)',
-                  color: 'var(--light)', fontSize: 12, outline: 'none', boxSizing: 'border-box',
-                }}
               />
-              {searchLoading && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>Searching…</div>}
+              {searchLoading && <div style={{ fontSize: 11, color: theme.colors.ash, marginTop: 4 }}>Searching…</div>}
               {searchResults.length > 0 && (
-                <div style={{
-                  marginTop: 4, background: 'var(--dark)', border: '1px solid var(--divider)',
-                  borderRadius: 8, overflow: 'hidden', maxHeight: 140, overflowY: 'auto',
-                }}>
+                <ParticipantSearchResults>
                   {searchResults.map(u => (
-                    <div
-                      key={u.userId}
-                      onClick={() => handleAddMember(u)}
-                      style={{
-                        padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: 'var(--light)',
-                        borderBottom: '1px solid var(--divider)',
-                      }}
-                      onMouseOver={e => e.currentTarget.style.background = 'var(--mid)'}
-                      onMouseOut={e  => e.currentTarget.style.background = 'transparent'}
-                    >
+                    <ParticipantSearchRow key={u.userId} onClick={() => handleAddMember(u)}>
                       {`${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email}
-                      {u.email && <span style={{ color: 'var(--muted)', marginLeft: 6 }}>{u.email}</span>}
-                    </div>
+                      {u.email && <span style={{ color: theme.colors.ashLight, marginLeft: 6 }}>{u.email}</span>}
+                    </ParticipantSearchRow>
                   ))}
-                </div>
+                </ParticipantSearchResults>
               )}
               {!searchLoading && memberSearch.trim() && searchResults.length === 0 && (
-                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>No users found</div>
+                <div style={{ fontSize: 11, color: theme.colors.ash, marginTop: 4 }}>No users found</div>
               )}
             </div>
           )}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, maxHeight: 160, overflowY: 'auto', paddingRight: 4 }}>
+          <ParticipantChipsWrap>
             {conv.participants.map(p => {
               const isMe    = String(p.userId) === String(currentUserId);
               const pName   = `${p.firstName || ''} ${p.lastName || ''}`.trim() || p.email || 'Unknown';
               const isRemoving = removing === p.userId || groupRemoving === p.userId;
               const isToggling = adminToggling === p.userId;
               return (
-                <span key={p.userId} style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 5,
-                  padding: '3px 8px 3px 10px',
-                  background: isMe ? 'rgba(237,28,36,0.06)' : 'var(--mid)',
-                  border: `1px solid ${isMe ? 'rgba(237,28,36,0.25)' : 'var(--divider)'}`,
-                  borderRadius: 20, fontSize: 12, color: 'var(--light)',
-                }}>
+                <ParticipantChip key={p.userId} isMe={isMe}>
                   {pName}
-                  {isMe && (
-                    <span style={{ fontSize: 10, color: 'var(--muted)', fontStyle: 'italic' }}>you</span>
-                  )}
-                  {/* Admin badge — creator (gold) or co-admin (muted), group threads only */}
-                  {isGroupThread && p.isCreator && (
-                    <span style={{ fontSize: 10, color: 'var(--gold)', fontWeight: 600 }}>Admin</span>
-                  )}
-                  {isGroupThread && !p.isCreator && p.isCoAdmin && (
-                    <span style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 600 }}>Co-admin</span>
-                  )}
+                  {isMe && <ChipMeta>you</ChipMeta>}
+                  {/* Admin badge — creator (accent) or co-admin (muted), group threads only */}
+                  {isGroupThread && p.isCreator && <ChipAdminBadge>Admin</ChipAdminBadge>}
+                  {isGroupThread && !p.isCreator && p.isCoAdmin && <ChipCoAdminBadge>Co-admin</ChipCoAdminBadge>}
                   {/* Make/Remove admin — creator or super admin only; never on the creator themself */}
                   {isGroupThread && canManageAdmins && !isGroupDisabled && !isMe && !p.isCreator && (
-                    <button
+                    <ChipIconBtn
+                      size="sm"
+                      starred={p.isCoAdmin}
                       title={p.isCoAdmin ? `Remove ${pName} as group admin` : `Make ${pName} a group admin`}
                       onClick={() => handleToggleAdmin(p.userId, pName, !p.isCoAdmin)}
                       disabled={!!isToggling}
-                      style={{
-                        background: 'none', border: 'none', cursor: 'pointer',
-                        color: p.isCoAdmin ? 'var(--gold)' : 'var(--muted)', fontSize: 11, lineHeight: 1,
-                        padding: '0 0 0 2px', transition: 'color 0.12s', fontWeight: 600,
-                        display: 'flex', alignItems: 'center',
-                      }}
-                      onMouseOver={e => e.currentTarget.style.color = 'var(--gold)'}
-                      onMouseOut={e  => e.currentTarget.style.color = p.isCoAdmin ? 'var(--gold)' : 'var(--muted)'}
                     >
                       {isToggling
-                        ? <div className="spinner" style={{ width: 9, height: 9, borderWidth: 1.5 }}/>
+                        ? <Spinner style={{ width: 9, height: 9, borderWidth: 1.5 }}/>
                         : (p.isCoAdmin ? '★' : '☆')}
-                    </button>
+                    </ChipIconBtn>
                   )}
                   {/* Remove button — CC: sender only; group_thread: group admin only */}
                   {((isCcThread && isSender) || (isGroupThread && isGroupAdmin && !isGroupDisabled)) && !isMe && !(isGroupThread && p.isCreator) && (
-                    <button
+                    <ChipIconBtn
+                      danger
                       title={`Remove ${pName}`}
                       onClick={() => isGroupThread ? handleGroupRemoveMember(p.userId, pName) : handleRemoveParticipant(p.userId, pName)}
                       disabled={!!isRemoving}
-                      style={{
-                        background: 'none', border: 'none', cursor: 'pointer',
-                        color: 'var(--muted)', fontSize: 14, lineHeight: 1,
-                        padding: '0 0 0 2px', transition: 'color 0.12s',
-                        display: 'flex', alignItems: 'center',
-                      }}
-                      onMouseOver={e => e.currentTarget.style.color = 'var(--danger)'}
-                      onMouseOut={e  => e.currentTarget.style.color = 'var(--muted)'}
                     >
                       {isRemoving
-                        ? <div className="spinner" style={{ width: 10, height: 10, borderWidth: 1.5 }}/>
+                        ? <Spinner style={{ width: 10, height: 10, borderWidth: 1.5 }}/>
                         : '×'}
-                    </button>
+                    </ChipIconBtn>
                   )}
-                </span>
+                </ParticipantChip>
               );
             })}
-          </div>
-        </div>
+          </ParticipantChipsWrap>
+        </ParticipantsPanel>
       )}
 
       {/* ── Messages ── */}
-      <div className="thread-scroll-wrap">
-        <div
-          className="gmail-thread-view"
+      <ThreadScrollWrap>
+        <GmailThreadView
           ref={containerRef}
           onScroll={(e) => {
             if (!showNewPill) return;
@@ -988,7 +931,7 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
             }
           }}
         >
-          {loading && <div className="loader-wrap"><div className="spinner"/></div>}
+          {loading && <LoaderWrap><Spinner/></LoaderWrap>}
           {error && (() => {
             // "access denied" / "not a participant" errors come from assertConversationParticipant
             // in messageService.getThread — they mean the user is not (yet) a member of this
@@ -996,16 +939,15 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
             const isAccessDenied =
               /access denied|not a participant|not an active participant/i.test(error);
             return (
-              <div style={{ padding: '28px 20px', display: 'flex', flexDirection: 'column',
-                alignItems: 'center', gap: 10, textAlign: 'center' }}>
+              <NoAccessWrap>
                 {isAccessDenied ? (
                   <>
                     <svg width="28" height="28" viewBox="0 0 24 24" fill="none"
-                      stroke="var(--muted)" strokeWidth="1.6">
+                      stroke={theme.colors.ash} strokeWidth="1.6">
                       <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
                       <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                     </svg>
-                    <span style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.5 }}>
+                    <span style={{ fontSize: 13, color: theme.colors.ash, lineHeight: 1.5 }}>
                       You don't have access to this conversation.<br/>
                       <span style={{ fontSize: 12 }}>
                         Ask a Manager to add you to the activity.
@@ -1014,24 +956,19 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
                   </>
                 ) : (
                   <>
-                    <span style={{ fontSize: 13, color: 'var(--danger)' }}>
+                    <span style={{ fontSize: 13, color: theme.colors.danger }}>
                       Failed to load.
                     </span>
-                    <button onClick={refetch}
-                      style={{ fontSize: 12, color: 'var(--gold)', background: 'none',
-                        border: '1px solid var(--gold)', borderRadius: 4,
-                        padding: '4px 14px', cursor: 'pointer' }}>
-                      Retry
-                    </button>
+                    <RetryBtn onClick={refetch}>Retry</RetryBtn>
                   </>
                 )}
-              </div>
+              </NoAccessWrap>
             );
           })()}
           {!loading && messages.map(msg => (
             <div key={msg.messageId}>
               {msg.messageId === dividerId && (
-                <div ref={dividerRef} className="unread-divider"><span>New messages</span></div>
+                <UnreadDivider ref={dividerRef}><span>New messages</span></UnreadDivider>
               )}
               <MessageBubble
                 message={msg}
@@ -1056,27 +993,21 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
             </div>
           ))}
           <div ref={bottomRef}/>
-        </div>
+        </GmailThreadView>
 
         {showNewPill && (
-          <button className="new-msg-pill" onClick={handleJumpToBottom}>
+          <NewMsgPill onClick={handleJumpToBottom}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>
             </svg>
             {newPillCount > 1 ? `${newPillCount} new messages` : 'New message'}
-          </button>
+          </NewMsgPill>
         )}
-      </div>
+      </ThreadScrollWrap>
 
       {/* ── Composer (or read-only banner when the group has been disabled) ── */}
       {isGroupDisabled ? (
-        <div style={{
-          padding: '14px 24px',
-          borderTop: '1px solid var(--divider)',
-          background: 'var(--charcoal)',
-          display: 'flex', alignItems: 'center', gap: 10,
-          color: 'var(--muted)', fontSize: 13,
-        }}>
+        <DisabledBanner>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
             stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>
             <rect x="3" y="11" width="18" height="11" rx="2"/>
@@ -1085,11 +1016,12 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
           {isGroupThread
             ? 'This group has been disabled by its admin — you can still read past messages, but no one can send new ones.'
             : 'This thread has been disabled by an admin — you can still read past messages, but no one can send new ones.'}
-        </div>
+        </DisabledBanner>
       ) : (
         <div ref={composerRef}>
           <Composer
             allowReply={canReply}
+            isRemoved={isRemoved}
             replyingTo={replyingTo}
             onCancelReply={() => setReplyingTo(null)}
             onSend={handleSend}

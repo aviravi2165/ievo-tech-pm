@@ -1,53 +1,63 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useTheme } from '@emotion/react';
 import { requestApi, taskApi } from '../project-management/api/projectApi';
+import {
+  Wrap, Header, Title, Subtitle, ErrorBanner, HrLine, LoadingWrap,
+  BodyGrid, LeftCol, RightCol, Section, SectionHeadRow, SectionTitle,
+  SectionPill, EmptyText, TabBarRow, TabBtn, TabCount, CardWrap,
+  RequestCard, ReqHeaderRow, ReqName, ReqBreadcrumb, ReqMetaRow, ReqMeta,
+  ReqMetaStrong, ReqDescription, ReqActions, AcceptBtn, DeclineBtn,
+  RespondedNote, Chip, TaskRowBtn, TaskLeft, TaskName, TaskBreadcrumb,
+  TaskRight, TaskBadgeRow, TaskDue, AuditRowWrap, AuditDot, AuditBody,
+  AuditLine, AuditActor, AuditDetail, AuditMeta, AuditProject,
+} from './styles/DashboardModule.styles';
 
-// ── Design tokens ──────────────────────────────────────────────────────────────
-const T = {
-  accent:     '#D92906',
-  bg:         '#f8f5f0',
-  surface:    '#ffffff',
-  border:     '#e0dcd4',
-  borderFaint:'#ede9e3',
-  text:       '#1a1d23',
-  textSub:    '#6b6b6b',
-  textMuted:  '#9a9a9a',
-};
-const PRIORITY_COLOR = { Critical:'#c00', High:'#c77700', Medium:'#3a7ebf', Low:'#555' };
-const TASK_STATUS = {
-  'To Do':   { bg:'#f5f4f2', color:'#555',    border:'#d0cdc8' },
-  'Ongoing': { bg:'#edf3fe', color:'#1a56db',  border:'#b3c9f8' },
-  'Blocked': { bg:'#fdecea', color:'#9b1c1c',  border:'#f5c6cb' },
-  'Complete':{ bg:'#edfaf3', color:'#166534',  border:'#86efac' },
-};
-const REQ_STATUS = {
-  Pending: { bg:'#fff9ed', color:'#7a5200', border:'#f0c419' },
-  Accepted:{ bg:'#edfaf3', color:'#166534', border:'#86efac' },
-  Declined:{ bg:'#fdecea', color:'#9b1c1c', border:'#f5c6cb' },
-};
+function priorityColor(theme, v) {
+  return { Critical: theme.colors.danger, High: theme.colors.espresso, Medium: theme.colors.info, Low: theme.colors.ash }[v] || theme.colors.ash;
+}
+// 'Ongoing' was theme.colors.info (blue) — an unrelated cool accent next
+// to the PM module's phase tiles, which are copper/espresso-tinted. Using
+// copper here instead ties the dashboard's task-status coloring back to
+// the same warm palette the PM board itself uses, instead of introducing
+// a competing hue nothing else in the app carries.
+// 'To Do' was flat ash grey — the one status with no actual color at all,
+// reading as lifeless next to Ongoing (copper)/Blocked (red)/Complete
+// (green). Info (a cool blue) gives it real color while staying visually
+// distinct from the other three semantic colors already in use here.
+function taskStatusStyle(theme, v) {
+  const map = {
+    'To Do':   { bg:`${theme.colors.info}1a`,     color: theme.colors.info,    border:`${theme.colors.info}40` },
+    'Ongoing': { bg:`${theme.colors.copper}1a`,   color: theme.colors.copper,  border:`${theme.colors.copper}40` },
+    'Blocked': { bg:`${theme.colors.danger}1a`,   color: theme.colors.danger,  border:`${theme.colors.danger}40` },
+    'Complete':{ bg:`${theme.colors.success}1a`,  color: theme.colors.success, border:`${theme.colors.success}40` },
+  };
+  return map[v] || map['To Do'];
+}
+function reqStatusStyle(theme, v) {
+  const map = {
+    Pending: { bg:`${theme.colors.warning}1a`, color: theme.colors.warning, border:`${theme.colors.warning}40` },
+    Accepted:{ bg:`${theme.colors.success}1a`, color: theme.colors.success, border:`${theme.colors.success}40` },
+    Declined:{ bg:`${theme.colors.danger}1a`,  color: theme.colors.danger,  border:`${theme.colors.danger}40` },
+  };
+  return map[v] || map.Pending;
+}
 
 // ── Atoms ──────────────────────────────────────────────────────────────────────
-function Chip({ label, bg = 'transparent', color = '#555', border = '#ccc' }) {
-  return (
-    <span style={{ display:'inline-block', fontSize:10, fontWeight:700, letterSpacing:'.05em',
-      textTransform:'uppercase', padding:'2px 8px', borderRadius:20,
-      background:bg, color, border:`1px solid ${border}`, whiteSpace:'nowrap', lineHeight:'16px' }}>
-      {label}
-    </span>
-  );
-}
 function PriorityChip({ v }) {
-  const c = PRIORITY_COLOR[v] || '#888';
-  return <Chip label={v} color={c} border={c} />;
+  const theme = useTheme();
+  const c = priorityColor(theme, v);
+  return <Chip color={c} border={c}>{v}</Chip>;
 }
 function TaskStatusChip({ v }) {
-  const s = TASK_STATUS[v] || TASK_STATUS['To Do'];
-  return <Chip label={v} bg={s.bg} color={s.color} border={s.border} />;
+  const theme = useTheme();
+  const s = taskStatusStyle(theme, v);
+  return <Chip bg={s.bg} color={s.color} border={s.border}>{v}</Chip>;
 }
 function ReqStatusChip({ v }) {
-  const s = REQ_STATUS[v] || REQ_STATUS.Pending;
-  return <Chip label={v} bg={s.bg} color={s.color} border={s.border} />;
+  const theme = useTheme();
+  const s = reqStatusStyle(theme, v);
+  return <Chip bg={s.bg} color={s.color} border={s.border}>{v}</Chip>;
 }
-function Hr() { return <div style={{ height:1, background:T.borderFaint }} />; }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function fmtDate(d) {
@@ -103,88 +113,56 @@ function auditText({ entityType, action, fieldChanged, oldValue, newValue, actor
 }
 
 // ── Section heading ────────────────────────────────────────────────────────────
-function SectionHead({ title, pill, pillBg = T.accent }) {
+function SectionHead({ title, pill, pillBg }) {
   return (
-    <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:14 }}>
-      <h2 style={{ margin:0, fontSize:11, fontWeight:700, letterSpacing:'.08em',
-        textTransform:'uppercase', color:T.textSub }}>
-        {title}
-      </h2>
-      {pill != null && (
-        <span style={{ fontSize:11, fontWeight:700, color:'#fff', background:pillBg,
-          borderRadius:10, padding:'1px 8px', lineHeight:'18px' }}>
-          {pill}
-        </span>
-      )}
-    </div>
+    <SectionHeadRow>
+      <SectionTitle>{title}</SectionTitle>
+      {pill != null && <SectionPill bg={pillBg}>{pill}</SectionPill>}
+    </SectionHeadRow>
   );
 }
 
-function Empty({ text }) {
-  return (
-    <div style={{ padding:'28px 0', textAlign:'center', color:T.textMuted, fontSize:13 }}>
-      {text}
-    </div>
-  );
-}
+function Empty({ text }) { return <EmptyText>{text}</EmptyText>; }
 
 // ── Request card ───────────────────────────────────────────────────────────────
-function RequestCard({ req, onAccept, onDecline, acting }) {
+function RequestCardView({ req, onAccept, onDecline, acting }) {
   const isPending = req.status === 'Pending';
   return (
-    <div style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6,
-      padding:'14px 16px', marginBottom:8, opacity: isPending ? 1 : 0.7 }}>
-      <div style={{ display:'flex', alignItems:'flex-start', gap:10, marginBottom:8 }}>
+    <RequestCard pending={isPending}>
+      <ReqHeaderRow>
         <div style={{ flex:1, minWidth:0 }}>
-          <div style={{ fontSize:14, fontWeight:600, color:T.text, marginBottom:3,
-            overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-            {req.taskName}
-          </div>
-          <div style={{ fontSize:11, color:T.textMuted }}>
+          <ReqName>{req.taskName}</ReqName>
+          <ReqBreadcrumb>
             {[req.projectName, req.phaseName, req.activityName].filter(Boolean).join(' › ')}
-          </div>
+          </ReqBreadcrumb>
         </div>
         <ReqStatusChip v={req.status} />
-      </div>
-      <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center',
-        marginBottom: isPending ? 12 : 4 }}>
+      </ReqHeaderRow>
+      <ReqMetaRow pending={isPending}>
         <PriorityChip v={req.priority} />
         {req.dueDate && (
-          <span style={{ fontSize:11, color:T.textMuted }}>
-            Due <strong style={{ color:T.textSub }}>{fmtDate(req.dueDate)}</strong>
-          </span>
+          <ReqMeta>Due <ReqMetaStrong>{fmtDate(req.dueDate)}</ReqMetaStrong></ReqMeta>
         )}
-        <span style={{ fontSize:11, color:T.textMuted, marginLeft:'auto' }}>
-          by <strong style={{ color:T.textSub }}>{req.requestedByName}</strong>
-        </span>
-      </div>
+        <ReqMeta pushRight>by <ReqMetaStrong>{req.requestedByName}</ReqMetaStrong></ReqMeta>
+      </ReqMetaRow>
       {isPending && req.taskDescription && (
-        <p style={{ fontSize:12, color:T.textSub, lineHeight:1.6, margin:'0 0 12px',
-          paddingLeft:10, borderLeft:`2px solid ${T.borderFaint}` }}>
-          {req.taskDescription}
-        </p>
+        <ReqDescription>{req.taskDescription}</ReqDescription>
       )}
       {isPending ? (
-        <div style={{ display:'flex', gap:8 }}>
-          <button onClick={() => onAccept(req.requestId)} disabled={acting === req.requestId}
-            style={{ flex:1, padding:'7px 0', border:'none', borderRadius:5, fontFamily:'inherit',
-              background: acting === req.requestId ? '#ccc' : T.accent,
-              color:'#fff', fontWeight:600, fontSize:12, cursor:'pointer' }}>
+        <ReqActions>
+          <AcceptBtn onClick={() => onAccept(req.requestId)} disabled={acting === req.requestId}>
             {acting === req.requestId ? 'Saving…' : '✓ Accept'}
-          </button>
-          <button onClick={() => onDecline(req.requestId)} disabled={acting === req.requestId}
-            style={{ flex:1, padding:'7px 0', border:`1px solid ${T.border}`, borderRadius:5,
-              fontFamily:'inherit', background:T.surface, color:'#9b1c1c',
-              fontWeight:600, fontSize:12, cursor:'pointer' }}>
+          </AcceptBtn>
+          <DeclineBtn onClick={() => onDecline(req.requestId)} disabled={acting === req.requestId}>
             ✕ Decline
-          </button>
-        </div>
+          </DeclineBtn>
+        </ReqActions>
       ) : req.respondedAt && (
-        <div style={{ fontSize:11, color:T.textMuted }}>
+        <RespondedNote>
           {req.status === 'Accepted' ? 'Accepted' : 'Declined'} {fmtRel(req.respondedAt)}
-        </div>
+        </RespondedNote>
       )}
-    </div>
+    </RequestCard>
   );
 }
 
@@ -193,47 +171,26 @@ function ActiveTaskRow({ task, isLast }) {
   const od = overdue(task.dueDate) && task.status !== 'Complete';
   return (
     <>
-      <button
-        onClick={() => navigateToProject(task.projectId)}
-        style={{ width:'100%', display:'flex', alignItems:'center', gap:12,
-          padding:'11px 16px', background:'transparent', border:'none',
-          cursor:'pointer', textAlign:'left', fontFamily:'inherit',
-          transition:'background .12s' }}
-        onMouseEnter={e => e.currentTarget.style.background = T.bg}
-        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-      >
-        {/* Left: name + breadcrumb */}
-        <div style={{ flex:1, minWidth:0 }}>
-          <div style={{ fontSize:13, fontWeight:600, color:T.text, marginBottom:2,
-            overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-            {task.taskName}
-          </div>
-          <div style={{ fontSize:11, color:T.textMuted,
-            overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-            {task.projectName} › {task.activityName}
-          </div>
-        </div>
-        {/* Right: badges + due date */}
-        <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end',
-          gap:4, flexShrink:0 }}>
-          <div style={{ display:'flex', gap:5 }}>
+      <TaskRowBtn onClick={() => navigateToProject(task.projectId)}>
+        <TaskLeft>
+          <TaskName>{task.taskName}</TaskName>
+          <TaskBreadcrumb>{task.projectName} › {task.activityName}</TaskBreadcrumb>
+        </TaskLeft>
+        <TaskRight>
+          <TaskBadgeRow>
             <PriorityChip v={task.priority} />
             <TaskStatusChip v={task.status} />
-          </div>
+          </TaskBadgeRow>
           {task.dueDate && (
-            <span style={{ fontSize:10, fontWeight: od ? 700 : 400,
-              color: od ? T.accent : T.textMuted }}>
-              {od ? '⚠ ' : ''}{fmtDate(task.dueDate)}
-            </span>
+            <TaskDue overdue={od}>{od ? '⚠ ' : ''}{fmtDate(task.dueDate)}</TaskDue>
           )}
-        </div>
-        {/* Chevron hint */}
+        </TaskRight>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-          stroke={T.textMuted} strokeWidth="2" style={{ flexShrink:0 }}>
+          stroke="currentColor" strokeWidth="2" style={{ flexShrink:0, color:'inherit', opacity:0.5 }}>
           <polyline points="9 18 15 12 9 6" />
         </svg>
-      </button>
-      {!isLast && <Hr />}
+      </TaskRowBtn>
+      {!isLast && <HrLine />}
     </>
   );
 }
@@ -245,28 +202,21 @@ function AuditRow({ entry, isLast }) {
   const middle = rest.slice(0, detail ? rest.length - 1 : rest.length).join(' ');
   return (
     <>
-      <div style={{ display:'flex', gap:10, padding:'10px 14px', alignItems:'flex-start' }}>
-        <div style={{ width:6, height:6, borderRadius:'50%', background:T.accent,
-          marginTop:6, flexShrink:0 }} />
-        <div style={{ flex:1, minWidth:0 }}>
-          <div style={{ fontSize:12.5, color:T.text, lineHeight:1.45 }}>
-            <strong style={{ fontWeight:600 }}>{actor}</strong>
+      <AuditRowWrap>
+        <AuditDot />
+        <AuditBody>
+          <AuditLine>
+            <AuditActor>{actor}</AuditActor>
             {' '}{middle}
-            {detail && (
-              <span style={{ marginLeft:5, fontSize:11, color:T.textMuted,
-                background:T.bg, border:`1px solid ${T.border}`, borderRadius:4,
-                padding:'0 5px' }}>
-                {detail}
-              </span>
-            )}
-          </div>
-          <div style={{ fontSize:11, color:T.textMuted, marginTop:2 }}>
-            <span style={{ fontWeight:500, color:T.textSub }}>{entry.projectName}</span>
+            {detail && <AuditDetail>{detail}</AuditDetail>}
+          </AuditLine>
+          <AuditMeta>
+            <AuditProject>{entry.projectName}</AuditProject>
             {' · '}{fmtRel(entry.createdAt)}
-          </div>
-        </div>
-      </div>
-      {!isLast && <Hr />}
+          </AuditMeta>
+        </AuditBody>
+      </AuditRowWrap>
+      {!isLast && <HrLine />}
     </>
   );
 }
@@ -274,39 +224,23 @@ function AuditRow({ entry, isLast }) {
 // ── Tab bar ────────────────────────────────────────────────────────────────────
 function TabBar({ tabs, active, onChange }) {
   return (
-    <div style={{ display:'flex', borderBottom:`1px solid ${T.border}`, marginBottom:14 }}>
+    <TabBarRow>
       {tabs.map(({ key, label, count }) => {
         const on = active === key;
         return (
-          <button key={key} onClick={() => onChange(key)}
-            style={{ padding:'6px 13px', border:'none', background:'none', cursor:'pointer',
-              fontFamily:'inherit', fontSize:12, fontWeight: on ? 700 : 400,
-              color: on ? T.accent : T.textSub,
-              borderBottom: on ? `2px solid ${T.accent}` : '2px solid transparent',
-              marginBottom:-1 }}>
+          <TabBtn key={key} active={on} onClick={() => onChange(key)}>
             {label}
-            {count != null && (
-              <span style={{ marginLeft:4, fontSize:10,
-                color: on ? T.accent : T.textMuted }}>({count})</span>
-            )}
-          </button>
+            {count != null && <TabCount active={on}>({count})</TabCount>}
+          </TabBtn>
         );
       })}
-    </div>
-  );
-}
-
-function Card({ children, style = {} }) {
-  return (
-    <div style={{ background:T.surface, border:`1px solid ${T.border}`,
-      borderRadius:8, overflow:'hidden', ...style }}>
-      {children}
-    </div>
+    </TabBarRow>
   );
 }
 
 // ── Dashboard ──────────────────────────────────────────────────────────────────
 export default function DashboardModule({ currentUser }) {
+  const theme = useTheme();
   const [requests,    setRequests]    = useState([]);
   const [activeTasks, setActiveTasks] = useState([]);
   const [auditFeed,   setAuditFeed]   = useState([]);
@@ -370,99 +304,83 @@ export default function DashboardModule({ currentUser }) {
 
   // ── Layout: the outer wrapper fills erp-main exactly, no outer scroll ─────
   return (
-    <div style={{ height:'100%', display:'flex', flexDirection:'column',
-      background:T.bg, fontFamily:'inherit', overflow:'hidden' }}>
+    <Wrap>
 
       {/* Page header — fixed height */}
-      <div style={{ padding:'24px 28px 0', flexShrink:0 }}>
-        <h1 style={{ margin:'0 0 3px', fontSize:24, fontWeight:700, color:T.text,
-          fontFamily:"'Cormorant Garamond', Georgia, serif" }}>
-          Good {timeOfDay()}, {displayName}
-        </h1>
-        <p style={{ margin:'0 0 20px', fontSize:13, color:T.textMuted }}>
-          Overview of your tasks, assignments and recent project activity.
-        </p>
-        {error && (
-          <div style={{ marginBottom:16, padding:'9px 14px', background:'#fdecea',
-            border:'1px solid #f5c6cb', borderRadius:6, fontSize:13, color:'#9b1c1c' }}>
-            {error}
-          </div>
-        )}
-        <Hr />
-      </div>
+      <Header>
+        <Title>Good {timeOfDay()}, {displayName}</Title>
+        <Subtitle>Overview of your tasks, assignments and recent project activity.</Subtitle>
+        {error && <ErrorBanner>{error}</ErrorBanner>}
+        <HrLine />
+      </Header>
 
       {/* Body — scrollable */}
       {loading ? (
-        <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center',
-          color:T.textMuted, fontSize:13 }}>
-          Loading…
-        </div>
+        <LoadingWrap>Loading…</LoadingWrap>
       ) : (
-        <div style={{ flex:1, overflow:'hidden', display:'flex', gap:0 }}>
+        <BodyGrid>
 
           {/* ── Left column (scrollable) ── */}
-          <div style={{ flex:'0 0 52%', overflow:'auto', padding:'20px 28px',
-            borderRight:`1px solid ${T.border}` }}>
+          <LeftCol>
 
             {/* Task Requests */}
-            <div style={{ marginBottom:32 }}>
-              <SectionHead title="Task Requests"
-                pill={pendingCount > 0 ? pendingCount : null} />
+            <Section>
+              <SectionHead title="Task Requests" pill={pendingCount > 0 ? pendingCount : null} />
               <TabBar tabs={reqTabs} active={filter} onChange={setFilter} />
               {filtered.length === 0
                 ? <Empty text={filter === 'All'
                     ? 'No requests yet.'
                     : `No ${filter.toLowerCase()} requests.`} />
                 : filtered.map(req => (
-                    <RequestCard key={req.requestId} req={req}
+                    <RequestCardView key={req.requestId} req={req}
                       onAccept={handleAccept} onDecline={handleDecline} acting={acting} />
                   ))
               }
-            </div>
+            </Section>
 
             {/* Active Tasks */}
-            <div>
+            <Section tight>
               <SectionHead title="My Active Tasks"
                 pill={overdueCount > 0 ? `${overdueCount} overdue` : null}
-                pillBg="#9b1c1c" />
+                pillBg={theme.colors.danger} />
               {activeTasks.length === 0
                 ? <Empty text="No active tasks assigned to you." />
                 : (
-                  <Card>
+                  <CardWrap>
                     {activeTasks.map((t, i) => (
                       <ActiveTaskRow key={t.taskId} task={t}
                         isLast={i === activeTasks.length - 1} />
                     ))}
-                  </Card>
+                  </CardWrap>
                 )
               }
               {activeTasks.length > 0 && (
-                <p style={{ fontSize:11, color:T.textMuted, marginTop:8 }}>
+                <p style={{ fontSize:11, color:theme.colors.ashLight, marginTop:8 }}>
                   Click a task to open it in Project Management.
                 </p>
               )}
-            </div>
-          </div>
+            </Section>
+          </LeftCol>
 
           {/* ── Right column — Audit feed (scrollable) ── */}
-          <div style={{ flex:'0 0 48%', overflow:'auto', padding:'20px 24px' }}>
+          <RightCol>
             <SectionHead title="Recent Project Activity" />
             {auditFeed.length === 0
               ? <Empty text="No recent activity across your projects." />
               : (
-                <Card>
+                <CardWrap>
                   {auditFeed.slice(0, 50).map((e, i) => (
                     <AuditRow key={e.id} entry={e}
                       isLast={i === Math.min(auditFeed.length, 50) - 1} />
                   ))}
-                </Card>
+                </CardWrap>
               )
             }
-          </div>
+          </RightCol>
 
-        </div>
+        </BodyGrid>
       )}
-    </div>
+    </Wrap>
   );
 }
 

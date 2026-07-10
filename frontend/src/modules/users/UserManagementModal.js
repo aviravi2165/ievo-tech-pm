@@ -1,13 +1,29 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { userApi } from './userApi';
+import {
+  Overlay, Modal, ModalHeader, HeaderTitleRow, HeaderTitle, CloseBtn,
+  TabRow, TabBtn, ModalBody, Field, FieldLabel, RequiredMark, FieldHint,
+  Input, Select, CheckboxRow, FormGrid, BooleansRow, InfoNote, ErrorText,
+  SuccessText, FormActionsRow, SecondaryBtn, PrimaryBtn, PickerWrap,
+  PickerLoading, PickerResults, PickerResultRow, PickerResultEmail,
+  PickerClearBtn, ManageLayout, UserListCol, UserListBox, UserListMsg,
+  UserListRow, UserRowName, UserRowSub, UserRowInactive, UserRowMeta,
+  EditCol, EditEmptyState, EditHeaderRow, EditTitle, BackBtn,
+} from './styles/UserManagementModal.styles';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Account type is deliberately just Admin/Employee — "Manager" isn't a
+// global account type here. Anyone (any Employee) can already be made a
+// Manager of a specific project/phase/activity in the PM module without
+// needing a different account type, and org-chart "who they report to" is
+// the separate mgrUserId field below (ManagerPicker) — a third "Manager"
+// option at this level only duplicated one of those two and caused
+// confusion between them.
 const USER_TYPES = [
   { value: 'employee', label: 'Employee' },
-  { value: 'manager',  label: 'Manager'  },
   { value: 'admin',    label: 'Admin'    },
 ];
 
@@ -31,26 +47,17 @@ const EMPTY_FORM = {
 // Sub-components
 // ─────────────────────────────────────────────────────────────────────────────
 
-function Field({ label, required, hint, children }) {
+function FormField({ label, required, hint, children }) {
   return (
-    <div style={{ marginBottom: 14 }}>
-      <label style={{ display: 'block', fontSize: 12, fontWeight: 600,
-        color: '#555', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.04em' }}>
-        {label}{required && <span style={{ color: '#e31b23', marginLeft: 2 }}>*</span>}
-      </label>
+    <Field>
+      <FieldLabel>
+        {label}{required && <RequiredMark>*</RequiredMark>}
+      </FieldLabel>
       {children}
-      {hint && <p style={{ fontSize: 11, color: '#999', marginTop: 3 }}>{hint}</p>}
-    </div>
+      {hint && <FieldHint>{hint}</FieldHint>}
+    </Field>
   );
 }
-
-const INPUT = {
-  width: '100%', padding: '8px 10px', fontSize: 13,
-  border: '1px solid #d0d5dd', borderRadius: 6, boxSizing: 'border-box',
-  background: '#fff', color: '#222', outline: 'none',
-};
-
-const CHECKBOX_ROW = { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#333', cursor: 'pointer' };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ManagerPicker — searches existing users as manager
@@ -100,44 +107,29 @@ function ManagerPicker({ value, displayName, onChange }) {
   };
 
   return (
-    <div ref={wrapRef} style={{ position: 'relative' }}>
-      <input
-        style={INPUT}
+    <PickerWrap ref={wrapRef}>
+      <Input
         value={query}
         onChange={e => search(e.target.value)}
         placeholder="Search by name or email…"
       />
-      {loading && (
-        <span style={{ position: 'absolute', right: 10, top: 9, fontSize: 11, color: '#999' }}>…</span>
-      )}
+      {loading && <PickerLoading>…</PickerLoading>}
       {open && results.length > 0 && (
-        <div style={{
-          position: 'absolute', zIndex: 9999, top: '100%', left: 0, right: 0,
-          background: '#fff', border: '1px solid #d0d5dd', borderRadius: 6,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.12)', maxHeight: 180, overflowY: 'auto',
-        }}>
+        <PickerResults>
           {results.map(u => (
-            <div key={u.userId}
-              onClick={() => pick(u)}
-              style={{ padding: '7px 12px', cursor: 'pointer', fontSize: 13, color: '#222',
-                borderBottom: '1px solid #f0f0f0' }}
-              onMouseOver={e => e.currentTarget.style.background = '#f5f5f5'}
-              onMouseOut={e  => e.currentTarget.style.background = 'transparent'}
-            >
+            <PickerResultRow key={u.userId} onClick={() => pick(u)}>
               <strong>{`${u.firstName || ''} ${u.lastName || ''}`.trim() || u.username}</strong>
-              {u.email && <span style={{ color: '#888', marginLeft: 6, fontSize: 11 }}>{u.email}</span>}
-            </div>
+              {u.email && <PickerResultEmail>{u.email}</PickerResultEmail>}
+            </PickerResultRow>
           ))}
-        </div>
+        </PickerResults>
       )}
       {value && (
-        <button type="button" onClick={() => { setQuery(''); onChange('', ''); }}
-          style={{ position: 'absolute', right: 8, top: 8, background: 'none',
-            border: 'none', color: '#aaa', cursor: 'pointer', fontSize: 16, lineHeight: 1 }}>
+        <PickerClearBtn type="button" onClick={() => { setQuery(''); onChange('', ''); }}>
           ×
-        </button>
+        </PickerClearBtn>
       )}
-    </div>
+    </PickerWrap>
   );
 }
 
@@ -150,134 +142,125 @@ function UserForm({ form, onChange, departments, onSubmit, submitLabel, loading,
 
   return (
     <form onSubmit={onSubmit} style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 20px' }}>
+      <FormGrid>
 
         {/* USERNAME */}
-        <Field label="Username" required>
-          <input style={INPUT} value={form.username}
+        <FormField label="Username" required>
+          <Input value={form.username}
             onChange={e => set('username', e.target.value)}
             placeholder="e.g. jsmith"
             disabled={isEdit} // username shouldn't change once set
           />
-          {isEdit && <p style={{ fontSize: 11, color: '#999', marginTop: 3 }}>Username cannot be changed after creation.</p>}
-        </Field>
+          {isEdit && <FieldHint>Username cannot be changed after creation.</FieldHint>}
+        </FormField>
 
         {/* USER TYPE */}
-        <Field label="User Type" required>
-          <select style={INPUT} value={form.userType} onChange={e => set('userType', e.target.value)}>
+        <FormField label="User Type" required>
+          <Select value={form.userType} onChange={e => set('userType', e.target.value)}>
             {USER_TYPES.map(t => (
               <option key={t.value} value={t.value}>{t.label}</option>
             ))}
-          </select>
-        </Field>
+          </Select>
+        </FormField>
 
         {/* FIRST NAME */}
-        <Field label="First Name" required={!isEdit}>
-          <input style={INPUT} value={form.firstName}
+        <FormField label="First Name" required={!isEdit}>
+          <Input value={form.firstName}
             onChange={e => set('firstName', e.target.value)}
             placeholder="First name" />
-        </Field>
+        </FormField>
 
         {/* LAST NAME */}
-        <Field label="Last Name">
-          <input style={INPUT} value={form.lastName}
+        <FormField label="Last Name">
+          <Input value={form.lastName}
             onChange={e => set('lastName', e.target.value)}
             placeholder="Last name" />
-        </Field>
+        </FormField>
 
         {/* EMAIL */}
-        <Field label="Email" required={!isEdit}>
-          <input style={INPUT} type="email" value={form.email}
+        <FormField label="Email" required={!isEdit}>
+          <Input type="email" value={form.email}
             onChange={e => set('email', e.target.value)}
             placeholder="email@company.com"
             required={!isEdit} />
-        </Field>
+        </FormField>
 
         {/* PHONE */}
-        <Field label="Phone Number">
-          <input style={INPUT} value={form.phoneNumber}
+        <FormField label="Phone Number">
+          <Input value={form.phoneNumber}
             onChange={e => set('phoneNumber', e.target.value)}
             placeholder="+91 98765 43210" />
-        </Field>
+        </FormField>
 
         {/* EMPLOYEE CODE */}
-        <Field label="Employee Code">
-          <input style={INPUT} value={form.employeeCode}
+        <FormField label="Employee Code">
+          <Input value={form.employeeCode}
             onChange={e => set('employeeCode', e.target.value)}
             placeholder="EMP-001" />
-        </Field>
+        </FormField>
 
         {/* DEPARTMENT */}
-        <Field label="Department">
-          <select style={INPUT} value={form.deptId}
+        <FormField label="Department">
+          <Select value={form.deptId}
             onChange={e => set('deptId', e.target.value || '')}>
             <option value="">— None —</option>
             {departments.map(d => (
               <option key={d.deptId} value={d.deptId}>{d.deptName}</option>
             ))}
-          </select>
-        </Field>
+          </Select>
+        </FormField>
 
         {/* LEVEL */}
-        <Field label="Level" hint="Numeric seniority level (optional)">
-          <input style={INPUT} type="number" min="0" value={form.level}
+        <FormField label="Level" hint="Numeric seniority level (optional)">
+          <Input type="number" min="0" value={form.level}
             onChange={e => set('level', e.target.value)}
             placeholder="e.g. 3" />
-        </Field>
+        </FormField>
 
         {/* MANAGER */}
-        <Field label="Manager" hint="Leave blank if no direct manager">
+        <FormField label="Manager" hint="Leave blank if no direct manager">
           <ManagerPicker
             value={form.mgrUserId}
             displayName={form.mgrName}
             onChange={(id, name) => onChange({ ...form, mgrUserId: id, mgrName: name })}
           />
-        </Field>
-      </div>
+        </FormField>
+      </FormGrid>
 
       {/* Booleans — full width */}
-      <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 16, marginTop: 4 }}>
-        <label style={CHECKBOX_ROW}>
+      <BooleansRow>
+        <CheckboxRow>
           <input type="checkbox" checked={!!form.isActive}
             onChange={e => set('isActive', e.target.checked)} />
           Is Active
-        </label>
-        <label style={CHECKBOX_ROW}>
+        </CheckboxRow>
+        <CheckboxRow>
           <input type="checkbox" checked={!!form.mustChangePassword}
             onChange={e => set('mustChangePassword', e.target.checked)} />
           Must Change Password on Next Login
-        </label>
-      </div>
+        </CheckboxRow>
+      </BooleansRow>
 
       {!isEdit && (
-        <p style={{ fontSize: 12, color: '#888', marginBottom: 14, background: '#fafafa',
-          border: '1px solid #e5e5e5', borderRadius: 6, padding: '8px 12px' }}>
+        <InfoNote>
           A temporary password will be generated and emailed to the user automatically.
           They will be required to change it on first login.
-        </p>
+        </InfoNote>
       )}
 
-      {error   && <div style={{ color: '#dc2626', fontSize: 13, marginBottom: 12 }}>{error}</div>}
-      {success && <div style={{ color: '#16a34a', fontSize: 13, marginBottom: 12 }}>{success}</div>}
+      {error   && <ErrorText>{error}</ErrorText>}
+      {success && <SuccessText>{success}</SuccessText>}
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, paddingTop: 4 }}>
+      <FormActionsRow>
         {onRegisterAnother && (
-          <button type="button" onClick={onRegisterAnother}
-            style={{ padding: '9px 22px', background: '#fff', color: '#e31b23',
-              border: '2px solid #e31b23', borderRadius: 6, fontWeight: 600,
-              fontSize: 14, cursor: 'pointer' }}>
+          <SecondaryBtn type="button" onClick={onRegisterAnother}>
             + Register Another User
-          </button>
+          </SecondaryBtn>
         )}
-        <button type="submit" disabled={loading || !!onRegisterAnother}
-          style={{ padding: '9px 22px',
-            background: onRegisterAnother ? '#ccc' : '#e31b23',
-            color: '#fff', border: 'none', borderRadius: 6,
-            fontWeight: 600, fontSize: 14,
-            cursor: onRegisterAnother ? 'not-allowed' : 'pointer' }}>
+        <PrimaryBtn type="submit" disabled={loading || !!onRegisterAnother} muted={!!onRegisterAnother}>
           {loading ? 'Saving…' : submitLabel}
-        </button>
-      </div>
+        </PrimaryBtn>
+      </FormActionsRow>
     </form>
   );
 }
@@ -414,73 +397,36 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
 
   if (!open) return null;
 
-  // ── Layout constants ───────────────────────────────────────────────────────
-  const OVERLAY = {
-    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999,
-  };
-  const MODAL = {
-    width: 900, maxWidth: '96vw', maxHeight: '92vh',
-    background: '#fff', borderRadius: 10, boxShadow: '0 12px 40px rgba(0,0,0,0.2)',
-    display: 'flex', flexDirection: 'column', overflow: 'hidden',
-  };
-  const HEADER = {
-    padding: '18px 24px 0', borderBottom: '1px solid #eee',
-    display: 'flex', alignItems: 'center', gap: 0, flexShrink: 0,
-  };
-  const BODY = {
-    flex: 1, minHeight: 0, padding: '20px 24px',
-    display: 'flex', flexDirection: 'column',
-    // FIX: the manage tab has its own two independently-scrolling columns
-    // (user list / edit form). Letting THIS container also scroll meant it
-    // was the nearest scrollable ancestor that actually took effect, so
-    // both columns scrolled together as one instead of independently.
-    // The register tab is a single simple column, so it keeps its own
-    // scroll here as before.
-    overflowY: tab === 'manage' ? 'hidden' : 'auto',
-  };
-  const TAB_BTN = (active) => ({
-    padding: '10px 20px', border: 'none', background: 'none', cursor: 'pointer',
-    fontSize: 14, fontWeight: active ? 700 : 400,
-    color: active ? '#e31b23' : '#666',
-    borderBottom: active ? '2px solid #e31b23' : '2px solid transparent',
-    marginBottom: -1, transition: 'color .15s',
-  });
-
   return (
-    <div style={OVERLAY} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style={MODAL}>
+    <Overlay onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <Modal>
 
         {/* Header */}
-        <div style={HEADER}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 0, flex: 1 }}>
+        <ModalHeader>
+          <HeaderTitleRow>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-              stroke="#e31b23" strokeWidth="2">
+              stroke="currentColor" strokeWidth="2" style={{ color: 'inherit' }}>
               <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
               <circle cx="9" cy="7" r="4"/>
               <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
             </svg>
-            <span style={{ fontSize: 17, fontWeight: 700, color: '#222' }}>User Management</span>
-          </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none',
-            fontSize: 22, color: '#888', cursor: 'pointer', lineHeight: 1, padding: '0 0 4px 0' }}>
-            ×
-          </button>
-        </div>
+            <HeaderTitle>User Management</HeaderTitle>
+          </HeaderTitleRow>
+          <CloseBtn onClick={onClose}>×</CloseBtn>
+        </ModalHeader>
 
         {/* Tabs */}
-        <div style={{ display: 'flex', gap: 0, padding: '0 24px',
-          borderBottom: '1px solid #eee', flexShrink: 0 }}>
-          <button style={TAB_BTN(tab === 'register')} onClick={() => switchTab('register')}>
+        <TabRow>
+          <TabBtn active={tab === 'register'} onClick={() => switchTab('register')}>
             Register User
-          </button>
-          <button style={TAB_BTN(tab === 'manage')} onClick={() => switchTab('manage')}>
+          </TabBtn>
+          <TabBtn active={tab === 'manage'} onClick={() => switchTab('manage')}>
             Edit Users
-          </button>
-        </div>
+          </TabBtn>
+        </TabRow>
 
         {/* Body */}
-        <div style={BODY}>
+        <ModalBody noScroll={tab === 'manage'}>
 
           {/* ── REGISTER TAB ── */}
           {tab === 'register' && (
@@ -505,75 +451,59 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
 
           {/* ── MANAGE / EDIT TAB ── */}
           {tab === 'manage' && (
-            <div style={{ display: 'flex', gap: 20, flex: 1, minHeight: 0, overflow: 'hidden' }}>
+            <ManageLayout>
 
               {/* Left: user list */}
-              <div style={{ width: 260, flexShrink: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <input
+              <UserListCol>
+                <Input
                   placeholder="Search users…"
                   value={userSearch}
                   onChange={e => { setUserSearch(e.target.value); loadUsers(e.target.value); }}
-                  style={{ ...INPUT, marginBottom: 0 }}
+                  style={{ marginBottom: 0 }}
                 />
-                <div style={{ flex: 1, overflowY: 'auto', border: '1px solid #e5e5e5',
-                  borderRadius: 6, minHeight: 200 }}>
-                  {usersLoading && (
-                    <div style={{ padding: 16, color: '#999', fontSize: 13, textAlign: 'center' }}>Loading…</div>
-                  )}
-                  {!usersLoading && users.length === 0 && (
-                    <div style={{ padding: 16, color: '#999', fontSize: 13, textAlign: 'center' }}>No users found.</div>
-                  )}
+                <UserListBox>
+                  {usersLoading && <UserListMsg>Loading…</UserListMsg>}
+                  {!usersLoading && users.length === 0 && <UserListMsg>No users found.</UserListMsg>}
                   {!usersLoading && users.map(u => {
                     const name = `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.username;
                     const isSelected = selectedUser?.userId === u.userId;
                     return (
-                      <div key={u.userId} onClick={() => openEdit(u)}
-                        style={{
-                          padding: '9px 12px', cursor: 'pointer', borderBottom: '1px solid #f0f0f0',
-                          background: isSelected ? '#fff3f3' : 'transparent',
-                          borderLeft: isSelected ? '3px solid #e31b23' : '3px solid transparent',
-                        }}
-                        onMouseOver={e => { if (!isSelected) e.currentTarget.style.background = '#fafafa'; }}
-                        onMouseOut={e  => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
-                      >
-                        <div style={{ fontSize: 13, fontWeight: 600, color: '#222' }}>{name}</div>
-                        <div style={{ fontSize: 11, color: '#888', marginTop: 1 }}>
+                      <UserListRow key={u.userId} selected={isSelected} onClick={() => openEdit(u)}>
+                        <UserRowName>{name}</UserRowName>
+                        <UserRowSub>
                           {u.username}
-                          {!u.isActive && <span style={{ color: '#dc2626', marginLeft: 4 }}>· Inactive</span>}
-                        </div>
-                        <div style={{ fontSize: 11, color: '#aaa' }}>
+                          {!u.isActive && <UserRowInactive>· Inactive</UserRowInactive>}
+                        </UserRowSub>
+                        <UserRowMeta>
                           {u.userType}{u.deptName ? ` · ${u.deptName}` : ''}
-                        </div>
-                      </div>
+                        </UserRowMeta>
+                      </UserListRow>
                     );
                   })}
-                </div>
-              </div>
+                </UserListBox>
+              </UserListCol>
 
               {/* Right: edit form or prompt */}
-              <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+              <EditCol>
                 {!selectedUser ? (
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column',
-                    alignItems: 'center', justifyContent: 'center', color: '#aaa' }}>
+                  <EditEmptyState>
                     <svg width="36" height="36" viewBox="0 0 24 24" fill="none"
                       stroke="currentColor" strokeWidth="1.5">
                       <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
                       <circle cx="9" cy="7" r="4"/>
                     </svg>
                     <p style={{ marginTop: 10, fontSize: 13 }}>Select a user from the list to edit</p>
-                  </div>
+                  </EditEmptyState>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-                    <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#222' }}>
+                    <EditHeaderRow>
+                      <EditTitle>
                         Editing: {`${selectedUser.firstName || ''} ${selectedUser.lastName || ''}`.trim() || selectedUser.username}
-                      </h3>
-                      <button onClick={() => { setSelectedUser(null); setError(''); setSuccess(''); }}
-                        style={{ background: 'none', border: '1px solid #d0d5dd', borderRadius: 4,
-                          padding: '2px 8px', fontSize: 11, color: '#666', cursor: 'pointer' }}>
+                      </EditTitle>
+                      <BackBtn onClick={() => { setSelectedUser(null); setError(''); setSuccess(''); }}>
                         ← Back to list
-                      </button>
-                    </div>
+                      </BackBtn>
+                    </EditHeaderRow>
                     <UserForm
                       form={form}
                       onChange={setForm}
@@ -587,11 +517,11 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
                     />
                   </div>
                 )}
-              </div>
-            </div>
+              </EditCol>
+            </ManageLayout>
           )}
-        </div>
-      </div>
-    </div>
+        </ModalBody>
+      </Modal>
+    </Overlay>
   );
 }
