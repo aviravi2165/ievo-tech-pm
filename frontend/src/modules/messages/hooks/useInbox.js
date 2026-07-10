@@ -120,12 +120,6 @@ export function useInbox(activeConversationId = null) {
     return () => socket.off('NEW_MESSAGE', handler);
   }, [socket, fetchInbox, user?.userId]);
 
-  const archiveConversation = useCallback(async (conversationId) => {
-    await messageApi.archive(conversationId);
-    setConversations(prev => prev.filter(c => c.conversationId !== conversationId));
-    knownIdsRef.current.delete(conversationId);
-  }, []);
-
   /**
    * Called when user opens a conversation — clears the unread dot
    * immediately without waiting for a server round-trip.
@@ -142,7 +136,6 @@ export function useInbox(activeConversationId = null) {
   return {
     conversations, loading, error,
     refetch: fetchInbox,
-    archiveConversation,
     clearUnreadDot,
   };
 }

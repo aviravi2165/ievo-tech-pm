@@ -9,12 +9,21 @@ export function useThread(conversationId) {
   const [loading,      setLoading]      = useState(false);
   const [error,        setError]        = useState(null);
 
-  // Ref to track which messages have already been marked read this session
-  // so we don't fire duplicate PATCH calls when messages state updates
   const markedReadRef   = useRef(new Set());
-  // Callback ref so ChatWindow can react to new messages (highlight, mark-read)
-  // Declared here (not below) so onNew socket handler can safely reference it
+  // Callback ref so ChatWindow can react to incoming messages (scroll, mark-read pill)
   const onNewMessageRef = useRef(null);
+
+  // BUG FIX: `loading` alone can't distinguish "haven't started fetching
+  // yet" from "finished fetching" — both read as `false` (it's initialized
+  // false, and only flips true *inside* the async fetchThread call, which
+  // doesn't take effect until a later render). A consumer effect reading
+  // `loading` in the very first render after conversationId changes sees
+  // the stale `false` and can act as if data has loaded when `messages` is
+  // still `[]`. loadedForRef is a ref (mutated synchronously, no render
+  // delay) tracking which conversationId we've actually finished fetching
+  // for, so callers can derive a reliable "ready" signal below instead of
+  // racing the loading flag's own render timing.
+  const loadedForRef = useRef(null);
 
   const fetchThread = useCallback(async () => {
     if (!conversationId) return;
@@ -23,10 +32,11 @@ export function useThread(conversationId) {
       const data = await messageApi.getThread(conversationId);
       setMessages(data.messages || []);
       setConversation(data.conversation || null);
-      setError(null); // clear any previous error on success
+      setError(null);
     } catch (err) {
       setError(err?.response?.data?.error || err.message || 'Failed to load conversation.');
     } finally {
+      loadedForRef.current = conversationId;
       setLoading(false);
     }
   }, [conversationId]);
@@ -34,10 +44,16 @@ export function useThread(conversationId) {
   // Fetch on open + join socket room
   useEffect(() => {
     if (!conversationId) return;
-    // Reset everything when switching conversations
     setError(null);
     setMessages([]);
     setConversation(null);
+    // Reset synchronously (not just inside fetchThread's finally) so `ready`
+    // reads false immediately for this new conversationId, even if it's one
+    // we'd already loaded before (e.g. re-opening a conversation) — without
+    // this, loadedForRef.current could already equal the new conversationId
+    // from a previous visit, making `ready` true for one render before the
+    // fresh fetch actually starts, while messages is still the just-reset [].
+    loadedForRef.current = null;
     markedReadRef.current = new Set();
     fetchThread();
     if (socket) socket.emit('join_conversation', { conversationId });
@@ -51,16 +67,50 @@ export function useThread(conversationId) {
     if (!socket || !conversationId) return;
 
     const onNew = (payload) => {
-      if (payload.conversationId !== conversationId) return;
-      fetchThread().then(() => {
-        // After fetch, mark the new message read immediately since user is already in chat
-        // markAllRead will handle deduplication via markedReadRef
-        if (onNewMessageRef.current) onNewMessageRef.current(payload);
-      });
+      if (String(payload.conversationId) !== String(conversationId)) return;
+
+      // Capture scroll distance BEFORE the state update triggers a re-render —
+      // this must happen synchronously so the "scrolled away" snapshot is
+      // accurate (after render, auto-scroll effects may have already moved
+      // the container, making it look like the user was at the bottom).
+      const threadEl = document.querySelector('.gmail-thread-view');
+      const distBefore = threadEl
+        ? threadEl.scrollHeight - threadEl.scrollTop - threadEl.clientHeight
+        : 0;
+
+      if (payload.bodyHtml != null) {
+        // ── Fast path: append directly, no HTTP round-trip ────────────────
+        const newMsg = {
+          messageId:      payload.messageId,
+          conversationId: payload.conversationId,
+          senderId:       payload.senderUserId,
+          senderName:     payload.senderName,
+          bodyHtml:       payload.bodyHtml,
+          sentAt:         payload.createdAt || new Date().toISOString(),
+          attachments:    payload.attachments   || [],
+          parentMessage:  payload.parentMessage || null,
+          readReceipts:   payload.readReceipts  || [],
+          isEdited:       false,
+          isSystem:       Boolean(payload.isSystem),
+        };
+        setMessages(prev => {
+          if (prev.find(m => m.messageId === newMsg.messageId)) return prev;
+          return [...prev, newMsg];
+        });
+        if (onNewMessageRef.current) {
+          onNewMessageRef.current({ ...payload, _distanceFromBottom: distBefore });
+        }
+      } else {
+        // Fallback for older server without enriched payload
+        Promise.resolve(fetchThread()).then(() => {
+          if (onNewMessageRef.current) {
+            onNewMessageRef.current({ ...payload, _distanceFromBottom: distBefore });
+          }
+        });
+      }
     };
 
     // Live read receipt — update the specific message in place
-    // userName is included from the socket event (set by sender's REST response)
     const onRead = ({ messageId, userId, readAt, userName }) => {
       setMessages(prev =>
         prev.map(m => {
@@ -78,56 +128,42 @@ export function useThread(conversationId) {
       );
     };
 
-    socket.on('NEW_MESSAGE', onNew);
-    socket.on('MARK_READ',   onRead);
+    // Message edited — update body in place
+    const onEdited = ({ messageId, bodyHtml, isEdited, editedAt }) => {
+      setMessages(prev =>
+        prev.map(m =>
+          m.messageId === messageId
+            ? { ...m, bodyHtml, isEdited: Boolean(isEdited), editedAt }
+            : m
+        )
+      );
+    };
+
+    socket.on('NEW_MESSAGE',     onNew);
+    socket.on('MARK_READ',       onRead);
+    socket.on('MESSAGE_EDITED',  onEdited);
     return () => {
-      socket.off('NEW_MESSAGE', onNew);
-      socket.off('MARK_READ',   onRead);
+      socket.off('NEW_MESSAGE',    onNew);
+      socket.off('MARK_READ',      onRead);
+      socket.off('MESSAGE_EDITED', onEdited);
     };
   }, [socket, conversationId, fetchThread]);
 
-  /**
-   * Mark a single message read.
-   * - Writes to DB via REST (strict participant check — no super-admin bypass)
-   * - Server now calls broadcastMarkRead() after DB write, so co-viewers
-   *   receive live MARK_READ events via the server broadcast. The client
-   *   no longer emits MARK_READ itself — doing so after the server already
-   *   broadcast it would cause co-viewers to receive the event twice and
-   *   briefly show duplicate tick animations.
-   * - Deduped via markedReadRef so repeated calls are no-ops
-   */
   const markRead = useCallback(async (messageId) => {
     if (markedReadRef.current.has(messageId)) return;
     markedReadRef.current.add(messageId);
     try {
       await messageApi.markRead(messageId);
-      // No client-side socket.emit('MARK_READ') — server handles broadcast.
     } catch (_) {
-      // Remove from ref on failure so it can be retried
       markedReadRef.current.delete(messageId);
     }
   }, []);
 
-  /**
-   * FIX Bug 3: markAllRead previously called setMessages() to access the
-   * latest messages snapshot, then called markRead() as a side effect
-   * inside the updater function. Side effects inside setState updaters are
-   * unreliable (React may call them multiple times in concurrent/strict mode).
-   * Fixed by reading the ref-attached snapshot directly.
-   *
-   * Also: ChatWindow was triggering this on `messages.length` change —
-   * meaning every new incoming message caused a full re-scan of all messages.
-   * The markedReadRef deduplication prevents double DB writes, but the
-   * iteration still happened. This function now uses the messages ref so
-   * ChatWindow can call it once on conversation open without depending on
-   * messages in its effect dependency array.
-   */
   const messagesRef = useRef([]);
   messagesRef.current = messages;
 
   const markAllRead = useCallback((currentUserId) => {
-    const currentMessages = messagesRef.current;
-    const unread = currentMessages.filter(
+    const unread = messagesRef.current.filter(
       m => String(m.senderId) !== String(currentUserId) &&
         !m.readReceipts?.find(r => String(r.userId) === String(currentUserId)) &&
         !markedReadRef.current.has(m.messageId)
@@ -135,15 +171,49 @@ export function useThread(conversationId) {
     unread.forEach(m => markRead(m.messageId));
   }, [markRead]);
 
+  // Send reply — socket event handles appending; no refetch needed
   const sendReply = useCallback(async (payload) => {
-    const result = await messageApi.reply(conversationId, payload);
-    await fetchThread();
+    return messageApi.reply(conversationId, payload);
+  }, [conversationId]);
+
+  // Edit message — updates locally optimistically, server confirms via socket
+  const editMessageLocal = useCallback(async (messageId, bodyHtml) => {
+    const result = await messageApi.editMessage(messageId, bodyHtml);
+    // Update locally immediately (socket will also fire MESSAGE_EDITED)
+    setMessages(prev =>
+      prev.map(m =>
+        m.messageId === messageId
+          ? { ...m, bodyHtml: result.bodyHtml, isEdited: true, editedAt: result.editedAt }
+          : m
+      )
+    );
     return result;
-  }, [conversationId, fetchThread]);
+  }, []);
+
+  // Append a message directly from a REST response (e.g. the system message
+  // returned by groupApi.update() right after a name/description change),
+  // instead of waiting for the NEW_MESSAGE socket round-trip. Guards against
+  // duplicates the same way the socket handler does, so when the real
+  // NEW_MESSAGE event does arrive a moment later for the same messageId,
+  // it's a silent no-op.
+  const appendMessage = useCallback((messageData) => {
+    if (!messageData?.messageId) return;
+    setMessages(prev => {
+      if (prev.find(m => m.messageId === messageData.messageId)) return prev;
+      return [...prev, messageData];
+    });
+  }, []);
+
+  // True only once fetchThread has actually resolved (success or error)
+  // for the CURRENT conversationId — unlike raw `loading`, this can't be
+  // read as "done" before the fetch has even started. See loadedForRef's
+  // comment above.
+  const ready = loadedForRef.current === conversationId;
 
   return {
-    messages, conversation, loading, error,
-    markRead, markAllRead, sendReply,
+    messages, conversation, loading, error, ready,
+    markRead, markAllRead, sendReply, editMessage: editMessageLocal,
+    appendMessage,
     refetch: fetchThread,
     onNewMessageRef,
   };

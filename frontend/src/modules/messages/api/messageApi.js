@@ -26,11 +26,11 @@ export const messageApi = {
   reply: (conversationId, payload) =>
     api.post(`/api/messages/${conversationId}/reply`, payload).then(r => r.data),
 
+  editMessage: (messageId, bodyHtml) =>
+    api.patch(`/api/messages/${messageId}/edit`, { bodyHtml }).then(r => r.data),
+
   markRead: (messageId) =>
     api.patch(`/api/messages/${messageId}/read`).then(r => r.data),
-
-  archive: (conversationId) =>
-    api.patch(`/api/messages/${conversationId}/archive`).then(r => r.data),
 
   // Remove a participant from a CC thread (sender only)
   removeParticipant: (conversationId, userId) =>

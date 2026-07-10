@@ -1,5 +1,6 @@
 import { useMessaging }     from '../../modules/messages/context/MessagingContext';
 import CommunicationModule  from '../../modules/messages/CommunicationModule';
+import { Panel, ToggleBtn, ToggleLabel, ToggleBadge, PanelBody } from '../styles/MessagePanel.styles';
 
 /**
  * Collapsible right rail — communication module.
@@ -10,13 +11,9 @@ export default function MessagePanel({ currentUser, open, onToggle }) {
   const { unreadCount } = useMessaging();
 
   return (
-    <aside
-      className={`erp-message-panel ${open ? 'open' : 'collapsed'}`}
-      aria-label="Messages"
-    >
-      <button
+    <Panel open={open} aria-label="Messages">
+      <ToggleBtn
         type="button"
-        className="erp-message-toggle"
         onClick={onToggle}
         title={open ? 'Collapse messages' : 'Open messages'}
         aria-expanded={open}
@@ -26,18 +23,16 @@ export default function MessagePanel({ currentUser, open, onToggle }) {
           <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
         </svg>
         {!open && unreadCount > 0 && (
-          <span className="erp-message-toggle-badge">
-            {unreadCount > 99 ? '99+' : unreadCount}
-          </span>
+          <ToggleBadge>{unreadCount > 99 ? '99+' : unreadCount}</ToggleBadge>
         )}
-        <span className="erp-message-toggle-label">Messages</span>
-      </button>
+        {!open && <ToggleLabel>Messages</ToggleLabel>}
+      </ToggleBtn>
 
       {open && (
-        <div className="erp-message-panel-body">
+        <PanelBody>
           <CommunicationModule currentUser={currentUser} />
-        </div>
+        </PanelBody>
       )}
-    </aside>
+    </Panel>
   );
 }

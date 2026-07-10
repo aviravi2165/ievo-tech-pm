@@ -1,17 +1,30 @@
 import { useState, useRef } from 'react';
+import { useTheme } from '@emotion/react';
 import { fileApi } from '../api/fileApi';
 import { MAX_FILE_SIZE_BYTES } from '../api/allowedFileTypes';
+import { IconBtn, Spinner } from '../styles/shared.styles';
+import {
+  ComposerWrap, NoReplyBanner, ReplyStrip, Toolbar, FmtBtn, FmtSep,
+  ComposerArea, ComposerFooter, FooterHint, ComposerAttachments,
+  ComposerAttachChip, ComposerAttachRemove, BtnSend, MentionDropdown, MentionItem,
+} from '../styles/Composer.styles';
 
 /**
  * Composer
  * Props:
- *   allowReply   — bool (false = read-only / broadcast)
- *   replyingTo   — message object being replied to (or null)
- *   onCancelReply()
- *   onSend({ bodyHtml, attachmentIds, parentMessageId })
- *   disabled     — bool
+ * allowReply   — bool
+ * isRemoved    — bool, true when allowReply=false specifically because the
+ *                current user was removed from this conversation (as
+ *                opposed to the whole thread being admin-disabled) — shows
+ *                a distinct "no longer a participant" message instead of
+ *                the generic "replies disabled" one.
+ * replyingTo   — message object
+ * onCancelReply()
+ * onSend({ bodyHtml, attachmentIds, parentMessageId })
+ * disabled     — bool
  */
-export default function Composer({ allowReply = true, replyingTo, onCancelReply, onSend, disabled, participants = [] }) {
+export default function Composer({ allowReply = true, isRemoved = false, replyingTo, onCancelReply, onSend, disabled, participants = [] }) {
+  const theme = useTheme();
   const editorRef = useRef(null);
   const composerRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -26,12 +39,14 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
 
   if (!allowReply) {
     return (
-      <div className="no-reply-banner">
+      <NoReplyBanner>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
         </svg>
-        Replies are disabled for this conversation.
-      </div>
+        {isRemoved
+          ? 'You are no longer a participant in this conversation — you can still read past messages.'
+          : 'Replies are disabled for this conversation.'}
+      </NoReplyBanner>
     );
   }
 
@@ -143,7 +158,14 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
   };
 
   const handleSend = async () => {
-    const html = editorRef.current?.innerHTML?.trim();
+    const rawHtml = editorRef.current?.innerHTML?.trim() || '';
+    const html = rawHtml
+      .replace(/(<br\s*\/?>\s*)+$/i, '')
+      .replace(/&nbsp;/g, '')
+      .replace(/\u00A0/g, '')
+      .replace(/\u200B/g, '')
+      .trim();
+
     const hasText        = html && html !== '<br>';
     const hasAttachments = attachments.some(a => a.attachmentId);
     if (!hasText && !hasAttachments) { setError('Add a message or attach a file before sending.'); return; }
@@ -169,47 +191,45 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
   };
 
   return (
-    <div className="composer" ref={composerRef}>
-      {/* Reply context */}
+    <ComposerWrap ref={composerRef}>
       {replyingTo && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-          <div className="msg-reply-strip" style={{ flex: 1 }}>
+          <ReplyStrip style={{ flex: 1 }}>
             ↩ Replying to <strong>{replyingTo.senderName}</strong>
-          </div>
-          <button className="icon-btn" onClick={onCancelReply} title="Cancel reply">
+          </ReplyStrip>
+          <IconBtn onClick={onCancelReply} title="Cancel reply">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
-          </button>
+          </IconBtn>
         </div>
       )}
 
-      {/* Formatting toolbar */}
-      <div className="composer-toolbar">
-        <button className="fmt-btn" title="Bold" onMouseDown={e => { e.preventDefault(); execCmd('bold'); }}>B</button>
-        <button className="fmt-btn" title="Italic" style={{ fontStyle: 'italic' }} onMouseDown={e => { e.preventDefault(); execCmd('italic'); }}>I</button>
-        <button className="fmt-btn" title="Underline" style={{ textDecoration: 'underline' }} onMouseDown={e => { e.preventDefault(); execCmd('underline'); }}>U</button>
-        <div className="fmt-sep" />
-        <button className="fmt-btn" title="Bullet list" onMouseDown={e => { e.preventDefault(); execCmd('insertUnorderedList'); }}>
+      <Toolbar>
+        <FmtBtn title="Bold" onMouseDown={e => { e.preventDefault(); execCmd('bold'); }}>B</FmtBtn>
+        <FmtBtn title="Italic" style={{ fontStyle: 'italic' }} onMouseDown={e => { e.preventDefault(); execCmd('italic'); }}>I</FmtBtn>
+        <FmtBtn title="Underline" style={{ textDecoration: 'underline' }} onMouseDown={e => { e.preventDefault(); execCmd('underline'); }}>U</FmtBtn>
+        <FmtSep />
+        <FmtBtn title="Bullet list" onMouseDown={e => { e.preventDefault(); execCmd('insertUnorderedList'); }}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/>
             <circle cx="4" cy="6" r="1.5" fill="currentColor"/><circle cx="4" cy="12" r="1.5" fill="currentColor"/><circle cx="4" cy="18" r="1.5" fill="currentColor"/>
           </svg>
-        </button>
-        <button className="fmt-btn" title="Numbered list" onMouseDown={e => { e.preventDefault(); execCmd('insertOrderedList'); }}>
+        </FmtBtn>
+        <FmtBtn title="Numbered list" onMouseDown={e => { e.preventDefault(); execCmd('insertOrderedList'); }}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/>
             <text x="2" y="8" fontSize="7" fill="currentColor" stroke="none">1.</text>
             <text x="2" y="14" fontSize="7" fill="currentColor" stroke="none">2.</text>
             <text x="2" y="20" fontSize="7" fill="currentColor" stroke="none">3.</text>
           </svg>
-        </button>
-        <div className="fmt-sep" />
-        <button className="fmt-btn" title="Attach file" onClick={() => fileInputRef.current?.click()}>
+        </FmtBtn>
+        <FmtSep />
+        <FmtBtn title="Attach file" onClick={() => fileInputRef.current?.click()}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
           </svg>
-        </button>
+        </FmtBtn>
         <input
           ref={fileInputRef}
           type="file"
@@ -217,12 +237,10 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
           style={{ display: 'none' }}
           onChange={handleFileSelect}
         />
-      </div>
+      </Toolbar>
 
-      {/* Editor */}
-      <div
+      <ComposerArea
         ref={editorRef}
-        className="composer-area"
         contentEditable={!disabled && !sending}
         suppressContentEditableWarning
         data-placeholder="Write your message…"
@@ -256,84 +274,76 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
             handleSend();
             return;
           }
-          if (e.key === 'Enter' && !e.shiftKey) {
+          if (e.key === 'Enter') {
             const sel = window.getSelection();
             let node = sel?.anchorNode;
-            while (node) {
-              if (node.nodeType === 1 && ['LI', 'UL', 'OL'].includes(node.nodeName)) return;
-              node = node.parentNode;
+            let inList = false;
+            let tempNode = node;
+            while (tempNode && tempNode !== editorRef.current) {
+              if (tempNode.nodeName === 'LI' || tempNode.nodeName === 'UL' || tempNode.nodeName === 'OL') {
+                inList = true;
+                break;
+              }
+              tempNode = tempNode.parentNode;
             }
-            e.preventDefault();
-            document.execCommand('insertLineBreak');
+            if (!inList) {
+              e.preventDefault();
+              if (!sel || sel.rangeCount === 0) return;
+              const range = sel.getRangeAt(0);
+              range.deleteContents();
+              const br = document.createElement('br');
+              range.insertNode(br);
+              const nbs = document.createTextNode('\u00A0');
+              range.setStartAfter(br);
+              range.insertNode(nbs);
+              range.setStartAfter(nbs);
+              range.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(range);
+            }
           }
         }}
       />
 
-      {/* @mention dropdown */}
       {mentionQuery !== null && mentionMatches.length > 0 && (
-        <div style={{
-          position: 'fixed',
-          [mentionPos.anchor]: mentionPos.value,
-          left: mentionPos.left,
-          zIndex: 1000,
-          background: '#ffffff',
-          border: '1px solid #d1d5db',
-          borderRadius: 8,
-          boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
-          width: DROPDOWN_WIDTH,
-          maxHeight: DROPDOWN_HEIGHT,
-          overflowY: 'auto',
-        }}>
+        <MentionDropdown style={{ [mentionPos.anchor]: mentionPos.value, left: mentionPos.left, width: DROPDOWN_WIDTH, maxHeight: DROPDOWN_HEIGHT }}>
           {mentionMatches.map((p, i) => (
-            <div
+            <MentionItem
               key={p.userId}
+              active={i === mentionActive}
               onMouseDown={e => { e.preventDefault(); insertMention(p); }}
               onMouseEnter={() => setMentionActive(i)}
-              style={{
-                padding: '8px 14px',
-                fontSize: 13.5,
-                color: '#1f2430',
-                cursor: 'pointer',
-                background: i === mentionActive ? '#fdecea' : '#ffffff',
-                borderBottom: '1px solid #f1f2f4',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
             >
               {mentionName(p)}
-            </div>
+            </MentionItem>
           ))}
-        </div>
+        </MentionDropdown>
       )}
 
-      {/* Pending attachments */}
       {attachments.length > 0 && (
-        <div className="composer-attachments">
+        <ComposerAttachments>
           {attachments.map(att => (
-            <div key={att.tempId} className="composer-attach-chip">
+            <ComposerAttachChip key={att.tempId}>
               {att.uploading
-                ? <span style={{ color: 'var(--gold)', fontSize: 11 }}>{att.progress}%</span>
-                : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                ? <span style={{ color: theme.colors.copper, fontSize: 11 }}>{att.progress}%</span>
+                : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={theme.colors.success} strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
               }
               <span>{att.name}</span>
-              <button className="composer-attach-remove" onClick={() => removeAttachment(att.tempId)}>×</button>
-            </div>
+              <ComposerAttachRemove onClick={() => removeAttachment(att.tempId)}>×</ComposerAttachRemove>
+            </ComposerAttachChip>
           ))}
-        </div>
+        </ComposerAttachments>
       )}
 
       {error && (
-        <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 6 }}>{error}</div>
+        <div style={{ color: theme.colors.danger, fontSize: 12, marginTop: 6 }}>{error}</div>
       )}
 
-      <div className="composer-footer">
-        <span style={{ fontSize: 11, color: 'var(--muted)' }}>
-          Ctrl+Enter to send &nbsp;·&nbsp; Max 100 MB per file
-        </span>
-        <button className="btn-send" onClick={handleSend} disabled={disabled || sending}>
+      <ComposerFooter>
+        <FooterHint>Ctrl+Enter to send &nbsp;·&nbsp; Max 100 MB per file</FooterHint>
+        <BtnSend onClick={handleSend} disabled={disabled || sending}>
           {sending
-            ? <><div className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> Sending…</>
+            ? <><Spinner style={{ width: 14, height: 14, borderWidth: 2 }} /> Sending…</>
             : <>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
@@ -341,8 +351,8 @@ export default function Composer({ allowReply = true, replyingTo, onCancelReply,
                 Send
               </>
           }
-        </button>
-      </div>
-    </div>
+        </BtnSend>
+      </ComposerFooter>
+    </ComposerWrap>
   );
 }

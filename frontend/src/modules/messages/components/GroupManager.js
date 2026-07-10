@@ -2,19 +2,32 @@ import { useState, useEffect, useMemo } from 'react';
 import { groupApi } from '../api/groupApi';
 import { messageApi } from '../api/messageApi';
 import RecipientPicker from './RecipientPicker';
+import { Sidebar, SidebarHeader } from '../styles/MessagingPage.styles';
+import { ComposeBtn, SearchWrap, SearchInput, StickyTop } from '../styles/InboxSidebar.styles';
+import { LoaderWrap, Spinner, IconBtn, BtnGhost, BtnPrimary, FieldLabel, FieldInput } from '../styles/shared.styles';
+import {
+  ConvListWrap, ListEmptyMsg, GroupCard, GroupIcon, GroupInfo, GroupName,
+  GroupCount, RowRight, RowTime, UnreadDot,
+} from '../styles/ConversationList.styles';
+import {
+  GroupsPanel, BackRow, BackBtn, DisabledChip, RowDisabledChip, ControlCard,
+  AddCard, InfoCard, HintText, ErrorText, SectionLabel, MemberScroll,
+  MemberRow, MemberAvatar, MemberInfo, MemberName, MemberEmail, AdminTag,
+  MemberActions,
+} from '../styles/GroupManager.styles';
 
 // Mirrors InboxSidebar's fmtTime — same relative-time labels so all tabs feel identical
 function fmtTime(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
   const now = new Date();
-  
+
   // Normalize both dates to midnight to compare calendar days, not elapsed time
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const targetDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  
+
   const diffDays = Math.floor((today - targetDate) / 86400000);
-  
+
   if (diffDays === 0) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   if (diffDays === 1) return 'Yesterday';
   if (diffDays < 7)   return d.toLocaleDateString([], { weekday: 'short' });
@@ -62,6 +75,10 @@ export default function GroupManager({
   onDeleteThread,
   onHideThread,
   onOpenConversation,
+  autoManageGroupId,
+  onAutoManageGroupHandled,
+  autoManageThreadId,
+  onAutoManageThreadHandled,
 }) {
   const [creating,       setCreating]       = useState(false);
   const [groupSearch,    setGroupSearch]    = useState('');
@@ -161,6 +178,29 @@ export default function GroupManager({
     } finally { setThreadLoading(false); }
   };
 
+  // ── Auto-open management for a specific group/thread (PM ChatButton, admin
+  // only — see ChatButton.js/MessagingContext.js requestManageGroup/Thread).
+  // groups/threads may not have finished loading yet when the request first
+  // arrives, so this re-runs whenever either list updates until it finds a
+  // match, rather than only firing once on mount.
+  useEffect(() => {
+    if (!autoManageGroupId || !groups.length) return;
+    const match = groups.find(g => String(g.groupId) === String(autoManageGroupId));
+    if (!match) return;
+    openManage(match);
+    onAutoManageGroupHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoManageGroupId, groups]);
+
+  useEffect(() => {
+    if (!autoManageThreadId || !threads?.length) return;
+    const match = threads.find(t => String(t.conversationId) === String(autoManageThreadId));
+    if (!match) return;
+    openManageThread(match);
+    onAutoManageThreadHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoManageThreadId, threads]);
+
   const handleRemoveThreadParticipant = async (conversationId, userId) => {
     try {
       await messageApi.removeParticipant(conversationId, userId);
@@ -175,8 +215,8 @@ export default function GroupManager({
     if (!threadSelectedUsers.length) { setThreadAddError('Select at least one user.'); return; }
     const userIds = threadSelectedUsers.filter(u => u.type === 'user').map(u => u.id);
     if (!userIds.length) { setThreadAddError('Only users can be added (not groups).'); return; }
-    
-    setThreadAddSaving(true); 
+
+    setThreadAddSaving(true);
     setThreadAddError('');
     try {
       await messageApi.addParticipants(managingThread.conversationId, userIds);
@@ -192,8 +232,8 @@ export default function GroupManager({
     if (!selectedUsers.length) { setAddError('Select at least one user.'); return; }
     const userIds = selectedUsers.filter(u => u.type === 'user').map(u => u.id);
     if (!userIds.length) { setAddError('Only users can be added (not groups).'); return; }
-    
-    setAddSaving(true); 
+
+    setAddSaving(true);
     setAddError('');
     try {
       const updated = await groupApi.addMembers(managingGroup.groupId, userIds);
@@ -323,119 +363,89 @@ export default function GroupManager({
     const isThreadDisabled = Boolean(managingThread.isDisabled);
     const threadActing = actingThreadId === managingThread.conversationId;
     return (
-      <div className="groups-panel">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
-          <button
-            type="button"
-            className="icon-btn msg-back-btn"
-            onClick={() => setManagingThread(null)}
-            aria-label="Back to threads"
-          >
+      <GroupsPanel>
+        <BackRow>
+          <BackBtn type="button" onClick={() => setManagingThread(null)} aria-label="Back to threads">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="2">
               <polyline points="15 18 9 12 15 6"/>
             </svg>
             <span>Back</span>
-          </button>
+          </BackBtn>
           <h3 style={{ margin: 0 }}>{managingThread.subject || 'Thread'}</h3>
-          {isThreadDisabled && (
-            <span style={{
-              fontSize: 10, color: 'var(--muted)', border: '1px solid var(--divider)',
-              borderRadius: 8, padding: '2px 8px', textTransform: 'uppercase', letterSpacing: '.05em',
-            }}>Disabled</span>
-          )}
-        </div>
+          {isThreadDisabled && <DisabledChip>Disabled</DisabledChip>}
+        </BackRow>
 
         {/* Disable / Enable / Delete controls — creator or super admin only */}
-        <div style={{
-          background: 'var(--charcoal)', border: '1px solid var(--divider)',
-          borderRadius: 'var(--radius-lg)', padding: 14, marginBottom: 20,
-          display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center',
-        }}>
+        <ControlCard>
           {!isThreadDisabled ? (
-            <button
-              className="btn btn-ghost danger"
-              onClick={() => handleDisableThread(managingThread)}
-              disabled={threadActing}
-            >
+            <BtnGhost danger onClick={() => handleDisableThread(managingThread)} disabled={threadActing}>
               Disable Thread
-            </button>
+            </BtnGhost>
           ) : (
             <>
-              <button
-                className="btn btn-ghost"
-                onClick={() => handleEnableThread(managingThread)}
-                disabled={threadActing}
-              >
+              <BtnGhost onClick={() => handleEnableThread(managingThread)} disabled={threadActing}>
                 Re-enable Thread
-              </button>
-              <button
-                className="btn btn-ghost danger"
-                onClick={() => handleDeleteThread(managingThread)}
-                disabled={threadActing}
-              >
+              </BtnGhost>
+              <BtnGhost danger onClick={() => handleDeleteThread(managingThread)} disabled={threadActing}>
                 Delete Thread
-              </button>
+              </BtnGhost>
             </>
           )}
-          <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+          <HintText>
             {isThreadDisabled
               ? 'Thread is frozen — no one can send messages. History stays visible.'
               : 'Disabling freezes the thread for everyone; delete only unlocks after that.'}
-          </span>
-        </div>
+          </HintText>
+        </ControlCard>
 
         {threadActionError[managingThread.conversationId] && (
-          <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 16 }}>
-            {threadActionError[managingThread.conversationId]}
-          </div>
+          <ErrorText>{threadActionError[managingThread.conversationId]}</ErrorText>
         )}
 
         {/* Add members to thread (creator or super-admin only) */}
         {!isThreadDisabled && (
-          <div style={{ marginBottom: 12, background: 'var(--charcoal)', border: '1px solid var(--divider)', borderRadius: 'var(--radius-lg)', padding: 12 }}>
-            <label className="field-label" style={{ marginBottom: 8 }}>Add Participants</label>
+          <AddCard>
+            <FieldLabel style={{ marginBottom: 8 }}>Add Participants</FieldLabel>
             <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
               <div style={{ flex: 1 }}>
                 <RecipientPicker value={threadSelectedUsers} onChange={setThreadSelectedUsers} groups={[]} />
               </div>
-              <button className="btn btn-primary" style={{ padding: '9px 16px', fontSize: 12 }} onClick={handleAddThreadMembers} disabled={threadAddSaving || !threadSelectedUsers.length}>
+              <BtnPrimary style={{ padding: '9px 16px', fontSize: 12 }} onClick={handleAddThreadMembers} disabled={threadAddSaving || !threadSelectedUsers.length}>
                 {threadAddSaving ? 'Adding…' : '+ Add'}
-              </button>
+              </BtnPrimary>
             </div>
-            {threadAddError && <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 6 }}>{threadAddError}</div>}
-          </div>
+            {threadAddError && <ErrorText style={{ marginTop: 6, marginBottom: 0 }}>{threadAddError}</ErrorText>}
+          </AddCard>
         )}
 
-        <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-          Participants ({threadMembers.length})
-        </div>
+        <SectionLabel>Participants ({threadMembers.length})</SectionLabel>
 
-        {threadLoading && <div className="loader-wrap"><div className="spinner" /></div>}
+        {threadLoading && <LoaderWrap><Spinner /></LoaderWrap>}
 
         {!threadLoading && threadMembers.map(p => (
-          <div key={p.userId} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', background: 'var(--charcoal)', border: '1px solid var(--divider)', borderRadius: 'var(--radius)', marginBottom: 8 }}>
-            <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--mid)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 600, color: 'var(--gold)' }}>
+          <MemberRow key={p.userId}>
+            <MemberAvatar>
               {`${p.firstName?.[0] || ''}${p.lastName?.[0] || ''}`.toUpperCase() || '?'}
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, color: 'var(--light)' }}>{p.firstName} {p.lastName}</div>
-              <div style={{ fontSize: 11, color: 'var(--muted)' }}>{p.email || ''}</div>
-            </div>
+            </MemberAvatar>
+            <MemberInfo>
+              <MemberName>{p.firstName} {p.lastName}</MemberName>
+              <MemberEmail>{p.email || ''}</MemberEmail>
+            </MemberInfo>
             {!isThreadDisabled && (
               <div>
-                <button className="icon-btn danger" title="Remove participant" onClick={() => handleRemoveThreadParticipant(managingThread.conversationId, p.userId)}>
+                <IconBtn danger title="Remove participant" onClick={() => handleRemoveThreadParticipant(managingThread.conversationId, p.userId)}>
                   ×
-                </button>
+                </IconBtn>
               </div>
             )}
-          </div>
+          </MemberRow>
         ))}
 
         {!threadLoading && threadMembers.length === 0 && (
-          <p style={{ color: 'var(--muted)', fontSize: 13 }}>No participants found.</p>
+          <p style={{ color: 'inherit', fontSize: 13 }}>No participants found.</p>
         )}
-      </div>
+      </GroupsPanel>
     );
   }
 
@@ -444,77 +454,48 @@ export default function GroupManager({
     const isDisabled = Boolean(managingGroup.isDisabled);
 
     return (
-      <div className="groups-panel">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
-          <button
-            type="button"
-            className="icon-btn msg-back-btn"
-            onClick={() => setManagingGroup(null)}
-            aria-label="Back to groups"
-          >
+      <GroupsPanel>
+        <BackRow>
+          <BackBtn type="button" onClick={() => setManagingGroup(null)} aria-label="Back to groups">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="2">
               <polyline points="15 18 9 12 15 6"/>
             </svg>
             <span>Back</span>
-          </button>
+          </BackBtn>
           <h3 style={{ margin: 0 }}>{managingGroup.groupName}</h3>
-          {isDisabled && (
-            <span style={{
-              fontSize: 10, color: 'var(--muted)', border: '1px solid var(--divider)',
-              borderRadius: 8, padding: '2px 8px', textTransform: 'uppercase', letterSpacing: '.05em',
-            }}>Disabled</span>
-          )}
-        </div>
+          {isDisabled && <DisabledChip>Disabled</DisabledChip>}
+        </BackRow>
 
         {canManage ? (
           <>
             {/* Disable / Enable / Delete controls */}
-            <div style={{
-              background: 'var(--charcoal)', border: '1px solid var(--divider)',
-              borderRadius: 'var(--radius-lg)', padding: 14, marginBottom: 20,
-              display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center',
-            }}>
+            <ControlCard>
               {!isDisabled ? (
-                <button
-                  className="btn btn-ghost danger"
-                  onClick={() => handleDisable(managingGroup)}
-                  disabled={actingGroupId === managingGroup.groupId}
-                >
+                <BtnGhost danger onClick={() => handleDisable(managingGroup)} disabled={actingGroupId === managingGroup.groupId}>
                   Disable Group
-                </button>
+                </BtnGhost>
               ) : (
                 <>
-                  <button
-                    className="btn btn-ghost"
-                    onClick={() => handleEnable(managingGroup)}
-                    disabled={actingGroupId === managingGroup.groupId}
-                  >
+                  <BtnGhost onClick={() => handleEnable(managingGroup)} disabled={actingGroupId === managingGroup.groupId}>
                     Re-enable Group
-                  </button>
-                  <button
-                    className="btn btn-ghost danger"
-                    onClick={() => handleDelete(managingGroup)}
-                    disabled={actingGroupId === managingGroup.groupId}
-                  >
+                  </BtnGhost>
+                  <BtnGhost danger onClick={() => handleDelete(managingGroup)} disabled={actingGroupId === managingGroup.groupId}>
                     Delete Group
-                  </button>
+                  </BtnGhost>
                 </>
               )}
-              <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+              <HintText>
                 {isDisabled
                   ? 'Chat is frozen — no one can send messages. History stays visible.'
                   : 'Disabling freezes the chat for everyone; delete only unlocks after that.'}
-              </span>
-            </div>
+              </HintText>
+            </ControlCard>
 
             {/* Add members */}
             {!isDisabled && (
-              <div style={{
-                background: 'var(--charcoal)', border: '1px solid var(--divider)',
-                borderRadius: 'var(--radius-lg)', padding: 14, marginBottom: 20,
-              }}>
-                <label className="field-label" style={{ marginBottom: 8 }}>Add Members</label>
+              <AddCard>
+                <FieldLabel style={{ marginBottom: 8 }}>Add Members</FieldLabel>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
                   <div style={{ flex: 1 }}>
                     <RecipientPicker
@@ -523,165 +504,132 @@ export default function GroupManager({
                       groups={[]}
                     />
                   </div>
-                  <button
-                    className="btn btn-primary"
+                  <BtnPrimary
                     style={{ padding: '9px 16px', fontSize: 12, whiteSpace: 'nowrap', marginTop: 1 }}
                     onClick={handleAddMembers}
                     disabled={addSaving || !selectedUsers.length}
                   >
                     {addSaving ? 'Adding…' : '+ Add'}
-                  </button>
+                  </BtnPrimary>
                 </div>
-                {addError && (
-                  <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 6 }}>
-                    {addError}
-                  </div>
-                )}
-              </div>
+                {addError && <ErrorText style={{ marginTop: 6, marginBottom: 0 }}>{addError}</ErrorText>}
+              </AddCard>
             )}
           </>
         ) : (
-          <div style={{
-            background: 'var(--charcoal)', border: '1px solid var(--divider)',
-            borderRadius: 'var(--radius-lg)', padding: 14, marginBottom: 20,
-            color: 'var(--muted)', fontSize: 13,
-          }}>
+          <InfoCard>
             Only the group admin can add, remove, disable, or delete this group.
             {isDisabled && (
               <div style={{ marginTop: 12 }}>
-                <button
-                  className="btn btn-ghost danger"
-                  onClick={() => handleHide(managingGroup)}
-                  disabled={actingGroupId === managingGroup.groupId}
-                >
+                <BtnGhost danger onClick={() => handleHide(managingGroup)} disabled={actingGroupId === managingGroup.groupId}>
                   Remove from my tabs
-                </button>
+                </BtnGhost>
               </div>
             )}
-          </div>
+          </InfoCard>
         )}
 
-        {actionError[managingGroup.groupId] && (
-          <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 16 }}>
-            {actionError[managingGroup.groupId]}
-          </div>
-        )}
+        {actionError[managingGroup.groupId] && <ErrorText>{actionError[managingGroup.groupId]}</ErrorText>}
 
         {/* Members list — view only for non-admins */}
-        <div style={{
-          marginBottom: 12, fontSize: 12, color: 'var(--muted)',
-          textTransform: 'uppercase', letterSpacing: '0.08em',
-        }}>
-          Members ({members.length})
-        </div>
+        <SectionLabel>Members ({members.length})</SectionLabel>
 
-        {membersLoading && <div className="loader-wrap"><div className="spinner" /></div>}
+        {membersLoading && <LoaderWrap><Spinner /></LoaderWrap>}
 
-        <div style={{ maxHeight: 400, overflowY: 'auto', paddingRight: 4 }}>
+        <MemberScroll>
           {!membersLoading && members.map(m => (
-            <div key={m.userId} style={{
-              display: 'flex', alignItems: 'center', gap: 12,
-              padding: '10px 16px',
-              background: 'var(--charcoal)',
-              border: '1px solid var(--divider)',
-              borderRadius: 'var(--radius)',
-              marginBottom: 8,
-            }}>
-              <div style={{
-                width: 32, height: 32, borderRadius: '50%',
-                background: 'var(--mid)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 13, fontWeight: 600, color: 'var(--gold)',
-                fontFamily: 'var(--font-display)',
-              }}>
+            <MemberRow key={m.userId}>
+              <MemberAvatar>
                 {`${m.firstName?.[0] || ''}${m.lastName?.[0] || ''}`.toUpperCase() || '?'}
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, color: 'var(--light)' }}>
+              </MemberAvatar>
+              <MemberInfo>
+                <MemberName>
                   {m.firstName} {m.lastName}
-                  {m.isAdmin && (
-                    <span style={{ marginLeft: 8, color: 'var(--gold)', fontSize: 11 }}>
-                      Admin
-                    </span>
+                  {m.isAdmin && <AdminTag>Admin</AdminTag>}
+                </MemberName>
+                <MemberEmail>{m.email || ''}</MemberEmail>
+              </MemberInfo>
+              {/* Admin toggle — never shown for the creator (they're always
+                  de-facto admin, toggling doesn't apply to them). Remove
+                  button — normally also hidden for the creator (a co-admin
+                  removing the group's own creator would leave it without
+                  its real owner), but the org-wide super admin has
+                  authority over every group regardless of membership and
+                  can remove the creator too (backend allows this
+                  specifically for a real super admin actor — see
+                  groupService.removeMember). */}
+              {canManage && !isDisabled && (
+                <MemberActions>
+                  {!m.isCreator && (
+                    <BtnGhost
+                      title={m.isAdmin ? `Remove ${m.firstName || ''} as admin` : `Make ${m.firstName || ''} an admin`}
+                      onClick={() => handleToggleMemberAdmin(m.userId, !m.isAdmin)}
+                      disabled={adminToggling === m.userId}
+                      style={{ fontSize: 12, padding: '6px 8px' }}
+                    >
+                      {adminToggling === m.userId ? '…' : (m.isAdmin ? 'Remove Admin' : 'Make Admin')}
+                    </BtnGhost>
                   )}
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--muted)' }}>{m.email || ''}</div>
-              </div>
-              {/* Admin toggle + Remove button — admin/super-admin only, never on the creator, never while disabled */}
-              {canManage && !isDisabled && !m.isCreator && (
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <button
-                    className="btn btn-ghost"
-                    title={m.isAdmin ? `Remove ${m.firstName || ''} as admin` : `Make ${m.firstName || ''} an admin`}
-                    onClick={() => handleToggleMemberAdmin(m.userId, !m.isAdmin)}
-                    disabled={adminToggling === m.userId}
-                    style={{ fontSize: 12, padding: '6px 8px' }}
-                  >
-                    {adminToggling === m.userId ? '…' : (m.isAdmin ? 'Remove Admin' : 'Make Admin')}
-                  </button>
 
-                  <button
-                    className="icon-btn danger"
-                    title="Remove from group"
-                    onClick={() => handleRemoveMember(m.userId)}
-                    disabled={addSaving}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-                      stroke="currentColor" strokeWidth="2.5">
-                      <line x1="18" y1="6" x2="6" y2="18"/>
-                      <line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
-                  </button>
-                </div>
+                  {(!m.isCreator || managingGroup.isSuperAdmin) && (
+                    <IconBtn danger
+                      title={m.isCreator ? `Remove ${m.firstName || ''} (group creator)` : 'Remove from group'}
+                      onClick={() => handleRemoveMember(m.userId)} disabled={addSaving}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" strokeWidth="2.5">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                    </IconBtn>
+                  )}
+                </MemberActions>
               )}
-            </div>
+            </MemberRow>
           ))}
-        </div>
-        
+        </MemberScroll>
+
         {!membersLoading && members.length === 0 && (
-          <p style={{ color: 'var(--muted)', fontSize: 13 }}>
-            No members yet. Add some above.
-          </p>
+          <p style={{ color: 'inherit', fontSize: 13 }}>No members yet. Add some above.</p>
         )}
-      </div>
+      </GroupsPanel>
     );
   }
 
-  // ── Shared chip style for "Disabled" indicator on rows ───────────────────
-  const DISABLED_CHIP = {
-    fontSize: 9, color: 'var(--text-muted)', border: '1px solid var(--border)',
-    borderRadius: 6, padding: '1px 5px', textTransform: 'uppercase',
-    letterSpacing: '.04em', flexShrink: 0, marginLeft: 4,
-  };
-
   // ── Groups list ────────────────────────────────────────────────────────────
   return (
-    <aside className="msg-sidebar">
+    <Sidebar as="aside" data-msg-sidebar>
 
       {/* ── THREADS TAB (super admin) ─────────────────────────────────────── */}
       {threads && currentTab === 'threads' ? (
         <>
           {/* Same brand header as Groups and Inbox tabs */}
-          <div className="msg-sidebar-header">
+          <SidebarHeader>
             <h2>I.EVO</h2>
             <p>Threads · Design | Demonstrate | Deliver</p>
-          </div>
+          </SidebarHeader>
 
-          <div className="msg-search-wrap" style={isSuperAdmin ? { margin: '16px 12px 8px 12px' } : undefined}>
-            <input
-              placeholder="Search threads by subject…"
-              value={threadSearch}
-              onChange={e => setThreadSearch(e.target.value)}
-            />
-          </div>
+          {/* Search now lives inside the same scrolling container as the
+              rows (wrapped in StickyTop) rather than as a non-scrolling
+              sibling of ConvListWrap — see StickyTop's comment in
+              InboxSidebar.styles.js: as a sibling it didn't share the
+              list's scrollbar-narrowed width, so it rendered a few pixels
+              wider than the rows below it. */}
+          <ConvListWrap>
+            <StickyTop>
+              <SearchWrap style={isSuperAdmin ? { margin: '16px 12px 8px 12px' } : undefined}>
+                <SearchInput
+                  placeholder="Search threads by subject…"
+                  value={threadSearch}
+                  onChange={e => setThreadSearch(e.target.value)}
+                />
+              </SearchWrap>
+            </StickyTop>
 
-          <div className="msg-conv-list" style={{ padding: '8px 12px' }}>
-            {threadsLoading && <div className="loader-wrap"><div className="spinner" /></div>}
+            <div style={{ padding: '8px 12px' }}>
+            {threadsLoading && <LoaderWrap><Spinner /></LoaderWrap>}
 
             {!threadsLoading && threads.filter(t => t.convType === 'cc').length === 0 && (
-              <div style={{ padding: '24px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-                No shared threads yet.
-              </div>
+              <ListEmptyMsg>No shared threads yet.</ListEmptyMsg>
             )}
 
             {(threads || [])
@@ -696,88 +644,62 @@ export default function GroupManager({
                 return (
                   /* Clean row — identical structure and padding to Inbox rows.
                      No inline action buttons. Click the row to open the manage panel. */
-                  <div
+                  <GroupCard
                     key={t.conversationId}
-                    className="group-card"
-                    style={{ margin: '0 0 8px', cursor: 'pointer' }}
+                    clickable
+                    style={{ margin: '0 0 8px' }}
                     onClick={() => openManageThread(t)}
                   >
-                    <div className="group-icon">
+                    <GroupIcon>
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
                         stroke="currentColor" strokeWidth="2">
                         <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
                       </svg>
-                    </div>
+                    </GroupIcon>
 
-                    <div className="group-info" style={{ minWidth: 0 }}>
-                      <div className="group-name" style={{ display: 'flex', alignItems: 'center' }}>
+                    <GroupInfo>
+                      <GroupName style={{ display: 'flex', alignItems: 'center' }}>
                         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
                           {t.subject || '(no subject)'}
                         </span>
-                      </div>
-                      <div className="group-count">
+                      </GroupName>
+                      <GroupCount>
                         {t.participantCount ?? 0} participant{(t.participantCount ?? 0) !== 1 ? 's' : ''}
-                      </div>
+                      </GroupCount>
                       {threadActionError[t.conversationId] && (
-                        <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 2 }}>
+                        <ErrorText style={{ fontSize: 11, marginTop: 2, marginBottom: 0 }}>
                           {threadActionError[t.conversationId]}
-                        </div>
+                        </ErrorText>
                       )}
-                    </div>
+                    </GroupInfo>
 
                     {/* Right column: status chip (fixed-width, right-aligned) + time —
                         stacked the same way for every row regardless of date text length,
                         instead of an inline chip whose position shifted with the title. */}
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0, marginLeft: 8, minWidth: 56 }}>
-                      {isDisabled && <span style={DISABLED_CHIP}>Disabled</span>}
-                      {timeLabel && (
-                        <span style={{ fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                          {timeLabel}
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                    <RowRight style={{ minWidth: 56 }}>
+                      {isDisabled && <RowDisabledChip>Disabled</RowDisabledChip>}
+                      {timeLabel && <RowTime>{timeLabel}</RowTime>}
+                    </RowRight>
+                  </GroupCard>
                 );
               })
             }
-          </div>
+            </div>
+          </ConvListWrap>
         </>
 
       ) : (
       /* ── GROUPS TAB ─────────────────────────────────────────────────────── */
       <>
-        <div className="msg-sidebar-header">
+        <SidebarHeader>
           <h2>I.EVO</h2>
           <p>Groups · Design | Demonstrate | Deliver</p>
-        </div>
-
-        {!isSuperAdmin && (
-          <button className="msg-compose-btn" onClick={() => setCreating(true)}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-            </svg>
-            New Group
-          </button>
-        )}
-
-        <div className="msg-search-wrap" style={isSuperAdmin ? { margin: '16px 12px 8px 12px' } : undefined}>
-          <input
-            type="text"
-            placeholder="Search groups by name…"
-            value={groupSearch}
-            onChange={e => setGroupSearch(e.target.value)}
-          />
-        </div>
+        </SidebarHeader>
 
         {!isSuperAdmin && creating && (
-          <div style={{
-            margin: '0 12px 8px',
-            background: 'var(--bg-panel)', border: '1px solid var(--border)',
-            borderRadius: 'var(--radius-lg)', padding: 14,
-          }}>
-            <label className="field-label">Group Name</label>
-            <input
-              className="field-input"
+          <AddCard style={{ margin: '0 12px 8px' }}>
+            <FieldLabel>Group Name</FieldLabel>
+            <FieldInput
               style={{ marginBottom: 10 }}
               placeholder="e.g. Operations Team"
               value={newName}
@@ -785,39 +707,59 @@ export default function GroupManager({
               onKeyDown={e => e.key === 'Enter' && handleCreate()}
               autoFocus
             />
-            <label className="field-label">
+            <FieldLabel>
               Description{' '}
-              <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span>
-            </label>
-            <input
-              className="field-input"
+              <span style={{ fontWeight: 400 }}>(optional)</span>
+            </FieldLabel>
+            <FieldInput
               style={{ marginBottom: 10 }}
               placeholder="What is this group for?"
               value={newDescription}
               onChange={e => setNewDescription(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleCreate()}
             />
-            {createError && (
-              <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 8 }}>{createError}</div>
-            )}
+            {createError && <ErrorText style={{ marginBottom: 8 }}>{createError}</ErrorText>}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button className="btn btn-ghost" onClick={() => { setCreating(false); setNewName(''); setNewDescription(''); setCreateError(''); }}>
+              <BtnGhost onClick={() => { setCreating(false); setNewName(''); setNewDescription(''); setCreateError(''); }}>
                 Cancel
-              </button>
-              <button className="btn btn-primary" onClick={handleCreate} disabled={saving}>
+              </BtnGhost>
+              <BtnPrimary onClick={handleCreate} disabled={saving}>
                 {saving ? 'Creating…' : 'Create'}
-              </button>
+              </BtnPrimary>
             </div>
-          </div>
+          </AddCard>
         )}
 
-        <div className="msg-conv-list" style={{ padding: '8px 12px' }}>
-          {loading && <div className="loader-wrap"><div className="spinner" /></div>}
+        {/* Compose/search now live inside the same scrolling container as
+            the rows (wrapped in StickyTop) rather than as non-scrolling
+            siblings of ConvListWrap — see StickyTop's comment in
+            InboxSidebar.styles.js. */}
+        <ConvListWrap>
+          <StickyTop>
+            {!isSuperAdmin && (
+              <ComposeBtn onClick={() => setCreating(true)}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                New Group
+              </ComposeBtn>
+            )}
+
+            <SearchWrap style={isSuperAdmin ? { margin: '16px 12px 8px 12px' } : undefined}>
+              <SearchInput
+                type="text"
+                placeholder="Search groups by name…"
+                value={groupSearch}
+                onChange={e => setGroupSearch(e.target.value)}
+              />
+            </SearchWrap>
+          </StickyTop>
+
+          <div style={{ padding: '8px 12px' }}>
+          {loading && <LoaderWrap><Spinner /></LoaderWrap>}
 
           {!loading && groups.length === 0 && (
-            <div style={{ padding: '24px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-              No groups yet.{!isSuperAdmin && ' Create one above.'}
-            </div>
+            <ListEmptyMsg>No groups yet.{!isSuperAdmin && ' Create one above.'}</ListEmptyMsg>
           )}
 
           {[...groups]
@@ -852,84 +794,72 @@ export default function GroupManager({
                 : () => handleOpenThread(g);
 
               return (
-                <div
+                <GroupCard
                   key={g.groupId}
-                  className={`group-card${conv?._flash ? ' conv-flash' : ''}`}
-                  style={{
-                    margin: '0 0 8px',
-                    cursor: g.isSuperAdmin || g.isMember ? 'pointer' : 'default',
-                    borderColor: hasUnread ? 'var(--accent)' : undefined,
-                  }}
+                  flash={!!conv?._flash}
+                  unread={hasUnread}
+                  clickable={g.isSuperAdmin || g.isMember}
+                  style={{ margin: '0 0 8px' }}
                   onClick={handleRowClick}
                 >
-                  <div className="group-icon">
+                  <GroupIcon>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
                       stroke="currentColor" strokeWidth="2">
                       <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
                       <circle cx="9" cy="7" r="4"/>
                       <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
                     </svg>
-                  </div>
+                  </GroupIcon>
 
-                  <div className="group-info" style={{ minWidth: 0 }}>
-                    <div className="group-name" style={{
-                      fontWeight: hasUnread ? 700 : 600,
-                      display: 'flex', alignItems: 'center',
-                    }}>
+                  <GroupInfo>
+                    <GroupName bold={hasUnread} style={{ display: 'flex', alignItems: 'center' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
                         {g.groupName}
                       </span>
-                    </div>
+                    </GroupName>
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, overflow: 'hidden', marginTop: 1 }}>
-                      <span className="group-count" style={{ flexShrink: 0, whiteSpace: 'nowrap', fontWeight: hasUnread ? 600 : 400 }}>
+                      <GroupCount style={{ flexShrink: 0, whiteSpace: 'nowrap', fontWeight: hasUnread ? 600 : 400 }}>
                         {memberLabel}
-                      </span>
+                      </GroupCount>
                       {g.description && (
                         <>
-                          <span className="group-count" style={{ flexShrink: 0 }}>·</span>
-                          <span className="group-count" style={{
+                          <GroupCount style={{ flexShrink: 0 }}>·</GroupCount>
+                          <GroupCount style={{
                             flex: 1, minWidth: 0,
                             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                             fontStyle: 'italic',
                           }}>
                             {g.description}
-                          </span>
+                          </GroupCount>
                         </>
                       )}
                     </div>
 
                     {actionError[g.groupId] && (
-                      <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 2 }}>
+                      <ErrorText style={{ fontSize: 11, marginTop: 2, marginBottom: 0 }}>
                         {actionError[g.groupId]}
-                      </div>
+                      </ErrorText>
                     )}
-                  </div>
+                  </GroupInfo>
 
                   {/* Right column: status chip + time + unread dot — fixed
                       minWidth so every row's right-side content lines up
                       the same way regardless of "Off" presence or how wide
                       the date text is (e.g. "Yesterday" vs "Mon"). */}
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0, marginLeft: 8, minWidth: 56 }}>
-                    {isDisabled && <span style={DISABLED_CHIP}>Disabled</span>}
-                    {timeLabel && (
-                      <span style={{
-                        fontSize: 11.5, whiteSpace: 'nowrap',
-                        color: hasUnread ? 'var(--accent)' : 'var(--text-muted)',
-                        fontWeight: hasUnread ? 600 : 400,
-                      }}>
-                        {timeLabel}
-                      </span>
-                    )}
-                    {hasUnread && <span className="conv-unread-dot" />}
-                  </div>
-                </div>
+                  <RowRight style={{ minWidth: 56 }}>
+                    {isDisabled && <RowDisabledChip>Disabled</RowDisabledChip>}
+                    {timeLabel && <RowTime unread={hasUnread}>{timeLabel}</RowTime>}
+                    {hasUnread && <UnreadDot />}
+                  </RowRight>
+                </GroupCard>
               );
             })
           }
-        </div>
+          </div>
+        </ConvListWrap>
       </>
       )}
-    </aside>
+    </Sidebar>
   );
 }

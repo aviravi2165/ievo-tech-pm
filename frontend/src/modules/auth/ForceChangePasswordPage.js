@@ -1,5 +1,11 @@
 import { useState } from 'react';
 import { useAuth } from './AuthContext';
+import {
+  Root, Brand, BrandInner, Logo, LogoSub, Tagline, BrandFooter,
+  FormPanel, FormCard, Heading, Subheading, Field, Label, Input,
+  ErrorBox, SuccessBox, SubmitBtn, Hint,
+} from './styles/AuthLayout.styles';
+import { MobileLogoWrap, MobileLogo, MobileLogoSub } from './styles/ForceChangePasswordPage.styles';
 
 /**
  * Shown instead of the main app when user.mustChangePassword === true
@@ -55,39 +61,38 @@ export default function ForceChangePasswordPage() {
   }
 
   return (
-    <div style={styles.root}>
-      <div style={styles.brand}>
-        <div style={styles.brandInner}>
-          <div style={styles.logo}>I.EVO</div>
-          <div style={styles.logoSub}>Unified Platform</div>
-          <p style={styles.tagline}>Design | Demonstrate | Deliver</p>
-        </div>
-        <p style={styles.brandFooter}>Iraj Evolution Design Co. Pvt. Ltd.</p>
-      </div>
+    <Root>
+      <Brand>
+        <BrandInner>
+          <Logo>I.EVO</Logo>
+          <LogoSub>Unified Platform</LogoSub>
+          <Tagline>Design | Demonstrate | Deliver</Tagline>
+        </BrandInner>
+        <BrandFooter>Iraj Evolution Design Co. Pvt. Ltd.</BrandFooter>
+      </Brand>
 
-      <div style={styles.formPanel}>
-        <div style={styles.formCard}>
-          <div style={styles.mobileLogoWrap}>
-            <span style={styles.mobileLogo}>I.EVO</span>
-            <span style={styles.mobileLogoSub}>ERP</span>
-          </div>
+      <FormPanel>
+        <FormCard wide>
+          <MobileLogoWrap>
+            <MobileLogo>I.EVO</MobileLogo>
+            <MobileLogoSub>ERP</MobileLogoSub>
+          </MobileLogoWrap>
 
-          <h1 style={styles.heading}>Set a new password</h1>
-          <p style={styles.subheading}>
+          <Heading>Set a new password</Heading>
+          <Subheading>
             Your account requires a password change before you can continue.
-          </p>
+          </Subheading>
 
           {success ? (
-            <div style={styles.successBox} role="status">
+            <SuccessBox roomy role="status">
               Password changed successfully. Redirecting you to sign in…
-            </div>
+            </SuccessBox>
           ) : (
             <form onSubmit={handleSubmit} noValidate>
-              <div style={styles.field}>
-                <label style={styles.label} htmlFor="newPassword">New password</label>
-                <input
+              <Field>
+                <Label htmlFor="newPassword">New password</Label>
+                <Input
                   id="newPassword"
-                  style={styles.input}
                   type="password"
                   autoComplete="new-password"
                   autoFocus
@@ -95,73 +100,33 @@ export default function ForceChangePasswordPage() {
                   onChange={(e) => setNewPassword(e.target.value)}
                   disabled={loading}
                 />
-              </div>
+              </Field>
 
-              <div style={styles.field}>
-                <label style={styles.label} htmlFor="confirmPassword">Confirm new password</label>
-                <input
+              <Field>
+                <Label htmlFor="confirmPassword">Confirm new password</Label>
+                <Input
                   id="confirmPassword"
-                  style={styles.input}
                   type="password"
                   autoComplete="new-password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   disabled={loading}
                 />
-              </div>
+              </Field>
 
-              {error && (
-                <div style={styles.errorBox} role="alert">{error}</div>
-              )}
+              {error && <ErrorBox role="alert">{error}</ErrorBox>}
 
-              <button
-                type="submit"
-                style={{ ...styles.submitBtn, opacity: loading ? 0.7 : 1 }}
-                disabled={loading}
-              >
+              <SubmitBtn tight type="submit" disabled={loading}>
                 {loading ? 'Updating…' : 'Change Password & Continue'}
-              </button>
+              </SubmitBtn>
             </form>
           )}
 
-          <p style={styles.hint}>
+          <Hint noTopMargin>
             You'll be asked to sign in again with your new password.
-          </p>
-        </div>
-      </div>
-    </div>
+          </Hint>
+        </FormCard>
+      </FormPanel>
+    </Root>
   );
 }
-
-const styles = {
-  root: { display: 'flex', height: '100vh', fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif" },
-  brand: {
-    width: '42%', minWidth: 320, background: '#1a1d23', borderRight: '3px solid #ed1c24',
-    display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '48px 52px', color: '#f0ede8',
-  },
-  brandInner: { display: 'flex', flexDirection: 'column', gap: 8 },
-  logo: { fontFamily: 'Georgia, serif', fontSize: 48, fontWeight: 600, letterSpacing: '0.12em', color: '#ffffff', lineHeight: 1 },
-  logoSub: { fontSize: 13, letterSpacing: '0.22em', textTransform: 'uppercase', color: '#ed1c24', fontWeight: 600, marginBottom: 24 },
-  tagline: { fontSize: 14, color: '#a8a49c', letterSpacing: '0.08em', marginBottom: 32 },
-  brandFooter: { fontSize: 11, color: '#4a4a46', letterSpacing: '0.06em', textTransform: 'uppercase' },
-  formPanel: { flex: 1, background: '#f8f5f0', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px 24px' },
-  formCard: { width: '100%', maxWidth: 420, background: '#ffffff', borderRadius: 8, border: '1px solid #e0dcd4', padding: '40px 36px', boxShadow: '0 4px 24px rgba(26,29,35,0.08)' },
-  mobileLogoWrap: { display: 'none' },
-  mobileLogo: { fontFamily: 'Georgia, serif', fontSize: 22, fontWeight: 600, color: '#1a1d23', letterSpacing: '0.08em' },
-  mobileLogoSub: { fontSize: 11, color: '#ed1c24', fontWeight: 600, letterSpacing: '0.15em', textTransform: 'uppercase', marginLeft: 8 },
-  heading: { fontSize: 24, fontWeight: 600, color: '#1a1d23', marginBottom: 6, fontFamily: 'Georgia, serif' },
-  subheading: { fontSize: 14, color: '#707070', marginBottom: 28, lineHeight: 1.5 },
-  field: { marginBottom: 18 },
-  label: { display: 'block', fontSize: 12, fontWeight: 600, color: '#434242', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 7 },
-  input: {
-    width: '100%', padding: '10px 12px', border: '1px solid #e0dcd4', borderRadius: 4, fontSize: 14,
-    color: '#1a1d23', background: '#faf9f7', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit',
-  },
-  errorBox: { background: '#fdecea', border: '1px solid #f5c6cb', borderRadius: 4, padding: '10px 14px', fontSize: 13, color: '#7b1d1d', marginBottom: 18 },
-  successBox: { background: '#eafaf1', border: '1px solid #b7e4c7', borderRadius: 4, padding: '14px 16px', fontSize: 14, color: '#1f6e43', marginBottom: 12 },
-  submitBtn: {
-    width: '100%', padding: '12px', background: '#ed1c24', color: '#ffffff', border: 'none', borderRadius: 4,
-    fontSize: 14, fontWeight: 600, letterSpacing: '0.04em', cursor: 'pointer', fontFamily: 'inherit', marginBottom: 20,
-  },
-  hint: { fontSize: 12, color: '#9e9e9e', textAlign: 'center', lineHeight: 1.7 },
-};

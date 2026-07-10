@@ -1,5 +1,6 @@
-/* index.css — minimal resets only.
-   Theme: shell/assets/shell.css + modules/messages/assets/messaging.css */
+/* index.css — minimal resets only. All theming is Emotion-based now
+   (see src/theme.js + each module's styles/ directory); base document
+   typography/background lives in App.js's Global styles. */
 
 *, *::before, *::after {
   box-sizing: border-box;

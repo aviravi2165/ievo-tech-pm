@@ -1,8 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { useTheme } from '@emotion/react';
 import api from '../api/axiosInstance';
+import { Dropdown, DropdownItem } from '../styles/shared.styles';
+import { RecipientBox, RecipientChip, RecipientChipRemove, RecipientInput } from '../styles/RecipientPicker.styles';
 
 export default function RecipientPicker({ value = [], onChange, groups = [] }) {
+  const theme = useTheme();
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [open, setOpen] = useState(false);
@@ -90,9 +94,8 @@ export default function RecipientPicker({ value = [], onChange, groups = [] }) {
   const hasDrop = open && (loading || suggestions.length > 0 || query.trim());
 
   const dropdown = hasDrop && dropRect ? createPortal(
-    <div
+    <Dropdown
       ref={dropRef}
-      className="dropdown"
       style={{
         position:  'fixed',
         top:       dropRect.top,
@@ -104,45 +107,41 @@ export default function RecipientPicker({ value = [], onChange, groups = [] }) {
       }}
     >
       {loading && (
-        <div className="dropdown-item" style={{ color: 'var(--muted)' }}>Searching…</div>
+        <DropdownItem style={{ color: theme.colors.ash }}>Searching…</DropdownItem>
       )}
       {!loading && suggestions.length === 0 && query.trim() && (
-        <div className="dropdown-item" style={{ color: 'var(--muted)' }}>No results for "{query}"</div>
+        <DropdownItem style={{ color: theme.colors.ash }}>No results for "{query}"</DropdownItem>
       )}
       {suggestions.map(s => (
-        <div
+        <DropdownItem
           key={s.id}
-          className="dropdown-item"
           onMouseDown={(e) => { e.preventDefault(); addRecipient(s); setOpen(false); }}
         >
           {s.type === 'group'
-            ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="2">
+            ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={theme.colors.espresso} strokeWidth="2">
                 <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
                 <circle cx="9" cy="7" r="4"/>
                 <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
               </svg>
-            : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--subtle)" strokeWidth="2">
+            : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={theme.colors.ashLight} strokeWidth="2">
                 <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
               </svg>
           }
           <div>
-            <div style={{ color: 'var(--light)', fontSize: 13 }}>{s.label}</div>
-            {s.sub && <div style={{ color: 'var(--muted)', fontSize: 11 }}>{s.sub}</div>}
+            <div style={{ color: theme.colors.onyx, fontSize: 13 }}>{s.label}</div>
+            {s.sub && <div style={{ color: theme.colors.ash, fontSize: 11 }}>{s.sub}</div>}
           </div>
-        </div>
+        </DropdownItem>
       ))}
-    </div>,
+    </Dropdown>,
     document.body
   ) : null;
 
   return (
     <div ref={boxRef} style={{ position: 'relative' }}>
-      <div
-        className="recipient-box"
-        onClick={() => inputRef.current?.focus()}
-      >
+      <RecipientBox onClick={() => inputRef.current?.focus()}>
         {value.map(v => (
-          <span key={v.id} className="recipient-chip">
+          <RecipientChip key={v.id}>
             {v.type === 'group' && (
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
@@ -150,21 +149,17 @@ export default function RecipientPicker({ value = [], onChange, groups = [] }) {
               </svg>
             )}
             {v.label}
-            <button
-              className="recipient-chip-remove"
-              onClick={(e) => { e.stopPropagation(); removeRecipient(v.id); }}
-            >×</button>
-          </span>
+            <RecipientChipRemove onClick={(e) => { e.stopPropagation(); removeRecipient(v.id); }}>×</RecipientChipRemove>
+          </RecipientChip>
         ))}
-        <input
+        <RecipientInput
           ref={inputRef}
-          className="recipient-input"
           placeholder={value.length === 0 ? 'Search users or groups…' : ''}
           value={query}
           onChange={e => { setQuery(e.target.value); setOpen(true); computeDropRect(); }}
           onFocus={() => { setOpen(true); computeDropRect(); }}
         />
-      </div>
+      </RecipientBox>
       {dropdown}
     </div>
   );

@@ -83,15 +83,6 @@ async function reply(req, res) {
   } catch (err) { return handleError(res, err); }
 }
 
-async function archive(req, res) {
-  try {
-    const conversationId = parseInt(req.params.conversationId, 10);
-    if (isNaN(conversationId)) return res.status(400).json({ error: 'Invalid conversation id' });
-    await messageService.archiveConversation(conversationId, req.user.userId);
-    return res.json({ success: true });
-  } catch (err) { return handleError(res, err); }
-}
-
 // FIX: added — was missing entirely
 async function removeParticipant(req, res) {
   try {
@@ -139,6 +130,30 @@ async function markRead(req, res) {
     });
     return res.json(result);
   } catch (err) { return handleError(res, err); }
+}
+
+async function editMessage(req, res) {
+  try {
+    const messageId = parseInt(req.params.messageId, 10);
+    if (Number.isNaN(messageId)) return res.status(400).json({ error: 'Invalid messageId' });
+    const { bodyHtml } = req.body;
+    if (!bodyHtml?.trim()) return res.status(400).json({ error: 'bodyHtml is required' });
+    const result = await messageService.editMessage(messageId, req.user.userId, bodyHtml);
+    // Broadcast MESSAGE_EDITED to conv room
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`conv:${result.conversationId}`).emit('MESSAGE_EDITED', {
+        messageId:      result.messageId,
+        conversationId: result.conversationId,
+        bodyHtml:       result.bodyHtml,
+        isEdited:       true,
+        editedAt:       result.editedAt,
+      });
+    }
+    return res.json(result);
+  } catch (err) {
+    return handleError(res, err);
+  }
 }
 
 async function remove(req, res) {
@@ -197,9 +212,9 @@ async function hideThread(req, res) {
 
 module.exports = {
   getInbox, getSent, getUnreadCount, getUnreadConversationIds,
-  search, send, getThread, reply, archive,
+  search, send, getThread, reply,
   removeParticipant,  // FIX: exported
   addParticipant,
-  markRead, remove,
+  markRead, remove, editMessage,
   listThreadsForAdmin, disableThread, enableThread, deleteThread, hideThread,
 };

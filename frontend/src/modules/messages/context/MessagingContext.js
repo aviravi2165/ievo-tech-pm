@@ -67,6 +67,45 @@ export function MessagingProvider({ children }) {
     _setActiveConvId(id ?? null);
   }, []);
 
+  // ── Cross-module open-conversation request ─────────────────────────────────
+  // ChatButton (in PM module) calls this to open a specific conversation in
+  // the messages rail. MessagingPage listens to it via useEffect and sets its
+  // own local activeConv state accordingly — avoiding prop-drilling or a shared
+  // global store. The value is { conversationId, subject?, convType? }.
+  const [pendingOpenConv, setPendingOpenConv] = useState(null);
+  const requestOpenConversation = useCallback((convInfo) => {
+    setPendingOpenConv(convInfo);
+  }, []);
+
+  // ── Cross-module open-group request ───────────────────────────────────────
+  // ChatButton calls this for activity (group_thread) chats. MessagingPage
+  // switches to the groups tab and opens the matching group conversation.
+  // Value is { groupId, conversationId, subject? }.
+  const [pendingOpenGroup, setPendingOpenGroup] = useState(null);
+  const requestOpenGroup = useCallback((groupInfo) => {
+    setPendingOpenGroup(groupInfo);
+  }, []);
+
+  // ── Cross-module MANAGE requests (admin only) ─────────────────────────────
+  // An admin has no message-content access anywhere in this module (see
+  // MessagingPage's showThread/showGroups conditions — showThread is
+  // unconditionally false for isSuperAdmin) — they only ever get the
+  // moderation view (disable/enable/delete, participants). ChatButton (PM
+  // module) previously always called requestOpenGroup/requestOpenConversation
+  // regardless of who clicked it, which for an admin set activeConv while
+  // showThread stayed false and showGroups requires !activeConv — the panel
+  // rendered completely blank. These two open straight into the moderation
+  // panel for the specific group/thread instead, same as clicking its row
+  // in the admin's own group/thread list already does.
+  const [pendingManageGroup, setPendingManageGroup] = useState(null);
+  const requestManageGroup = useCallback((groupInfo) => {
+    setPendingManageGroup(groupInfo);
+  }, []);
+  const [pendingManageThread, setPendingManageThread] = useState(null);
+  const requestManageThread = useCallback((threadInfo) => {
+    setPendingManageThread(threadInfo);
+  }, []);
+
   // ── Inbox conversations (bcc / cc only) ───────────────────────────────────
   const [conversations,    setConversations]    = useState([]);
   const [inboxLoading,     setInboxLoading]     = useState(true);
@@ -84,9 +123,20 @@ export function MessagingProvider({ children }) {
       const data = await messageApi.getInbox();
       const all  = data.conversations || data || [];
 
-      // Split into inbox (bcc/cc) and group (group_thread)
-      const inbox  = all.filter(c => c.convType !== 'group_thread' && !c.groupName);
-      const groups = all.filter(c => c.convType === 'group_thread' || !!c.groupName);
+      // Split into inbox (bcc/cc) and group (group_thread) — EXCEPT a
+      // group_thread the user has been removed from (isRemoved=true) goes
+      // to inbox instead. The Groups tab (GroupManager) only ever lists
+      // from comm_group_members, which is hard-deleted on removal, so a
+      // removed group conversation would never appear there again — this
+      // was the exact "chat disappears completely for a removed
+      // participant" bug, still present for group threads specifically
+      // (CC/BCC threads were already reachable via inbox regardless of
+      // removal). Inbox already has full soft-remove support (history
+      // window, read-only composer state), so routing it there instead
+      // keeps the removed user's history reachable.
+      const isRemovedGroupThread = c => c.convType === 'group_thread' && c.isRemoved;
+      const inbox  = all.filter(c => (c.convType !== 'group_thread' && !c.groupName) || isRemovedGroupThread(c));
+      const groups = all.filter(c => (c.convType === 'group_thread' || !!c.groupName) && !isRemovedGroupThread(c));
 
       const active = activeConvIdRef.current;
 
@@ -134,15 +184,6 @@ export function MessagingProvider({ children }) {
     clearUnreadDot(conversationId);
   }, [clearUnreadDot]);
 
-  // ── archiveConversation ────────────────────────────────────────────────────
-  const archiveConversation = useCallback(async (conversationId) => {
-    await messageApi.archive(conversationId);
-    setConversations(prev => prev.filter(c => c.conversationId !== conversationId));
-    setGroupConversations(prev => prev.filter(c => c.conversationId !== conversationId));
-    knownInboxIdsRef.current.delete(conversationId);
-    knownGroupIdsRef.current.delete(conversationId);
-  }, []);
-
   // ── Socket: NEW_MESSAGE ────────────────────────────────────────────────────
   useEffect(() => {
     if (!socket) return;
@@ -177,16 +218,20 @@ export function MessagingProvider({ children }) {
         return;
       }
 
-      // Message from someone else — update the right list
+      // Message from someone else — update the right list.
+      // System messages (group name/description changes, sender = null) never
+      // count toward unread — they're informational chips, not real content.
       const updateList = (setter) => setter(prev => {
         const exists = prev.find(c => String(c.conversationId) === String(payload.conversationId));
         if (!exists) return prev;
         const updated = {
           ...exists,
-          latestSender: payload.senderName,
+          latestSender: payload.isSystem ? exists.latestSender : payload.senderName,
           latestAt:     new Date().toISOString(),
-          unreadCount:  isOpen ? (exists.unreadCount || 0) : (exists.unreadCount || 0) + 1,
-          _flash: !isOpen,
+          unreadCount:  payload.isSystem
+            ? (exists.unreadCount || 0)
+            : (isOpen ? (exists.unreadCount || 0) : (exists.unreadCount || 0) + 1),
+          _flash: !payload.isSystem && !isOpen,
         };
         if (updated._flash) {
           setTimeout(() => {
@@ -226,8 +271,12 @@ export function MessagingProvider({ children }) {
     groups, groupsLoading, createGroup, disableGroup, enableGroup, deleteGroup, hideGroup, refetchGroups,
     unreadCount, inboxUnreadCount, groupUnreadCount, decrement,
     conversations, groupConversations, groupConvsLoading,
-    inboxLoading, inboxError, fetchInbox, clearUnreadDot, archiveConversation,
+    inboxLoading, inboxError, fetchInbox, clearUnreadDot,
     activeConversationId, setActiveConversationId, activeConvIdRef,
+    pendingOpenConv, setPendingOpenConv, requestOpenConversation,
+    pendingOpenGroup, setPendingOpenGroup, requestOpenGroup,
+    pendingManageGroup, setPendingManageGroup, requestManageGroup,
+    pendingManageThread, setPendingManageThread, requestManageThread,
   };
 
   return (

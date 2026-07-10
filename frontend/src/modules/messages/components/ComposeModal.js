@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useTheme } from '@emotion/react';
 import { messageApi } from '../api/messageApi';
 import { groupApi }   from '../api/groupApi';
 import { fileApi }    from '../api/fileApi';
@@ -7,6 +8,16 @@ import { useAuth }    from '../../auth/AuthContext';
 import { useMessaging } from '../context/MessagingContext';
 import api            from '../api/axiosInstance';
 import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB } from '../api/allowedFileTypes';
+import { IconBtn, Btn, BtnGhost, BtnPrimary, FieldLabel, FieldInput, Dropdown, DropdownItem, Spinner } from '../styles/shared.styles';
+import { RecipientBox } from '../styles/RecipientPicker.styles';
+import { Toolbar, FmtBtn, FmtSep, ComposerArea, ComposerAttachments, ComposerAttachChip, ComposerAttachRemove } from '../styles/Composer.styles';
+import {
+  ModalOverlay, ModalCard, ModalHeader, ModalBody, ModalFooter,
+  ModeBtnRow, ModeBtn, ModeHint, HelperNote, ErrorBox, FooterHint,
+  ToggleRow, ToggleLabel, ToggleSub, ToggleSwitch,
+  Chip, ChipMemberCount, ChipExpandBtn, ChipExpandedTag, ChipRemoveBtn,
+  DropdownGroupLabel,
+} from '../styles/ComposeModal.styles';
 
 // ── User-search hook (debounced 240 ms) ──────────────────────────────────────
 function useUserSearch(query) {
@@ -37,17 +48,10 @@ function RecipientChip({ item, onRemove, onExpand, expanding, mode }) {
   const showExpand = mode === 'bcc' && isGroup && !item.expanded;
 
   return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 4,
-      padding: '3px 8px 3px 7px',
-      background: isGroup ? 'rgba(237,28,36,0.08)' : 'var(--mid)',
-      border: `1px solid ${isGroup ? 'rgba(237,28,36,0.3)' : 'transparent'}`,
-      borderRadius: 4, fontSize: 12, color: 'var(--light)',
-      maxWidth: 240, flexShrink: 0,
-    }}>
+    <Chip isGroup={isGroup}>
       {isGroup && (
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
-          stroke="var(--gold)" strokeWidth="2.5">
+          stroke="currentColor" strokeWidth="2.5" style={{ color: 'inherit' }}>
           <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
           <circle cx="9" cy="7" r="4"/>
           <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
@@ -56,46 +60,29 @@ function RecipientChip({ item, onRemove, onExpand, expanding, mode }) {
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {item.label}
         {isGroup && item.memberCount != null && (
-          <span style={{ color: 'var(--muted)', fontSize: 10, marginLeft: 3 }}>
-            ({item.memberCount})
-          </span>
+          <ChipMemberCount>({item.memberCount})</ChipMemberCount>
         )}
       </span>
 
       {showExpand && (
-        <button type="button" title="Expand — send individually to each member"
-          onClick={onExpand} disabled={expanding}
-          style={{
-            background: 'none', border: 'none',
-            cursor: expanding ? 'wait' : 'pointer',
-            color: 'var(--gold)', padding: '0 2px', fontSize: 13, lineHeight: 1,
-            display: 'flex', alignItems: 'center',
-          }}>
+        <ChipExpandBtn type="button" title="Expand — send individually to each member"
+          onClick={onExpand} disabled={expanding}>
           {expanding ? <span style={{ fontSize: 9 }}>…</span> : '⤵'}
-        </button>
+        </ChipExpandBtn>
       )}
 
       {mode === 'bcc' && isGroup && item.expanded && (
-        <span style={{ fontSize: 9, color: 'var(--muted)', fontStyle: 'italic', marginLeft: 2 }}>
-          expanded
-        </span>
+        <ChipExpandedTag>expanded</ChipExpandedTag>
       )}
 
-      <button type="button" onClick={onRemove}
-        style={{
-          background: 'none', border: 'none', cursor: 'pointer',
-          color: 'var(--muted)', fontSize: 15, lineHeight: 1,
-          padding: '0 0 0 3px', transition: 'color 0.12s',
-        }}
-        onMouseOver={e => e.currentTarget.style.color = 'var(--danger)'}
-        onMouseOut={e => e.currentTarget.style.color = 'var(--muted)'}
-      >×</button>
-    </span>
+      <ChipRemoveBtn type="button" onClick={onRemove}>×</ChipRemoveBtn>
+    </Chip>
   );
 }
 
 // ── Recipient search input + dropdown ─────────────────────────────────────────
 function RecipientInput({ selectedIds, onAdd, groups, mode, placeholder, currentUserId }) {
+  const theme = useTheme();
   const [query, setQuery] = useState('');
   const [open,  setOpen]  = useState(false);
   const [rect,  setRect]  = useState(null);
@@ -161,68 +148,60 @@ function RecipientInput({ selectedIds, onAdd, groups, mode, placeholder, current
     <div style={{ position: 'relative', flex: 1, minWidth: 80 }}>
       <input
         ref={inputRef}
-        className="recipient-input"
-        style={{ width: '100%' }}
+        style={{
+          width: '100%', flex: 1, minWidth: 80, background: 'none', border: 'none', outline: 'none',
+          color: theme.colors.onyx, fontFamily: theme.font.body, fontSize: 11,
+        }}
         placeholder={placeholder}
         value={query}
         onChange={e => { setQuery(e.target.value); setOpen(true); updateRect(); }}
         onFocus={() => { setOpen(true); updateRect(); }}
       />
       {hasDrop && rect && createPortal(
-        <div ref={dropRef} className="dropdown" style={{ 
+        <Dropdown ref={dropRef} style={{
           position: 'fixed',
           top: rect.bottom + 4,
           left: rect.left,
           width: Math.max(rect.width, 240), // Provide a sensible min-width
           zIndex: 9999, // Safely above the modal's z-index
-          maxHeight: 260, 
-          overflowY: 'auto' 
+          maxHeight: 260,
+          overflowY: 'auto',
         }}>
-          {loading && (
-            <div className="dropdown-item" style={{ color: 'var(--muted)' }}>Searching…</div>
-          )}
+          {loading && <DropdownItem style={{ color: theme.colors.ash }}>Searching…</DropdownItem>}
           {!loading && !groupMatches.length && !userResults.length && query.trim() && (
-            <div className="dropdown-item" style={{ color: 'var(--muted)' }}>
-              No results for "{query}"
-            </div>
+            <DropdownItem style={{ color: theme.colors.ash }}>No results for "{query}"</DropdownItem>
           )}
           {groupMatches.length > 0 && (
             <>
-              <div style={{
-                padding: '5px 14px 3px', fontSize: 10, color: 'var(--muted)',
-                textTransform: 'uppercase', letterSpacing: '.08em',
-              }}>Groups</div>
+              <DropdownGroupLabel>Groups</DropdownGroupLabel>
               {groupMatches.map(g => (
-                <div key={`g-${g.groupId}`} className="dropdown-item"
+                <DropdownItem key={`g-${g.groupId}`}
                   onMouseDown={e => {
                     e.preventDefault();
                     select({ id: `g-${g.groupId}`, _groupId: g.groupId, label: g.groupName, type: 'group', memberCount: g.memberCount });
                   }}>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                    stroke="var(--gold)" strokeWidth="2">
+                    stroke={theme.colors.espresso} strokeWidth="2">
                     <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
                     <circle cx="9" cy="7" r="4"/>
                     <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
                   </svg>
                   <div>
-                    <div style={{ color: 'var(--light)', fontSize: 13 }}>{g.groupName}</div>
-                    <div style={{ color: 'var(--muted)', fontSize: 11 }}>
+                    <div style={{ color: theme.colors.onyx, fontSize: 13 }}>{g.groupName}</div>
+                    <div style={{ color: theme.colors.ash, fontSize: 11 }}>
                       {g.memberCount ?? 0} members
                       {mode === 'cc' && ' · will auto-expand'}
                     </div>
                   </div>
-                </div>
+                </DropdownItem>
               ))}
             </>
           )}
           {userResults.length > 0 && (
             <>
-              <div style={{
-                padding: '5px 14px 3px', fontSize: 10, color: 'var(--muted)',
-                textTransform: 'uppercase', letterSpacing: '.08em',
-              }}>People</div>
+              <DropdownGroupLabel>People</DropdownGroupLabel>
               {userResults.map(u => (
-                <div key={String(u.userId)} className="dropdown-item"
+                <DropdownItem key={String(u.userId)}
                   onMouseDown={e => {
                     e.preventDefault();
                     select({
@@ -233,21 +212,21 @@ function RecipientInput({ selectedIds, onAdd, groups, mode, placeholder, current
                     });
                   }}>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                    stroke="var(--subtle)" strokeWidth="2">
+                    stroke={theme.colors.ashLight} strokeWidth="2">
                     <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
                     <circle cx="12" cy="7" r="4"/>
                   </svg>
                   <div>
-                    <div style={{ color: 'var(--light)', fontSize: 13 }}>
+                    <div style={{ color: theme.colors.onyx, fontSize: 13 }}>
                       {`${u.firstName || ''} ${u.lastName || ''}`.trim()}
                     </div>
-                    <div style={{ color: 'var(--muted)', fontSize: 11 }}>{u.email}</div>
+                    <div style={{ color: theme.colors.ash, fontSize: 11 }}>{u.email}</div>
                   </div>
-                </div>
+                </DropdownItem>
               ))}
             </>
           )}
-        </div>,
+        </Dropdown>,
         document.body
       )}
     </div>
@@ -270,6 +249,7 @@ const MODES = [
 
 // ── Main ComposeModal ─────────────────────────────────────────────────────────
 export default function ComposeModal({ onClose, onSent, initialRecipients = [], initialMode = 'bcc' }) {
+  const theme = useTheme();
   const { groups = [] } = useMessaging();
   const { user } = useAuth();
   const currentUserId = user?.userId;
@@ -475,62 +455,45 @@ export default function ComposeModal({ onClose, onSent, initialRecipients = [], 
   }
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ width: 700, maxWidth: '96vw' }}>
+    <ModalOverlay onClick={e => e.target === e.currentTarget && onClose()}>
+      <ModalCard width={700}>
 
         {/* Header */}
-        <div className="modal-header">
+        <ModalHeader>
           <h3>New Message</h3>
-          <button type="button" className="icon-btn" onClick={onClose} title="Close">
+          <IconBtn type="button" onClick={onClose} title="Close">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="2.5">
               <line x1="18" y1="6" x2="6" y2="18"/>
               <line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
-          </button>
-        </div>
+          </IconBtn>
+        </ModalHeader>
 
         {/* Body */}
-        <div className="modal-body">
+        <ModalBody>
 
           {/* Mode selector */}
           <div>
-            <label className="field-label">Send Mode</label>
-            <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+            <FieldLabel>Send Mode</FieldLabel>
+            <ModeBtnRow>
               {MODES.map(m => (
-                <button key={m.key} type="button"
-                  onClick={() => handleModeChange(m.key)}
-                  style={{
-                    flex: 1, padding: '7px 10px',
-                    borderRadius: 'var(--radius)',
-                    border: `1px solid ${mode === m.key ? 'var(--gold)' : 'var(--divider)'}`,
-                    background: mode === m.key ? 'rgba(237,28,36,0.08)' : 'none',
-                    color: mode === m.key ? 'var(--gold)' : 'var(--muted)',
-                    fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                    letterSpacing: '.04em', transition: 'all 0.15s',
-                  }}>
+                <ModeBtn key={m.key} type="button" active={mode === m.key} onClick={() => handleModeChange(m.key)}>
                   {m.label}
-                </button>
+                </ModeBtn>
               ))}
-            </div>
-            <div style={{
-              fontSize: 11, color: 'var(--muted)',
-              padding: '6px 10px',
-              background: 'var(--slate)', border: '1px solid var(--divider)',
-              borderRadius: 'var(--radius)', lineHeight: 1.55,
-            }}>
-              {currentModeObj.hint}
-            </div>
+            </ModeBtnRow>
+            <ModeHint>{currentModeObj.hint}</ModeHint>
           </div>
 
           {/* Recipients */}
           <div>
-            <label className="field-label">
+            <FieldLabel>
               {mode === 'bcc' && 'To — Private (separate threads per recipient)'}
               {mode === 'cc' && 'To — Shared thread (everyone sees each other)'}
               {mode === 'group_thread' && 'Group(s)'}
-            </label>
-            <div className="recipient-box"
+            </FieldLabel>
+            <RecipientBox
               style={{ flexWrap: 'wrap', minHeight: 46, maxHeight: 120, overflowY: 'auto', alignItems: 'flex-start', paddingTop: 8 }}>
               {chipRows.map(r => {
                 const isSubMember = !!r._fromGroup;
@@ -567,23 +530,19 @@ export default function ComposeModal({ onClose, onSent, initialRecipients = [], 
                   : 'Add more…'
                 }
               />
-            </div>
+            </RecipientBox>
             {mode === 'bcc' && recipients.some(r => r.type === 'group' && !r.expanded) && (
-              <div style={{ fontSize: 11, color: 'var(--gold-dim)', marginTop: 5 }}>
-                ⤵ Click ⤵ on a group chip to expand and exclude specific members before sending.
-              </div>
+              <HelperNote warn>⤵ Click ⤵ on a group chip to expand and exclude specific members before sending.</HelperNote>
             )}
             {mode === 'cc' && (
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 5 }}>
-                Groups auto-expand into members when added. Remove individuals with ×.
-              </div>
+              <HelperNote>Groups auto-expand into members when added. Remove individuals with ×.</HelperNote>
             )}
           </div>
 
           {/* Subject */}
           <div>
-            <label className="field-label">Subject</label>
-            <input className="field-input" type="text"
+            <FieldLabel>Subject</FieldLabel>
+            <FieldInput type="text"
               placeholder="What is this about?"
               value={subject}
               onChange={e => setSubject(e.target.value)}
@@ -593,20 +552,20 @@ export default function ComposeModal({ onClose, onSent, initialRecipients = [], 
 
           {/* Message body */}
           <div>
-            <label className="field-label">Message</label>
-            <div className="composer-toolbar" style={{ marginBottom: 6 }}>
-              <button type="button" className="fmt-btn" title="Bold"
+            <FieldLabel>Message</FieldLabel>
+            <Toolbar style={{ marginBottom: 6 }}>
+              <FmtBtn type="button" title="Bold"
                 onMouseDown={e => { e.preventDefault(); execCmd('bold'); }}>
                 <strong>B</strong>
-              </button>
-              <button type="button" className="fmt-btn" title="Italic"
+              </FmtBtn>
+              <FmtBtn type="button" title="Italic"
                 style={{ fontStyle: 'italic' }}
-                onMouseDown={e => { e.preventDefault(); execCmd('italic'); }}>I</button>
-              <button type="button" className="fmt-btn" title="Underline"
+                onMouseDown={e => { e.preventDefault(); execCmd('italic'); }}>I</FmtBtn>
+              <FmtBtn type="button" title="Underline"
                 style={{ textDecoration: 'underline' }}
-                onMouseDown={e => { e.preventDefault(); execCmd('underline'); }}>U</button>
-              <div className="fmt-sep"/>
-              <button type="button" className="fmt-btn" title="Bullet list"
+                onMouseDown={e => { e.preventDefault(); execCmd('underline'); }}>U</FmtBtn>
+              <FmtSep/>
+              <FmtBtn type="button" title="Bullet list"
                 onMouseDown={e => { e.preventDefault(); execCmd('insertUnorderedList'); }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
                   stroke="currentColor" strokeWidth="2">
@@ -617,8 +576,8 @@ export default function ComposeModal({ onClose, onSent, initialRecipients = [], 
                   <circle cx="4" cy="12" r="1.5" fill="currentColor"/>
                   <circle cx="4" cy="18" r="1.5" fill="currentColor"/>
                 </svg>
-              </button>
-              <button type="button" className="fmt-btn" title="Numbered list"
+              </FmtBtn>
+              <FmtBtn type="button" title="Numbered list"
                 onMouseDown={e => { e.preventDefault(); execCmd('insertOrderedList'); }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
                   stroke="currentColor" strokeWidth="2">
@@ -629,22 +588,21 @@ export default function ComposeModal({ onClose, onSent, initialRecipients = [], 
                   <text x="2" y="14" fontSize="7" fill="currentColor" stroke="none">2.</text>
                   <text x="2" y="20" fontSize="7" fill="currentColor" stroke="none">3.</text>
                 </svg>
-              </button>
-              <div className="fmt-sep"/>
-              <button type="button" className="fmt-btn" title="Attach file"
+              </FmtBtn>
+              <FmtSep/>
+              <FmtBtn type="button" title="Attach file"
                 onClick={() => fileRef.current?.click()}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
                   stroke="currentColor" strokeWidth="2">
                   <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
                 </svg>
-              </button>
+              </FmtBtn>
               <input ref={fileRef} type="file" multiple style={{ display: 'none' }}
                 onChange={handleFile}/>
-            </div>
+            </Toolbar>
 
-            <div
+            <ComposerArea
               ref={bodyRef}
-              className="composer-area"
               contentEditable={!sending}
               suppressContentEditableWarning
               data-placeholder="Write your message… (Ctrl+Enter to send)"
@@ -669,73 +627,63 @@ export default function ComposeModal({ onClose, onSent, initialRecipients = [], 
 
           {/* Attachments */}
           {attachments.length > 0 && (
-            <div className="composer-attachments">
+            <ComposerAttachments>
               {attachments.map(a => (
-                <div key={a.tempId} className="composer-attach-chip">
+                <ComposerAttachChip key={a.tempId}>
                   {a.uploading
-                    ? <span style={{ color: 'var(--gold)', fontSize: 11 }}>{a.progress}%</span>
+                    ? <span style={{ color: theme.colors.copper, fontSize: 11 }}>{a.progress}%</span>
                     : <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
-                        stroke="var(--success)" strokeWidth="3">
+                        stroke={theme.colors.success} strokeWidth="3">
                         <polyline points="20 6 9 17 4 12"/>
                       </svg>
                   }
                   <span>{a.name}</span>
-                  <button type="button" className="composer-attach-remove"
+                  <ComposerAttachRemove type="button"
                     onClick={() => setAttachments(p => p.filter(x => x.tempId !== a.tempId))}>
                     ×
-                  </button>
-                </div>
+                  </ComposerAttachRemove>
+                </ComposerAttachChip>
               ))}
-            </div>
+            </ComposerAttachments>
           )}
 
           {/* Allow reply */}
           {mode !== 'group_thread' && (
-            <div className="toggle-row">
+            <ToggleRow>
               <div>
-                <div className="toggle-label">Allow Replies</div>
-                <div className="toggle-sub">Disable for broadcast-only announcements</div>
+                <ToggleLabel>Allow Replies</ToggleLabel>
+                <ToggleSub>Disable for broadcast-only announcements</ToggleSub>
               </div>
-              <label className="toggle">
+              <ToggleSwitch>
                 <input type="checkbox" checked={allowReply}
                   onChange={e => setAllowReply(e.target.checked)}/>
-                <span className="toggle-slider"/>
-              </label>
-            </div>
+                <span className="slider"/>
+              </ToggleSwitch>
+            </ToggleRow>
           )}
 
-          {error && (
-            <div style={{
-              color: 'var(--danger)', fontSize: 12,
-              padding: '8px 12px',
-              background: 'rgba(196,24,31,0.08)',
-              border: '1px solid rgba(196,24,31,0.25)',
-              borderRadius: 'var(--radius)',
-            }}>
-              {error}
-            </div>
-          )}
-        </div>
+          {error && <ErrorBox>{error}</ErrorBox>}
+        </ModalBody>
 
         {/* Footer */}
-        <div className="modal-footer">
-          <span style={{ fontSize: 11, color: 'var(--muted)' }}>Ctrl+Enter to send</span>
-          <button type="button" className="btn btn-ghost" onClick={onClose} disabled={sending}>
+        <ModalFooter>
+          <FooterHint>Ctrl+Enter to send</FooterHint>
+          <BtnGhost type="button" onClick={onClose} disabled={sending}>
             Cancel
-          </button>
-          <button type="button" className="btn btn-primary" onClick={handleSend} disabled={sending}>
+          </BtnGhost>
+          <BtnPrimary type="button" onClick={handleSend} disabled={sending}>
             {sending ? (
               <>
-                <div className="spinner" style={{
+                <Spinner style={{
                   width: 13, height: 13, borderWidth: 2,
                   display: 'inline-block', marginRight: 6, verticalAlign: 'middle',
                 }}/>
                 Sending…
               </>
             ) : 'Send'}
-          </button>
-        </div>
-      </div>
-    </div>
+          </BtnPrimary>
+        </ModalFooter>
+      </ModalCard>
+    </ModalOverlay>
   );
 }

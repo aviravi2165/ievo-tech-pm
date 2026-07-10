@@ -1,9 +1,14 @@
 import { useAuth }              from '../../modules/auth/AuthContext';
 import logo                     from '../assets/logo.png';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import ProfileMenu              from './ProfileMenu';
 import ChangePasswordModal      from './ChangePasswordModal';
 import UserManagementModal      from '../../modules/users/UserManagementModal';
+import {
+  Topbar, TopbarBrand, TopbarLogoImg, TopbarDivider, TopbarModule,
+  TopbarActions, TopbarStatus, StatusDot, TopbarProfile, TopbarAvatar,
+  TopbarName, TopbarLogout, UserMgmtBtn,
+} from '../styles/TopBanner.styles';
 
 export default function TopBanner({ currentUser, activeModule }) {
   const { logout } = useAuth();
@@ -15,35 +20,42 @@ export default function TopBanner({ currentUser, activeModule }) {
 
   const isAdmin = currentUser?.userType === 'admin';
 
+  // Opened programmatically by the admin dashboard's "Manage Users" shortcut
+  // (this modal's open state is otherwise only reachable via the topbar
+  // icon button below) — mirrors the existing 'open-messages-panel' pattern.
+  useEffect(() => {
+    if (!isAdmin) return;
+    const open = () => setUserMgmtOpen(true);
+    window.addEventListener('open-user-management', open);
+    return () => window.removeEventListener('open-user-management', open);
+  }, [isAdmin]);
+
   const displayName = [currentUser?.firstName, currentUser?.lastName]
     .filter(Boolean).join(' ') || currentUser?.username || 'User';
 
   const initials = displayName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
   return (
-    <header className="erp-topbar">
-      <div className="erp-topbar-brand">
-        <img src={logo} alt="I.EVO" className="erp-topbar-logo-img" />
-        <span className="erp-topbar-divider" />
-        <span className="erp-topbar-module">{activeModule?.label ?? 'ERP'}</span>
-      </div>
+    <Topbar>
+      <TopbarBrand>
+        <TopbarLogoImg src={logo} alt="I.EVO" />
+        <TopbarDivider />
+        <TopbarModule>{activeModule?.label ?? 'ERP'}</TopbarModule>
+      </TopbarBrand>
 
-      <p className="erp-topbar-tagline">Design | Demonstrate | Deliver</p>
+      {/* Tagline dropped entirely — was shown only above 900px anyway,
+          decorative marketing copy that ate width the slimmer redesign
+          needs for the workspace instead. */}
 
-      <div className="erp-topbar-actions">
-        <span className="erp-topbar-status">
-          <span className="erp-status-dot" />
+      <TopbarActions>
+        <TopbarStatus>
+          <StatusDot />
           Online
-        </span>
+        </TopbarStatus>
 
         {/* ── User Management button — admin only ───────────────────────────── */}
         {isAdmin && (
-          <button
-            type="button"
-            className="erp-usermgmt-btn"
-            onClick={() => setUserMgmtOpen(true)}
-            title="User Management"
-          >
+          <UserMgmtBtn type="button" onClick={() => setUserMgmtOpen(true)} title="User Management">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="2">
               <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
@@ -52,20 +64,19 @@ export default function TopBanner({ currentUser, activeModule }) {
               <line x1="22" y1="11" x2="16" y2="11"/>
             </svg>
             <span>Manage Users</span>
-          </button>
+          </UserMgmtBtn>
         )}
 
         {/* ── Profile ───────────────────────────────────────────────────────── */}
         <div style={{ position: 'relative' }}>
-          <button
+          <TopbarProfile
             type="button"
-            className="erp-topbar-profile"
             title={displayName}
             onClick={() => setProfileOpen(v => !v)}
           >
-            <span className="erp-topbar-avatar">{initials}</span>
-            <span className="erp-topbar-name">{displayName}</span>
-          </button>
+            <TopbarAvatar>{initials}</TopbarAvatar>
+            <TopbarName>{displayName}</TopbarName>
+          </TopbarProfile>
 
           <ProfileMenu
             open={profileOpen}
@@ -80,20 +91,15 @@ export default function TopBanner({ currentUser, activeModule }) {
           />
         </div>
 
-        <button
-          type="button"
-          className="erp-topbar-logout"
-          onClick={logout}
-          title="Sign out"
-        >
+        <TopbarLogout type="button" onClick={logout} title="Sign out">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
             stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
             <polyline points="16 17 21 12 16 7"/>
             <line x1="21" y1="12" x2="9" y2="12"/>
           </svg>
-        </button>
-      </div>
+        </TopbarLogout>
+      </TopbarActions>
 
       {/* User Management Modal */}
       <UserManagementModal
@@ -101,6 +107,6 @@ export default function TopBanner({ currentUser, activeModule }) {
         defaultTab="register"
         onClose={() => setUserMgmtOpen(false)}
       />
-    </header>
+    </Topbar>
   );
 }

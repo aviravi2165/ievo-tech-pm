@@ -1,6 +1,7 @@
 'use strict';
 
 const { getPool, withTransaction, sql } = require('../../../config/db');
+const { ensureParticipantArchiveColumn } = require('./messageService');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Guards
@@ -271,6 +272,7 @@ async function getMemberUserIdsForGroups(groupIds = []) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function addMembers(groupId, actorUserId, userIds) {
+  await ensureParticipantArchiveColumn();
   await assertGroupAdmin(groupId, actorUserId);
 
   const pool = await getPool();
@@ -325,12 +327,13 @@ async function addMembers(groupId, actorUserId, userIds) {
           ON (target.conversation_id = source.conversation_id AND target.user_id = source.user_id)
           WHEN MATCHED THEN UPDATE SET
             is_deleted       = 0,
-            is_archived      = 0,
-            archived_at      = NULL,
-            left_at          = NULL,
-            participant_type = 'to'
-          WHEN NOT MATCHED THEN INSERT (conversation_id, user_id, participant_type)
-            VALUES (source.conversation_id, source.user_id, source.participant_type);
+            participant_type = 'to',
+            -- On re-add: stamp rejoined_at as start of new window.
+            -- CRITICAL: left_at is preserved (not cleared) — it marks the
+            -- END of the original window. getThread uses it for gap exclusion.
+            rejoined_at      = CASE WHEN target.is_deleted = 1 THEN SYSDATETIMEOFFSET() ELSE target.rejoined_at END
+          WHEN NOT MATCHED THEN INSERT (conversation_id, user_id, participant_type, joined_at)
+            VALUES (source.conversation_id, source.user_id, source.participant_type, SYSDATETIMEOFFSET());
         `);
 
       // Un-hide group for re-added member
@@ -356,6 +359,7 @@ async function addMembers(groupId, actorUserId, userIds) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function removeMember(groupId, actorUserId, memberUserId) {
+  await ensureParticipantArchiveColumn();
   await assertGroupAdmin(groupId, actorUserId);
 
   const pool = await getPool();
@@ -367,7 +371,16 @@ async function removeMember(groupId, actorUserId, memberUserId) {
     const err = new Error('Group not found'); err.statusCode = 404; throw err;
   }
   const { created_by, is_disabled } = groupRes.recordset[0];
-  if (String(created_by) === String(memberUserId)) {
+  // The creator-cannot-be-removed rule protects a group from a co-admin (or
+  // the creator themself) leaving it with no one left who has real
+  // authority over it. That protection doesn't apply to the org-wide super
+  // admin acting here — they have authority over every group regardless of
+  // membership (isGroupAdminOrSuperAdmin above already reflects that), so
+  // there's no "orphaned group" risk to guard against for this actor.
+  const actorIsSuperAdmin = (await pool.request()
+    .input('actorUserId', sql.UniqueIdentifier, actorUserId)
+    .query(`SELECT 1 AS ok FROM auth_users WHERE user_id=@actorUserId AND user_type='admin'`)).recordset[0]?.ok === 1;
+  if (String(created_by) === String(memberUserId) && !actorIsSuperAdmin) {
     const err = new Error('The group creator cannot be removed. Disable or delete the group instead.');
     err.statusCode = 400; throw err;
   }
@@ -386,7 +399,9 @@ async function removeMember(groupId, actorUserId, memberUserId) {
       .input('groupId',      sql.Int,              groupId)
       .input('memberUserId', sql.UniqueIdentifier, memberUserId)
       .query(`
-        UPDATE p SET left_at = COALESCE(p.left_at, SYSDATETIMEOFFSET()), is_archived = 0
+        UPDATE p
+        SET is_deleted = 1,
+            left_at    = SYSDATETIMEOFFSET()
         FROM comm_participants p
         INNER JOIN comm_conversations c ON c.conversation_id = p.conversation_id
         WHERE c.group_id = @groupId
@@ -648,9 +663,112 @@ async function ensureGroupConversation(groupId, userId) {
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Update group name / description (admin only)
+// Returns the old and new values so the caller can broadcast a system message.
+// ─────────────────────────────────────────────────────────────────────────────
+async function updateGroup(groupId, userId, { groupName, description }) {
+  await assertGroupAdmin(groupId, userId);
+
+  const pool = await getPool();
+
+  // Fetch current values first so we can build the change message
+  const curRes = await pool.request()
+    .input('groupId', sql.Int, groupId)
+    .query(`SELECT group_name, description FROM comm_groups WHERE group_id = @groupId`);
+  const cur = curRes.recordset[0];
+  if (!cur) { const e = new Error('Group not found'); e.statusCode = 404; throw e; }
+
+  const newName = (groupName || '').trim() || cur.group_name;
+  // description can be explicitly null (clearing it) or a string ('' also
+  // means clear) or undefined (field omitted = leave unchanged). Guard
+  // against null before calling .trim() — null.trim() throws and was
+  // crashing this endpoint whenever someone cleared an existing description.
+  const newDesc = description !== undefined
+    ? ((description || '').trim() || null)
+    : cur.description;
+
+  await pool.request()
+    .input('groupId',     sql.Int,      groupId)
+    .input('groupName',   sql.NVarChar, newName)
+    .input('description', sql.NVarChar, newDesc)
+    .query(`
+      UPDATE comm_groups
+      SET group_name = @groupName, description = @description
+      WHERE group_id = @groupId
+    `);
+
+  // Build the WhatsApp-style change description, e.g.:
+  //   Group name changed from "Old" to "New"
+  //   Description changed from "old desc" to "new desc"
+  //   Description removed
+  //   Description added: "new desc"
+  const nameChanged = cur.group_name !== newName;
+  const descChanged = (cur.description || '') !== (newDesc || '');
+  const changeLines = [];
+  if (nameChanged) {
+    changeLines.push(`Group name changed from "${cur.group_name}" to "${newName}"`);
+  }
+  if (descChanged) {
+    if (cur.description && !newDesc) {
+      changeLines.push('Description removed');
+    } else if (!cur.description && newDesc) {
+      changeLines.push(`Description added: "${newDesc}"`);
+    } else {
+      changeLines.push(`Description changed from "${cur.description}" to "${newDesc}"`);
+    }
+  }
+  const systemMessage = changeLines.join('. ');
+
+  // Persist as a real system message inside the group's conversation (if one
+  // exists yet) so it shows inline in chat history, like WhatsApp — not just
+  // a client-side toast that disappears on refresh.
+  let insertedMessage = null;
+  if (systemMessage) {
+    const convRes = await pool.request()
+      .input('groupId', sql.Int, groupId)
+      .query(`
+        SELECT TOP 1 conversation_id AS conversationId
+        FROM comm_conversations
+        WHERE group_id = @groupId AND is_deleted = 0
+        ORDER BY conversation_id DESC
+      `);
+    const conversationId = convRes.recordset[0]?.conversationId;
+    if (conversationId) {
+      const msgRes = await pool.request()
+        .input('convId', sql.Int, conversationId)
+        .input('body',   sql.NVarChar, systemMessage)
+        .query(`
+          INSERT INTO comm_messages (conversation_id, sender_id, body_html, is_system)
+          OUTPUT INSERTED.message_id  AS messageId,
+                 INSERTED.sent_at     AS sentAt
+          VALUES (@convId, NULL, @body, 1)
+        `);
+      insertedMessage = {
+        messageId:      msgRes.recordset[0].messageId,
+        conversationId,
+        sentAt:         msgRes.recordset[0].sentAt,
+        bodyHtml:       systemMessage,
+        isSystem:       true,
+      };
+      // Bump conversation's last-activity timestamp so it bubbles to top of lists
+      await pool.request()
+        .input('convId', sql.Int, conversationId)
+        .query(`UPDATE comm_conversations SET last_message_at = SYSDATETIMEOFFSET() WHERE conversation_id = @convId`);
+    }
+  }
+
+  return {
+    groupId, groupName: newName, description: newDesc,
+    oldGroupName: cur.group_name, oldDescription: cur.description,
+    systemMessage, insertedMessage,
+  };
+}
+
 module.exports = {
   listGroupsForUser,
   createGroup,
+  updateGroup,
   getGroupMembers,
   getMemberUserIdsForGroups,
   addMembers,

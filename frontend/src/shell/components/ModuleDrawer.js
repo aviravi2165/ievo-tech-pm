@@ -1,7 +1,10 @@
 import { ERP_MODULES } from '../config/modules';
+import {
+  Drawer, ModuleList, ModuleItem, ModuleIcon, ModuleLabel, ModuleName, ModuleBadge,
+} from '../styles/ModuleDrawer.styles';
 
-function ModuleIcon({ id }) {
-  const common = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8 };
+function ModuleIconSvg({ id }) {
+  const common = { width: 19, height: 19, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8 };
   switch (id) {
     case 'dashboard':
       return (
@@ -39,36 +42,33 @@ function ModuleIcon({ id }) {
 
 export default function ModuleDrawer({ activeModuleId, onSelectModule }) {
   return (
-    <nav className="erp-module-drawer" aria-label="ERP modules">
-      <div className="erp-module-drawer-title">Modules</div>
-      <ul className="erp-module-list">
+    <Drawer aria-label="ERP modules">
+      <ModuleList>
         {ERP_MODULES.map((mod) => {
           const isActive = mod.id === activeModuleId;
           const isDisabled = mod.status === 'coming-soon' && !mod.component;
 
           return (
             <li key={mod.id}>
-              <button
+              <ModuleItem
                 type="button"
-                className={`erp-module-item ${isActive ? 'active' : ''} ${isDisabled ? 'disabled' : ''}`}
-                onClick={() => !isDisabled && onSelectModule(mod.id)}
+                active={isActive}
                 disabled={isDisabled}
+                onClick={() => !isDisabled && onSelectModule(mod.id)}
                 title={mod.description}
               >
-                <span className="erp-module-icon">
-                  <ModuleIcon id={mod.id} />
-                </span>
-                <span className="erp-module-label">
-                  <span className="erp-module-name">{mod.label}</span>
-                  {mod.status === 'coming-soon' && (
-                    <span className="erp-module-badge">Soon</span>
-                  )}
-                </span>
-              </button>
+                <ModuleIcon active={isActive}>
+                  <ModuleIconSvg id={mod.id} />
+                </ModuleIcon>
+                <ModuleLabel>
+                  <ModuleName>{mod.shortLabel || mod.label}</ModuleName>
+                  {mod.status === 'coming-soon' && <ModuleBadge>Soon</ModuleBadge>}
+                </ModuleLabel>
+              </ModuleItem>
             </li>
           );
         })}
-      </ul>
-    </nav>
+      </ModuleList>
+    </Drawer>
   );
 }

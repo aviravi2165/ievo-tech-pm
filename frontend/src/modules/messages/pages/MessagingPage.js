@@ -7,6 +7,8 @@ import GroupManager  from '../components/GroupManager';
 import { useMessaging } from '../context/MessagingContext';
 import { useThreads }   from '../hooks/useThreads';
 import { useSocket }    from '../context/SocketContext';
+import { ModuleScreen, Layout, Main } from '../styles/MessagingPage.styles';
+import { ToastContainer, ToastItem } from '../styles/shared.styles';
 
 export default function MessagingPage({ currentUser }) {
   const {
@@ -18,6 +20,10 @@ export default function MessagingPage({ currentUser }) {
     inboxLoading, inboxError, fetchInbox, clearUnreadDot,
     unreadCount, inboxUnreadCount, groupUnreadCount, decrement,
     setActiveConversationId, activeConvIdRef,
+    pendingOpenConv, setPendingOpenConv,
+    pendingOpenGroup, setPendingOpenGroup,
+    pendingManageGroup, setPendingManageGroup,
+    pendingManageThread, setPendingManageThread,
   } = useMessaging();
 
   const { socket } = useSocket();
@@ -28,8 +34,58 @@ export default function MessagingPage({ currentUser }) {
   const [composeInitialRecipients, setComposeInitialRecipients] = useState([]);
   const [composeInitialMode,       setComposeInitialMode]       = useState('bcc');
   const [activeConvSource, setActiveConvSource] = useState(null);
+  const [autoManageGroupId,  setAutoManageGroupId]  = useState(null);
+  const [autoManageThreadId, setAutoManageThreadId] = useState(null);
 
   const layoutRef = useRef(null);
+
+  // ── Handle cross-module open-conversation requests (from ChatButton) ────────
+  useEffect(() => {
+    if (!pendingOpenConv) return;
+    const { conversationId, subject, convType } = pendingOpenConv;
+    const conv = { conversationId, subject: subject || '', convType: convType || 'cc' };
+    // All PM-linked threads (task+activity) are 'cc', so they live in inbox
+    setTab('inbox');
+    setActiveConvSource('inbox');
+    setActiveConv(conv);
+    setActiveConversationId(conversationId);
+    clearUnreadDot(conversationId);
+    setPendingOpenConv(null);
+  }, [pendingOpenConv, setPendingOpenConv, setActiveConversationId, clearUnreadDot]);
+
+  // ── Handle cross-module open-group requests (from ChatButton for activities) ─
+  useEffect(() => {
+    if (!pendingOpenGroup) return;
+    const { conversationId, subject } = pendingOpenGroup;
+    const conv = { conversationId, subject: subject || '', convType: 'group_thread' };
+    setTab('groups');
+    setActiveConvSource('groups');
+    setActiveConv(conv);
+    setActiveConversationId(conversationId);
+    clearUnreadDot(conversationId);
+    setPendingOpenGroup(null);
+  }, [pendingOpenGroup, setPendingOpenGroup, setActiveConversationId, clearUnreadDot]);
+
+  // ── Handle cross-module MANAGE requests (from ChatButton, admin only) ──────
+  // No activeConv is set here — admins get zero content access anywhere in
+  // this module (showThread is unconditionally false for isSuperAdmin), so
+  // setting one would just render blank. Route into the groups/threads list
+  // view instead and hand GroupManager the id to auto-open into management.
+  useEffect(() => {
+    if (!pendingManageGroup) return;
+    setTab('groups');
+    setActiveConvSource('groups');
+    setAutoManageGroupId(pendingManageGroup.groupId || pendingManageGroup.conversationId);
+    setPendingManageGroup(null);
+  }, [pendingManageGroup, setPendingManageGroup]);
+
+  useEffect(() => {
+    if (!pendingManageThread) return;
+    setTab('threads');
+    setActiveConvSource('threads');
+    setAutoManageThreadId(pendingManageThread.conversationId);
+    setPendingManageThread(null);
+  }, [pendingManageThread, setPendingManageThread]);
 
   const {
     threads: adminThreads, loading: adminThreadsLoading,
@@ -161,10 +217,10 @@ export default function MessagingPage({ currentUser }) {
   const showGroups = (tab === 'groups' || (isSuperAdmin && tab === 'threads')) && !activeConv;
 
   return (
-    <div className="msg-module-screen">
+    <ModuleScreen>
       <MessageTabBar tab={tab} onTabChange={handleTabChange} isSuperAdmin={isSuperAdmin} />
 
-      <div ref={layoutRef} className="msg-layout msg-layout--stacked">
+      <Layout ref={layoutRef} stacked>
         {showList && (
           <InboxSidebar
             hideTabs
@@ -180,7 +236,7 @@ export default function MessagingPage({ currentUser }) {
         )}
 
         {showThread && (
-          <main className="msg-main msg-main--full">
+          <Main full data-msg-main>
             <ChatWindow
               conversation={activeConv}
               onBack={handleBack}
@@ -189,7 +245,7 @@ export default function MessagingPage({ currentUser }) {
               onDeleteGroup={handleDeleteGroup}
               onHideGroup={handleHideGroup}
             />
-          </main>
+          </Main>
         )}
 
         {showGroups && (
@@ -210,9 +266,13 @@ export default function MessagingPage({ currentUser }) {
               onDeleteThread={handleDeleteThread}
               onHideThread={handleHideThread}
               onOpenConversation={handleOpenGroupConversation}
+              autoManageGroupId={autoManageGroupId}
+              onAutoManageGroupHandled={() => setAutoManageGroupId(null)}
+              autoManageThreadId={autoManageThreadId}
+              onAutoManageThreadHandled={() => setAutoManageThreadId(null)}
             />
         )}
-      </div>
+      </Layout>
 
       {composeOpen && (
         <ComposeModal
@@ -224,16 +284,14 @@ export default function MessagingPage({ currentUser }) {
       )}
 
       {toasts.length > 0 && (
-        <div className="toast-container">
+        <ToastContainer>
           {toasts.map(t => (
-            <div key={t.id}
-              className={`toast ${t.type}${t.onClick ? ' toast-clickable' : ''}`}
-              onClick={t.onClick}>
+            <ToastItem key={t.id} kind={t.type} clickable={!!t.onClick} onClick={t.onClick}>
               {t.msg}
-            </div>
+            </ToastItem>
           ))}
-        </div>
+        </ToastContainer>
       )}
-    </div>
+    </ModuleScreen>
   );
 }
