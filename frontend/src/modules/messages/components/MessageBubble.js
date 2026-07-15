@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import DOMPurify from 'dompurify';
 import { useTheme } from '@emotion/react';
 import { fileApi } from '../api/fileApi';
+import { Toolbar, FmtBtn, FmtSep, ComposerArea } from '../styles/Composer.styles';
 import {
   ThreadMessage, ThreadMessageHeader, ThreadSender, ThreadTime,
   ThreadReplyContext, ThreadReplyPreview, ThreadMessageBody,
@@ -70,8 +71,6 @@ export default function MessageBubble({
   isHighlighted = false,
   registerRef,
   isEditing = false,
-  editBody = '',
-  onEditBodyChange,
   onEditStart,
   onEditCancel,
   onEditSave,
@@ -84,6 +83,7 @@ export default function MessageBubble({
   const [downloadError, setDownloadError] = useState('');
   const [showAllSeen,   setShowAllSeen]   = useState(false);
   const [systemExpanded, setSystemExpanded] = useState(false);
+  const editRef = useRef(null);
 
   // ── System messages (e.g. "Group name changed from X to Y") ───────────────
   // Regular messages render as large white "email row" cards (ThreadMessage,
@@ -317,20 +317,50 @@ export default function MessageBubble({
     {/* Body */}
     {isEditing ? (
       <div style={{ padding: '4px 0' }}>
-        <textarea
-          autoFocus
-          value={editBody}
-          onChange={e => onEditBodyChange?.(e.target.value)}
+        {/* Same rich-text toolbar as compose/reply — editing previously
+            dropped straight to a plain textarea (no bold/italic/lists, and
+            any existing formatting got silently stripped the moment you
+            opened it). Seeded once from cleanHtml (already-sanitized), read
+            back via editRef on Save — uncontrolled, same pattern as the
+            compose editor's bodyRef, so React never fights the cursor
+            position by re-rendering innerHTML on every keystroke. */}
+        <Toolbar style={{ marginBottom: 6 }}>
+          <FmtBtn type="button" title="Bold"
+            onMouseDown={e => { e.preventDefault(); editRef.current?.focus(); document.execCommand('bold'); }}>
+            <strong>B</strong>
+          </FmtBtn>
+          <FmtBtn type="button" title="Italic" style={{ fontStyle: 'italic' }}
+            onMouseDown={e => { e.preventDefault(); editRef.current?.focus(); document.execCommand('italic'); }}>I</FmtBtn>
+          <FmtBtn type="button" title="Underline" style={{ textDecoration: 'underline' }}
+            onMouseDown={e => { e.preventDefault(); editRef.current?.focus(); document.execCommand('underline'); }}>U</FmtBtn>
+          <FmtSep/>
+          <FmtBtn type="button" title="Bullet list"
+            onMouseDown={e => { e.preventDefault(); editRef.current?.focus(); document.execCommand('insertUnorderedList'); }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/>
+              <circle cx="4" cy="6" r="1.5" fill="currentColor"/><circle cx="4" cy="12" r="1.5" fill="currentColor"/><circle cx="4" cy="18" r="1.5" fill="currentColor"/>
+            </svg>
+          </FmtBtn>
+          <FmtBtn type="button" title="Numbered list"
+            onMouseDown={e => { e.preventDefault(); editRef.current?.focus(); document.execCommand('insertOrderedList'); }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/>
+              <text x="2" y="8" fontSize="7" fill="currentColor" stroke="none">1.</text>
+              <text x="2" y="14" fontSize="7" fill="currentColor" stroke="none">2.</text>
+              <text x="2" y="20" fontSize="7" fill="currentColor" stroke="none">3.</text>
+            </svg>
+          </FmtBtn>
+        </Toolbar>
+
+        <ComposerArea
+          ref={editRef}
+          contentEditable={!editSaving}
+          suppressContentEditableWarning
+          dangerouslySetInnerHTML={{ __html: cleanHtml }}
+          style={{ minHeight: 60, border: `1px solid ${theme.colors.espresso}` }}
           onKeyDown={e => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onEditSave?.(); }
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onEditSave?.(editRef.current?.innerHTML); }
             if (e.key === 'Escape') onEditCancel?.();
-          }}
-          rows={3}
-          style={{
-            width: '100%', boxSizing: 'border-box', resize: 'vertical',
-            padding: '8px 10px', borderRadius: 8, border: `1px solid ${theme.colors.espresso}`,
-            background: theme.colors.mid, color: theme.colors.onyx, fontSize: 13.5,
-            fontFamily: 'inherit', outline: 'none',
           }}
         />
         {editError && (
@@ -344,7 +374,7 @@ export default function MessageBubble({
             Cancel
           </button>
           <button
-            onClick={onEditSave}
+            onClick={() => onEditSave?.(editRef.current?.innerHTML)}
             disabled={editSaving}
             style={{ padding: '4px 12px', borderRadius: 7, border: 'none', background: theme.colors.espresso, color: theme.colors.onAccent, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
           >

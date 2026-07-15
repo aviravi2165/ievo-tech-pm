@@ -1,6 +1,7 @@
 const messageRoutes = require('./routes/messageRoutes');
 const fileRoutes = require('./routes/fileRoutes');
 const groupRoutes = require('./routes/groupRoutes');
+const orgGroupRoutes = require('./routes/orgGroupRoutes');
 const {
   initSocket,
   closeSocket,
@@ -18,6 +19,7 @@ function registerMessagesRoutes(app) {
   app.use('/api/messages', messageRoutes);
   app.use('/api/files', fileRoutes);
   app.use('/api/groups', groupRoutes);
+  app.use('/api/org-groups', orgGroupRoutes);
 }
 
 function initMessagesRealtime(httpServer) {

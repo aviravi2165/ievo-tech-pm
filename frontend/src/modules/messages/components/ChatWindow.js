@@ -60,9 +60,10 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
   const [groupRemoving,    setGroupRemoving]     = useState(null);
   const [adminToggling,    setAdminToggling]     = useState(null);
   const [groupActing,      setGroupActing]       = useState(false);
-  // Edit message state
+  // Edit message state — the rich-text edit box (MessageBubble) seeds
+  // itself from the message's own sanitized HTML and reads the edited HTML
+  // back on Save, so there's no draft-body state to hold here anymore.
   const [editingMessageId, setEditingMessageId] = useState(null);
-  const [editBody,         setEditBody]         = useState('');
   const [editError,        setEditError]        = useState('');
   const [editSaving,       setEditSaving]       = useState(false);
   // Edit group name/description state
@@ -487,30 +488,24 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
     }, 0);
   };
 
-  // Edit message handlers
+  // Edit message handlers \u2014 MessageBubble owns the actual rich-text editor
+  // now (seeded from the message's own sanitized HTML), so all that's left
+  // here is which message is being edited and saving whatever HTML it hands
+  // back. Previously this stripped the message to plain text on open (and
+  // any bold/italic/lists were silently lost) \u2014 no longer needed since the
+  // editor is contentEditable and preserves formatting round-trip.
   const handleEditStart = (msg) => {
     setEditingMessageId(msg.messageId);
-    // BUG FIX: textContent silently drops <br> elements with no replacement
-    // character, so a 3-line message became one merged line the instant you
-    // opened the edit textarea. Convert line-break-producing tags to '\n'
-    // FIRST, then extract the now-plain text so breaks survive into the
-    // textarea (and round-trip back to <br> on save below).
-    const withNewlines = (msg.bodyHtml || '')
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<\/p>\s*<p[^>]*>/gi, '\n')
-      .replace(/<\/?p[^>]*>/gi, '');
-    const tmp = document.createElement('div');
-    tmp.innerHTML = withNewlines;
-    setEditBody((tmp.textContent || '').replace(/\u200B/g, ''));
     setEditError('');
   };
-  const handleEditCancel = () => { setEditingMessageId(null); setEditBody(''); setEditError(''); };
-  const handleEditSave = async (messageId) => {
-    if (!editBody.trim()) { setEditError('Message cannot be empty.'); return; }
+  const handleEditCancel = () => { setEditingMessageId(null); setEditError(''); };
+  const handleEditSave = async (messageId, html) => {
+    const plain = (html || '').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
+    if (!plain) { setEditError('Message cannot be empty.'); return; }
     setEditSaving(true); setEditError('');
     try {
-      await editMessage(messageId, `<p>${editBody.replace(/\n/g, '<br>')}</p>`);
-      setEditingMessageId(null); setEditBody('');
+      await editMessage(messageId, html);
+      setEditingMessageId(null);
     } catch (err) {
       setEditError(err?.response?.data?.error || 'Edit failed. The edit window may have passed.');
     } finally { setEditSaving(false); }
@@ -990,11 +985,9 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
                 isHighlighted={msg.messageId === highlightedId}
                 registerRef={registerMessageRef}
                 isEditing={editingMessageId === msg.messageId}
-                editBody={editBody}
-                onEditBodyChange={setEditBody}
                 onEditStart={() => handleEditStart(msg)}
                 onEditCancel={handleEditCancel}
-                onEditSave={() => handleEditSave(msg.messageId)}
+                onEditSave={(html) => handleEditSave(msg.messageId, html)}
                 editSaving={editSaving}
                 editError={editingMessageId === msg.messageId ? editError : ''}
                 editDeadlineMinutes={editDeadlineMinutes}

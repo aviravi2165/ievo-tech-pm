@@ -4,6 +4,7 @@ import InboxSidebar  from '../components/InboxSidebar';
 import ChatWindow    from '../components/ChatWindow';
 import ComposeModal  from '../components/ComposeModal';
 import GroupManager  from '../components/GroupManager';
+import TeamManager   from '../components/TeamManager';
 import { useMessaging } from '../context/MessagingContext';
 import { useThreads }   from '../hooks/useThreads';
 import { useSocket }    from '../context/SocketContext';
@@ -215,6 +216,9 @@ export default function MessagingPage({ currentUser }) {
   const showList   = isMailTab && !activeConv && !isSuperAdmin;
   const showThread = (isMailTab || tab === 'groups') && !!activeConv && !isSuperAdmin;
   const showGroups = (tab === 'groups' || (isSuperAdmin && tab === 'threads')) && !activeConv;
+  // Teams has no chat/conversation of its own — always a plain list/detail
+  // view regardless of activeConv (there's never one to have).
+  const showTeams  = tab === 'teams';
 
   return (
     <ModuleScreen>
@@ -272,6 +276,8 @@ export default function MessagingPage({ currentUser }) {
               onAutoManageThreadHandled={() => setAutoManageThreadId(null)}
             />
         )}
+
+        {showTeams && <TeamManager isAdmin={isSuperAdmin} />}
       </Layout>
 
       {composeOpen && (

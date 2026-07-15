@@ -2,10 +2,10 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useTheme } from '@emotion/react';
 import { messageApi } from '../api/messageApi';
-import { groupApi }   from '../api/groupApi';
+import { orgGroupApi } from '../api/orgGroupApi';
 import { fileApi }    from '../api/fileApi';
 import { useAuth }    from '../../auth/AuthContext';
-import { useMessaging } from '../context/MessagingContext';
+import { useOrgGroups } from '../hooks/useOrgGroups';
 import api            from '../api/axiosInstance';
 import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB } from '../api/allowedFileTypes';
 import { IconBtn, Btn, BtnGhost, BtnPrimary, FieldLabel, FieldInput, Dropdown, DropdownItem, Spinner } from '../styles/shared.styles';
@@ -20,6 +20,10 @@ import {
 } from '../styles/ComposeModal.styles';
 
 // ── User-search hook (debounced 240 ms) ──────────────────────────────────────
+// Fetches on an empty query too (not just once you start typing) — the
+// backend already returns a sensible default list for q='' (same pattern
+// PM's UserSearchInput uses on focus), so People should appear right away
+// in the dropdown same as Teams do, not only after typing a character.
 function useUserSearch(query) {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -27,7 +31,6 @@ function useUserSearch(query) {
 
   useEffect(() => {
     clearTimeout(timer.current);
-    if (!query.trim()) { setResults([]); return; }
     timer.current = setTimeout(async () => {
       setLoading(true);
       try {
@@ -43,13 +46,19 @@ function useUserSearch(query) {
 }
 
 // ── Recipient chip ────────────────────────────────────────────────────────────
-function RecipientChip({ item, onRemove, onExpand, expanding, mode }) {
-  const isGroup   = item.type === 'group';
-  const showExpand = mode === 'bcc' && isGroup && !item.expanded;
+// A team ("Production Team") stays collapsed as one chip by default in
+// EITHER mode — left alone, every member gets added (individually in
+// Private, into the one shared thread in Shared — the backend just starts
+// it with everyone in the team, see buildPayload). The ⤵ button expands it
+// into removable per-member chips only for when you actually need to
+// exclude someone from that particular send.
+function RecipientChip({ item, onRemove, onExpand, expanding }) {
+  const isTeam     = item.type === 'group';
+  const showExpand = isTeam && !item.expanded;
 
   return (
-    <Chip isGroup={isGroup}>
-      {isGroup && (
+    <Chip isGroup={isTeam}>
+      {isTeam && (
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" strokeWidth="2.5" style={{ color: 'inherit' }}>
           <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
@@ -59,19 +68,19 @@ function RecipientChip({ item, onRemove, onExpand, expanding, mode }) {
       )}
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {item.label}
-        {isGroup && item.memberCount != null && (
+        {isTeam && item.memberCount != null && (
           <ChipMemberCount>({item.memberCount})</ChipMemberCount>
         )}
       </span>
 
       {showExpand && (
-        <ChipExpandBtn type="button" title="Expand — send individually to each member"
+        <ChipExpandBtn type="button" title="Expand — exclude specific members"
           onClick={onExpand} disabled={expanding}>
           {expanding ? <span style={{ fontSize: 9 }}>…</span> : '⤵'}
         </ChipExpandBtn>
       )}
 
-      {mode === 'bcc' && isGroup && item.expanded && (
+      {isTeam && item.expanded && (
         <ChipExpandedTag>expanded</ChipExpandedTag>
       )}
 
@@ -81,7 +90,13 @@ function RecipientChip({ item, onRemove, onExpand, expanding, mode }) {
 }
 
 // ── Recipient search input + dropdown ─────────────────────────────────────────
-function RecipientInput({ selectedIds, onAdd, groups, mode, placeholder, currentUserId }) {
+// `teams` — admin-managed org_groups (e.g. "Production Team"), NOT
+// comm_groups chat groups (those no longer appear in the composer at all —
+// see ComposeModal's top-level comment). Selecting one behaves exactly like
+// the old chat-group chip did: collapses to one chip in Private mode (⤵ to
+// expand and exclude someone), auto-expands to individual member chips
+// immediately in Shared mode (see addTeam/doExpandTeam in ComposeModal).
+function RecipientInput({ selectedIds, onAdd, onAddTeam, teams, mode, placeholder, currentUserId }) {
   const theme = useTheme();
   const [query, setQuery] = useState('');
   const [open,  setOpen]  = useState(false);
@@ -91,14 +106,11 @@ function RecipientInput({ selectedIds, onAdd, groups, mode, placeholder, current
   const dropRef  = useRef(null);
 
   const groupMatches = mode !== 'group_thread'
-    ? groups.filter(g =>
-        !selectedIds.has(`g-${g.groupId}`) &&
-        (!query.trim() || g.groupName.toLowerCase().includes(query.toLowerCase()))
+    ? teams.filter(g =>
+        !selectedIds.has(`g-${g.orgGroupId}`) &&
+        (!query.trim() || g.name.toLowerCase().includes(query.toLowerCase()))
       )
-    : groups.filter(g =>
-        !selectedIds.has(`g-${g.groupId}`) &&
-        (!query.trim() || g.groupName.toLowerCase().includes(query.toLowerCase()))
-      );
+    : [];
 
   const userResults = mode !== 'group_thread'
     ? users.filter(u =>
@@ -173,12 +185,13 @@ function RecipientInput({ selectedIds, onAdd, groups, mode, placeholder, current
           )}
           {groupMatches.length > 0 && (
             <>
-              <DropdownGroupLabel>Groups</DropdownGroupLabel>
+              <DropdownGroupLabel>Teams</DropdownGroupLabel>
               {groupMatches.map(g => (
-                <DropdownItem key={`g-${g.groupId}`}
+                <DropdownItem key={`t-${g.orgGroupId}`}
                   onMouseDown={e => {
                     e.preventDefault();
-                    select({ id: `g-${g.groupId}`, _groupId: g.groupId, label: g.groupName, type: 'group', memberCount: g.memberCount });
+                    onAddTeam(g);
+                    setQuery(''); setOpen(false); inputRef.current?.focus();
                   }}>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
                     stroke={theme.colors.espresso} strokeWidth="2">
@@ -187,10 +200,9 @@ function RecipientInput({ selectedIds, onAdd, groups, mode, placeholder, current
                     <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
                   </svg>
                   <div>
-                    <div style={{ color: theme.colors.onyx, fontSize: 13 }}>{g.groupName}</div>
+                    <div style={{ color: theme.colors.onyx, fontSize: 13 }}>{g.name}</div>
                     <div style={{ color: theme.colors.ash, fontSize: 11 }}>
-                      {g.memberCount ?? 0} members
-                      {mode === 'cc' && ' · will auto-expand'}
+                      {g.memberCount ?? 0} member{g.memberCount === 1 ? '' : 's'}
                     </div>
                   </div>
                 </DropdownItem>
@@ -243,14 +255,14 @@ const MODES = [
   {
     key:   'cc',
     label: 'Shared',
-    hint:  'One shared thread. Everyone can see replies and each other. Groups auto-expand into individual members. You can remove any participant after sending.',
+    hint:  'One shared thread. Everyone can see replies and each other. Teams can be left as-is (everyone starts in the thread) or expanded with ⤵ to exclude specific members.',
   },
 ];
 
 // ── Main ComposeModal ─────────────────────────────────────────────────────────
 export default function ComposeModal({ onClose, onSent, initialRecipients = [], initialMode = 'bcc' }) {
   const theme = useTheme();
-  const { groups = [] } = useMessaging();
+  const { orgGroups: teams = [] } = useOrgGroups();
   const { user } = useAuth();
   const currentUserId = user?.userId;
 
@@ -282,24 +294,28 @@ export default function ComposeModal({ onClose, onSent, initialRecipients = [], 
     })
   );
 
-  const handleModeChange = async (newMode) => {
+  const handleModeChange = (newMode) => {
     setMode(newMode);
     setError('');
-    if (newMode === 'cc') {
-      const groupChips = recipients.filter(r => r.type === 'group');
-      for (const g of groupChips) await doExpandGroup(g, true);
-    }
     if (newMode === 'group_thread') {
-      setRecipients(prev => prev.filter(r => r.type === 'group'));
+      setRecipients([]);
     }
   };
 
-  const doExpandGroup = useCallback(async (groupItem, replace) => {
-    const chipId = groupItem.id;
+  // Fetches a team's members and marks the existing team chip `expanded`,
+  // attaching its member list as removable sub-chips — the ⤵ button,
+  // available in both Private and Shared mode, only for when you need to
+  // exclude specific people before sending. Left un-expanded in either
+  // mode, buildPayload still resolves and sends to every member (the
+  // backend starts a single shared thread with everyone for Shared, or a
+  // separate thread per person for Private — same as it always has for a
+  // flat recipient list; a team is just a shortcut for typing them all in).
+  const doExpandTeam = useCallback(async (teamItem) => {
+    const chipId = teamItem.id;
     setExpanding(prev => ({ ...prev, [chipId]: true }));
     try {
-      const numericId = groupItem._groupId ?? parseInt(String(chipId).replace('g-', ''), 10);
-      const members   = await groupApi.getMembers(numericId);
+      const numericId = teamItem._groupId ?? parseInt(String(chipId).replace('g-', ''), 10);
+      const members   = await orgGroupApi.getMembers(numericId);
       const chips     = members
         .filter(m => String(m.userId) !== String(currentUserId))
         .map(m => ({
@@ -307,7 +323,7 @@ export default function ComposeModal({ onClose, onSent, initialRecipients = [], 
           label:     `${m.firstName || ''} ${m.lastName || ''}`.trim() || m.email,
           sub:       m.email,
           type:      'user',
-          fromGroup: groupItem.label,
+          fromGroup: teamItem.label,
         }));
 
       setRecipients(prev => {
@@ -315,29 +331,28 @@ export default function ComposeModal({ onClose, onSent, initialRecipients = [], 
           prev.filter(r => r.id !== chipId && r.type === 'user').map(r => String(r.id))
         );
         const dedupedChips = chips.filter(c => !standaloneIds.has(String(c.id)));
-
-        if (replace) {
-          const without = prev.filter(r => r.id !== chipId);
-          const newOnes = dedupedChips.filter(c => !without.find(p => p.id === c.id));
-          return [...without, ...newOnes];
-        }
         return prev.map(r => r.id === chipId ? { ...r, expanded: true, members: dedupedChips } : r);
       });
     } catch {
-      setError(`Failed to expand group "${groupItem.label}". Try again.`);
+      setError(`Failed to expand team "${teamItem.label}". Try again.`);
     } finally {
       setExpanding(prev => ({ ...prev, [chipId]: false }));
     }
   }, [currentUserId]);
 
-  const addRecipient = useCallback(async (item) => {
+  // Selecting a team from the dropdown always adds it as ONE collapsed
+  // chip, in either mode — members are resolved lazily, either by clicking
+  // ⤵ to exclude someone, or, if left as-is, at send time in buildPayload.
+  const addTeam = useCallback((team) => {
+    const item = { id: `g-${team.orgGroupId}`, _groupId: team.orgGroupId, label: team.name, type: 'group', memberCount: team.memberCount };
     if (selectedIds.has(item.id)) return;
-    if (item.type === 'group' && mode === 'cc') {
-      await doExpandGroup(item, true);
-      return;
-    }
     setRecipients(prev => [...prev, item]);
-  }, [selectedIds, mode, doExpandGroup]); // eslint-disable-line
+  }, [selectedIds]);
+
+  const addRecipient = useCallback((item) => {
+    if (selectedIds.has(String(item.id))) return;
+    setRecipients(prev => [...prev, item]);
+  }, [selectedIds]);
 
   const removeRecipient = useCallback((id) => {
     setRecipients(prev => prev.filter(r => r.id !== id));
@@ -370,69 +385,60 @@ export default function ComposeModal({ onClose, onSent, initialRecipients = [], 
     }
   };
 
-  const buildPayload = () => {
+  // A team chip left un-expanded still has to resolve to real recipients —
+  // there's no backend concept of an org_group_id the way there is for a
+  // real comm_groups chat group, so this is resolved client-side at send
+  // time instead of relying on server-side group expansion. An expanded
+  // chip already has its (possibly exclusion-edited) member list cached
+  // from doExpandTeam, so this only fetches for the ones still collapsed.
+  const resolveTeamMemberIds = async (teamRecipients) => {
+    const ids = [];
+    for (const r of teamRecipients) {
+      if (r.expanded && r.members?.length) {
+        r.members.forEach(m => { if (String(m.id) !== String(currentUserId)) ids.push(m.id); });
+      } else {
+        const numericId = r._groupId ?? parseInt(String(r.id).replace('g-', ''), 10);
+        const members = await orgGroupApi.getMembers(numericId);
+        members.forEach(m => { if (String(m.userId) !== String(currentUserId)) ids.push(String(m.userId)); });
+      }
+    }
+    return ids;
+  };
+
+  const buildPayload = async () => {
     const bodyHtml = bodyRef.current?.innerHTML?.trim();
     if (!bodyHtml || bodyHtml === '<br>') { setError('Message body is required.'); return null; }
     if (!subject.trim())                  { setError('Subject is required.');       return null; }
     if (!recipients.length)               { setError('Add at least one recipient.'); return null; }
     if (attachments.some(a => a.uploading)) { setError('Wait for file uploads to finish.'); return null; }
 
+    if (mode === 'group_thread') {
+      // Unreachable via the current UI (no button selects this mode, and
+      // teams have no conversation to post into) — kept only so an
+      // existing initialMode='group_thread' caller fails with a clear
+      // message instead of silently sending to the wrong place.
+      setError('Select at least one group.'); return null;
+    }
+
     const attachmentIds = attachments.filter(a => a.attachmentId).map(a => a.attachmentId);
     const base = { subject: subject.trim(), bodyHtml, allowReply, attachmentIds, mode };
 
-    if (mode === 'group_thread') {
-      const groupIds = recipients
-        .filter(r => r.type === 'group')
-        .map(r => r._groupId ?? parseInt(String(r.id).replace('g-', ''), 10));
-      if (!groupIds.length) { setError('Select at least one group.'); return null; }
-      return { ...base, groupIds, recipientIds: [] };
-    }
+    const userIds = recipients
+      .filter(r => r.type === 'user' && String(r.id) !== String(currentUserId))
+      .map(r => r.id);
+    const teamIds = await resolveTeamMemberIds(recipients.filter(r => r.type === 'group'));
+    const recipientIds = [...new Set([...userIds, ...teamIds])];
 
-    if (mode === 'cc') {
-      const recipientIds = recipients
-        .filter(r => r.type === 'user' && String(r.id) !== String(currentUserId))
-        .map(r => r.id);
-      const groupIds = recipients
-        .filter(r => r.type === 'group')
-        .map(r => r._groupId ?? parseInt(String(r.id).replace('g-', ''), 10));
-      if (!recipientIds.length && !groupIds.length) {
-        setError('Add at least one recipient.'); return null;
-      }
-      return { ...base, recipientIds, groupIds };
-    }
-
-    // BCC
-    const recipientIds         = [];
-    const groupIds             = [];
-    const expandedGroupMembers = [];
-
-    for (const r of recipients) {
-      if (r.type === 'user') {
-        if (String(r.id) !== String(currentUserId)) recipientIds.push(r.id);
-      } else if (r.type === 'group') {
-        if (r.expanded && r.members?.length) {
-          r.members.forEach(m => {
-            if (String(m.id) !== String(currentUserId))
-              expandedGroupMembers.push({ id: m.id, userId: m.id });
-          });
-        } else {
-          groupIds.push(r._groupId ?? parseInt(String(r.id).replace('g-', ''), 10));
-        }
-      }
-    }
-
-    if (!recipientIds.length && !groupIds.length && !expandedGroupMembers.length) {
-      setError('Add at least one recipient.'); return null;
-    }
-    return { ...base, recipientIds, groupIds, expandedGroupMembers };
+    if (!recipientIds.length) { setError('Add at least one recipient.'); return null; }
+    return { ...base, recipientIds, groupIds: [] };
   };
 
   const handleSend = async () => {
     setError('');
-    const payload = buildPayload();
-    if (!payload) return;
     setSending(true);
     try {
+      const payload = await buildPayload();
+      if (!payload) { setSending(false); return; }
       const data    = await messageApi.send(payload);
       const results = Array.isArray(data) ? data : (data.results || []);
       onSent?.(results);
@@ -446,10 +452,13 @@ export default function ComposeModal({ onClose, onSent, initialRecipients = [], 
 
   const currentModeObj = MODES.find(m => m.key === mode) || MODES[0];
 
+  // An expanded team chip shows its member list as removable sub-rows
+  // underneath (the exclude-someone flow) — same in either mode now;
+  // everything else (individual users, unexpanded team chips) is flat.
   const chipRows = [];
   for (const r of recipients) {
     chipRows.push({ ...r, _isParent: true });
-    if (mode === 'bcc' && r.type === 'group' && r.expanded && r.members?.length) {
+    if (r.type === 'group' && r.expanded && r.members?.length) {
       chipRows.push(...r.members.map(m => ({ ...m, _fromGroup: r.id })));
     }
   }
@@ -494,16 +503,21 @@ export default function ComposeModal({ onClose, onSent, initialRecipients = [], 
               {mode === 'group_thread' && 'Group(s)'}
             </FieldLabel>
             <RecipientBox
-              style={{ flexWrap: 'wrap', minHeight: 46, maxHeight: 120, overflowY: 'auto', alignItems: 'flex-start', paddingTop: 8 }}>
+              // Clicking anywhere in the box focuses its input — without
+              // this, only the actual thin <input> element (squeezed
+              // between chips, surrounded by the box's own padding) was
+              // clickable, so most clicks on the box landed on dead space
+              // and needed several tries to actually hit the input.
+              onClick={e => { if (e.target === e.currentTarget) e.currentTarget.querySelector('input')?.focus(); }}
+              style={{ flexWrap: 'wrap', minHeight: 46, maxHeight: 120, overflowY: 'auto', alignItems: 'flex-start', paddingTop: 8, cursor: 'text' }}>
               {chipRows.map(r => {
                 const isSubMember = !!r._fromGroup;
                 return (
                   <RecipientChip
                     key={isSubMember ? `sub-${r.id}` : r.id}
                     item={r}
-                    mode={mode}
                     expanding={!!expanding[r.id]}
-                    onExpand={() => doExpandGroup(r, false)}
+                    onExpand={() => doExpandTeam(r)}
                     onRemove={() => {
                       if (isSubMember) {
                         setRecipients(prev => prev.map(p =>
@@ -521,21 +535,19 @@ export default function ComposeModal({ onClose, onSent, initialRecipients = [], 
               <RecipientInput
                 selectedIds={selectedIds}
                 onAdd={addRecipient}
-                groups={groups}
+                onAddTeam={addTeam}
+                teams={teams}
                 mode={mode}
                 currentUserId={currentUserId}
                 placeholder={
                   mode === 'group_thread' ? 'Select a group…'
-                  : recipients.length === 0 ? 'Search users or groups…'
+                  : recipients.length === 0 ? 'Search users or teams…'
                   : 'Add more…'
                 }
               />
             </RecipientBox>
-            {mode === 'bcc' && recipients.some(r => r.type === 'group' && !r.expanded) && (
-              <HelperNote warn>⤵ Click ⤵ on a group chip to expand and exclude specific members before sending.</HelperNote>
-            )}
-            {mode === 'cc' && (
-              <HelperNote>Groups auto-expand into members when added. Remove individuals with ×.</HelperNote>
+            {recipients.some(r => r.type === 'group' && !r.expanded) && (
+              <HelperNote warn>⤵ Click ⤵ on a team chip to expand and exclude specific members before sending. Left as-is, everyone in the team is included.</HelperNote>
             )}
           </div>
 
