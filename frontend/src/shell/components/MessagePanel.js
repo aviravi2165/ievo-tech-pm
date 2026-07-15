@@ -28,11 +28,15 @@ export default function MessagePanel({ currentUser, open, onToggle }) {
         {!open && <ToggleLabel>Messages</ToggleLabel>}
       </ToggleBtn>
 
-      {open && (
-        <PanelBody>
-          <CommunicationModule currentUser={currentUser} />
-        </PanelBody>
-      )}
+      {/* Always mounted, faded via `open` (see PanelBody's comment) — not
+          conditionally rendered, so collapsing/expanding no longer
+          destroys and remounts the whole messaging module (which was
+          also what made the toggle feel like an instant pop instead of a
+          smooth collapse: content had nothing to animate, it just
+          vanished/appeared the moment `open` flipped). */}
+      <PanelBody open={open} aria-hidden={!open}>
+        <CommunicationModule currentUser={currentUser} />
+      </PanelBody>
     </Panel>
   );
 }

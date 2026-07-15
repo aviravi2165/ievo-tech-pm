@@ -93,8 +93,11 @@ function MemberCard({ m, onRoleChange, onRemove, roleError, isManager, isSelf, o
 
         {/* Name + email */}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, color: theme.colors.onyx, fontWeight: 500 }}>{m.name}</div>
-          <div style={{ fontSize: 11, color: theme.colors.ash }}>{m.email}</div>
+          {/* Both truncate — the parent is min-width:0 flex, but an email
+              is a single unbreakable token that would still paint past the
+              card edge without its own ellipsis. */}
+          <div style={{ fontSize: 13, color: theme.colors.onyx, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.name}>{m.name}</div>
+          <div style={{ fontSize: 11, color: theme.colors.ash, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.email}>{m.email}</div>
         </div>
 
         {/* Project role pill */}
@@ -139,8 +142,8 @@ function MemberCard({ m, onRoleChange, onRemove, roleError, isManager, isSelf, o
             <div key={ph.phaseId} style={{ marginBottom: 8 }}>
               {/* Phase row */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                <Folder size={12} strokeWidth={2} color={theme.colors.ash} />
-                <span style={{ fontSize: 12, color: theme.colors.onyx, fontWeight: 600 }}>{ph.phaseName}</span>
+                <Folder size={12} strokeWidth={2} color={theme.colors.ash} style={{ flexShrink: 0 }} />
+                <span style={{ fontSize: 12, color: theme.colors.onyx, fontWeight: 600, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={ph.phaseName}>{ph.phaseName}</span>
                 <EntityRolePill
                   role={ph.phaseRole}
                   isManager={isManager}
@@ -158,8 +161,9 @@ function MemberCard({ m, onRoleChange, onRemove, roleError, isManager, isSelf, o
                       display: 'inline-flex', alignItems: 'center', gap: 5,
                       fontSize: 10, color: theme.colors.ash, background: theme.colors.mid,
                       border: `1px solid ${theme.colors.border}`, borderRadius: 8, padding: '1px 8px',
+                      maxWidth: '100%',
                     }}>
-                      {act.activityName}
+                      <span style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={act.activityName}>{act.activityName}</span>
                       <EntityRolePill
                         role={act.activityRole}
                         isManager={isManager}

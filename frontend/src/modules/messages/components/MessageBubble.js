@@ -24,6 +24,13 @@ function fileIcon(mimeType = '') {
   return '📎';
 }
 
+// Read-receipt sky blue — deliberately distinct from the espresso/copper
+// accent used everywhere else in the app, matching the original "Seen"
+// color (#4A9EFF) rather than the theme's primary accent, so read status
+// stays visually recognizable as its own thing (a WhatsApp-style blue
+// tick), not just another espresso-colored UI element.
+const READ_RECEIPT_BLUE = '#4A9EFF';
+
 // Single tick (sent) / double tick (seen) SVG
 function TickIcon({ seen }) {
   const theme = useTheme();
@@ -31,8 +38,8 @@ function TickIcon({ seen }) {
     // Double blue tick
     <svg width="16" height="10" viewBox="0 0 16 10" fill="none"
       style={{ display: 'inline', verticalAlign: 'middle' }}>
-      <path d="M1 5l3 3 5-7" stroke={theme.colors.espresso} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
-      <path d="M6 5l3 3 5-7" stroke={theme.colors.espresso} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M1 5l3 3 5-7" stroke={READ_RECEIPT_BLUE} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M6 5l3 3 5-7" stroke={READ_RECEIPT_BLUE} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   ) : (
     // Single grey tick
@@ -182,7 +189,7 @@ export default function MessageBubble({
       return (
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 4, marginTop: 3 }}>
           <TickIcon seen={isSeen} />
-          <span style={{ fontSize: 11, color: isSeen ? theme.colors.espresso : theme.colors.ash }}>
+          <span style={{ fontSize: 11, color: isSeen ? READ_RECEIPT_BLUE : theme.colors.ash }}>
             {isSeen ? 'Seen' : 'Sent'}
           </span>
         </div>
@@ -207,7 +214,7 @@ export default function MessageBubble({
       <div style={{ marginTop: 4, textAlign: 'right' }}>
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 4 }}>
           <TickIcon seen={true} />
-          <span style={{ fontSize: 11, color: theme.colors.espresso }}>
+          <span style={{ fontSize: 11, color: READ_RECEIPT_BLUE }}>
             Seen by{' '}
             {!showAllSeen ? (
               <>
@@ -216,7 +223,7 @@ export default function MessageBubble({
                   <button
                     onClick={() => setShowAllSeen(true)}
                     style={{
-                      background: 'none', border: 'none', color: theme.colors.espresso,
+                      background: 'none', border: 'none', color: READ_RECEIPT_BLUE,
                       cursor: 'pointer', fontSize: 11, marginLeft: 4, padding: 0,
                       textDecoration: 'underline',
                     }}
@@ -237,7 +244,7 @@ export default function MessageBubble({
                 <button
                   onClick={() => setShowAllSeen(false)}
                   style={{
-                    background: 'none', border: 'none', color: theme.colors.espresso,
+                    background: 'none', border: 'none', color: READ_RECEIPT_BLUE,
                     cursor: 'pointer', fontSize: 11, marginLeft: 4, padding: 0,
                     textDecoration: 'underline',
                   }}

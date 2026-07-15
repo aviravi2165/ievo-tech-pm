@@ -72,10 +72,19 @@ function DueDateBadge({ dueDate, status }) {
 function Avatars({ assignees = [], pending = [] }) {
   const theme = useTheme();
   if (!assignees.length && !pending.length) {
-    return <span style={{ fontSize: 11, color: theme.colors.ash, fontStyle: 'italic' }}>Unassigned</span>;
+    // fontSize 10 — at 11px italic "Unassigned" is ~62px wide, 2px more
+    // than the 60px assignee column, so the cell's overflow:hidden clipped
+    // it mid-letter ("Unassignec"). Caught in a browser screenshot pass.
+    return <span style={{ fontSize: 10, color: theme.colors.ash, fontStyle: 'italic', whiteSpace: 'nowrap' }}>Unassigned</span>;
   }
-  const shown = [...assignees, ...pending].slice(0, 4);
-  const extra = (assignees.length + pending.length) - shown.length;
+  // Max 3 shown + a possible "+N" chip = 4 circles. Each is 18px wide
+  // overlapping -4px, so 4 chips = 18 + 3×14 = exactly 60px — the assignee
+  // column's width (COL.assignee). At 4 shown the "+N" chip made 5 chips
+  // (74px) and the column's overflow:hidden clipped the +N half off — the
+  // one chip whose whole job is saying "there are more you can't see".
+  const all = [...assignees, ...pending];
+  const shown = all.slice(0, all.length > 4 ? 3 : 4);
+  const extra = all.length - shown.length;
   return (
     <Assignees>
       {shown.map(a => (
@@ -423,11 +432,11 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
                       try { await taskApi.sendRequest(task.taskId, m.userId); onRefetch?.(); }
                       catch (err) { setAssignError(err?.response?.data?.error || 'Failed'); }
                     }}>
-                    <span style={{ width: 18, height: 18, borderRadius: '50%', background: theme.colors.mid, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 700, color: theme.colors.onyx }}>
+                    <span style={{ width: 18, height: 18, borderRadius: '50%', background: theme.colors.mid, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 700, color: theme.colors.onyx, flexShrink: 0 }}>
                       {initials(m.name)}
                     </span>
-                    {m.name}
-                    <span style={{ fontSize: 9, color: theme.colors.ash }}>+ Request</span>
+                    <span style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.name}>{m.name}</span>
+                    <span style={{ fontSize: 9, color: theme.colors.ash, flexShrink: 0 }}>+ Request</span>
                   </BtnGhost>
                 ))
               }
@@ -458,7 +467,7 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
             return (
               <MemberRow key={r.userId} selected style={{ marginBottom: 4 }}>
                 <Avatar style={{ flexShrink: 0, marginLeft: 0 }}>{initials(r.name)}</Avatar>
-                <span style={{ flex: 1, fontSize: 12, color: theme.colors.onyx }}>{r.name}</span>
+                <span style={{ flex: 1, minWidth: 60, fontSize: 12, color: theme.colors.onyx, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.name}>{r.name}</span>
                 <span style={{ fontSize: 10, fontWeight: 600, color: badge.color, background: badge.bg, borderRadius: 8, padding: '2px 8px', flexShrink: 0 }}>
                   {badge.label}
                 </span>
@@ -489,8 +498,8 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
                 const t = otherTasks.find(x => x.taskId === depId);
                 if (!t) return null;
                 return (
-                  <span key={depId} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: 12, padding: '2px 8px 2px 10px' }}>
-                    {t.name}
+                  <span key={depId} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: 12, padding: '2px 8px 2px 10px', maxWidth: '100%' }}>
+                    <span style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.name}>{t.name}</span>
                     {canManager && (
                       <button type="button" onClick={() => handleRemoveDep(depId)}
                         style={{ background: 'none', border: 'none', color: theme.colors.ash, cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>

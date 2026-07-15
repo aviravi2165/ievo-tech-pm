@@ -119,8 +119,10 @@ export default function UserSearchInput({ selectedUser, onSelect, excludeUserIds
                   {initials(name || u.email)}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: theme.colors.onyx, fontWeight: 500 }}>{name || '—'}</div>
-                  <div style={{ fontSize: 11, color: theme.colors.ash }}>{u.email}</div>
+                  <div style={{ fontSize: 12, color: theme.colors.onyx, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name || '—'}</div>
+                  {/* emails are one unbreakable token — without an ellipsis
+                      a long one paints past the dropdown's right edge */}
+                  <div style={{ fontSize: 11, color: theme.colors.ash, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={u.email}>{u.email}</div>
                 </div>
                 <div style={{
                   fontSize: 10, fontWeight: 600, color: theme.colors.ash, flexShrink: 0,

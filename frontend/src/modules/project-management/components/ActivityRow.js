@@ -435,8 +435,12 @@ export default function ActivityRow({
           {!memberLoading && actMembers.map(m => (
             <div key={m.userId} style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 10px', marginBottom: 4, border:`1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, background: 'rgba(46, 40, 35, 0.06)' }}>
               <div style={{ width:22, height:22, borderRadius:'50%', background: theme.colors.mid, display:'flex', alignItems:'center', justifyContent:'center', fontSize:9, fontWeight:700, color: theme.colors.onyx, flexShrink: 0 }}>{initials(m.name)}</div>
-              <span style={{ flex: 1, fontSize: 12, color: theme.colors.onyx }}>{m.name}</span>
-              <span style={{ fontSize: 11, color: theme.colors.ash }}>{m.email}</span>
+              {/* name/email both truncate — an email is one unbreakable
+                  token, so without a shrink+ellipsis guard a long one
+                  forces this whole flex row wider than the panel and
+                  pushes the role select + Remove button out of view. */}
+              <span style={{ flex: 1, minWidth: 60, fontSize: 12, color: theme.colors.onyx, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.name}>{m.name}</span>
+              <span style={{ fontSize: 11, color: theme.colors.ash, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.email}>{m.email}</span>
               <select value={m.role} onChange={e => handleMemberRoleChange(m.userId, e.target.value)}
                 style={{ background:theme.colors.mid, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm, padding:'3px 6px', color:theme.colors.onyx, fontSize:11, fontFamily:'inherit', outline:'none' }}>
                 <option value="Manager">Manager</option>
@@ -472,8 +476,8 @@ export default function ActivityRow({
                 const act = otherActivities.find(a => a.activityId === depId);
                 if (!act) return null;
                 return (
-                  <span key={depId} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: 12, padding: '2px 8px 2px 10px' }}>
-                    {act.name}
+                  <span key={depId} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: 12, padding: '2px 8px 2px 10px', maxWidth: '100%' }}>
+                    <span style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={act.name}>{act.name}</span>
                     {canEdit && (
                       <button type="button" onClick={() => handleRemoveDep(depId)}
                         style={{ background: 'none', border: 'none', color: theme.colors.ash, cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>

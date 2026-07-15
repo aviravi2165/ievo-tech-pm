@@ -71,44 +71,42 @@ export default function InboxSidebar({
         <p>Messages · Design | Demonstrate | Deliver</p>
       </SidebarHeader>
 
-      {/* Compose/search/nav now live inside the same scrolling container as
-          the conversation cards (wrapped in StickyTop, pinned via
-          position:sticky) instead of being non-scrolling siblings of it —
-          see StickyTop's comment in InboxSidebar.styles.js for why: as
-          separate siblings, this block didn't share the conversation
-          list's scrollbar-narrowed width, so it rendered a few pixels
-          wider than the cards below it. */}
+      {/* Compose/search/nav — a non-scrolling header sibling ABOVE
+          ConvListWrap, not living inside its scroll flow (see StickyTop's
+          comment in InboxSidebar.styles.js — a sticky-inside-scroll
+          approach here previously let conversation cards scroll up OVER
+          this header instead of staying beneath it). */}
+      <StickyTop>
+        <ComposeBtn onClick={onCompose}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          New Message
+        </ComposeBtn>
+
+        <SearchWrap>
+          <SearchInput
+            type="text"
+            placeholder="Search conversations…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+        </SearchWrap>
+
+        {!hideTabs && (
+          <SidebarNav>
+            <NavBtn type="button" active={tab === 'inbox'} onClick={() => onTabChange('inbox')}>
+              Inbox
+              {unreadCount > 0 && <Badge>{unreadCount > 99 ? '99+' : unreadCount}</Badge>}
+            </NavBtn>
+            <NavBtn type="button" active={tab === 'groups'} onClick={() => onTabChange('groups')}>
+              Groups
+            </NavBtn>
+          </SidebarNav>
+        )}
+      </StickyTop>
+
       <ConvListWrap>
-        <StickyTop>
-          <ComposeBtn onClick={onCompose}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-            </svg>
-            New Message
-          </ComposeBtn>
-
-          <SearchWrap>
-            <SearchInput
-              type="text"
-              placeholder="Search conversations…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
-          </SearchWrap>
-
-          {!hideTabs && (
-            <SidebarNav>
-              <NavBtn type="button" active={tab === 'inbox'} onClick={() => onTabChange('inbox')}>
-                Inbox
-                {unreadCount > 0 && <Badge>{unreadCount > 99 ? '99+' : unreadCount}</Badge>}
-              </NavBtn>
-              <NavBtn type="button" active={tab === 'groups'} onClick={() => onTabChange('groups')}>
-                Groups
-              </NavBtn>
-            </SidebarNav>
-          )}
-        </StickyTop>
-
         <div style={{ padding: '8px 12px' }}>
           {loading && <LoaderWrap><Spinner /></LoaderWrap>}
 
