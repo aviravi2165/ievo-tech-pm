@@ -252,7 +252,7 @@ export default function ActivityRow({
             </DepBadge>
           )}
 
-          <div style={{ width:90, flexShrink:0 }}><ProgressBar value={activity.progress || 0} /></div>
+          <div style={{ width:104, flexShrink:0 }}><ProgressBar value={activity.progress || 0} /></div>
           {isInactive && <InactiveBadge />}
         </div>
 

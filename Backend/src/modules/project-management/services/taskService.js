@@ -79,7 +79,7 @@ async function getTasksForActivity(activityId) {
       INNER JOIN pm_phases     pph ON pph.phase_id  = pa.phase_id
       INNER JOIN pm_projects   pproj ON pproj.project_id = pph.project_id
       WHERE t.activity_id = @activityId AND t.is_deleted = 0
-      ORDER BY t.created_at
+      ORDER BY t.is_active DESC, t.created_at
     `);
 
   return result.recordset.map(r => {
@@ -123,6 +123,7 @@ async function getTasksForActivity(activityId) {
 async function createTask(activityId, projectId, userId, body) {
   const { name, description, priority = 'Medium', startDate, dueDate, estimatedHours, assigneeIds = [] } = body;
   if (!name?.trim()) { const e = new Error('Task name required'); e.statusCode = 400; throw e; }
+  if (name.trim().length > 200) { const e = new Error('Task name must be 200 characters or fewer'); e.statusCode = 400; throw e; }
 
   // Refuse to create work under something that's Blocked — this was
   // previously unenforced, so a Task could be added (and even marked
@@ -141,6 +142,9 @@ async function createTask(activityId, projectId, userId, body) {
   if (startDate && parent.plannedStart && new Date(startDate) < new Date(parent.plannedStart)) {
     const e = new Error("Task start date can't be before its Activity's planned start date.");
     e.statusCode = 400; throw e;
+  }
+  if (startDate && dueDate && new Date(dueDate) < new Date(startDate)) {
+    const e = new Error("Task due date can't be before its start date."); e.statusCode = 400; throw e;
   }
   if (parent.activityStatus === 'Blocked') {
     const e = new Error('This Activity is blocked by an unresolved dependency — resolve it before adding tasks.');
@@ -427,6 +431,21 @@ async function updateTask(taskId, projectId, userId, body, isAdmin = false) {
     if (plannedStart && new Date(body.startDate) < new Date(plannedStart)) {
       const e = new Error("Task start date can't be before its Activity's planned start date.");
       e.statusCode = 400; throw e;
+    }
+  }
+  if (body.name !== undefined) {
+    if (!body.name.trim()) { const e = new Error('Task name required'); e.statusCode = 400; throw e; }
+    if (body.name.trim().length > 200) { const e = new Error('Task name must be 200 characters or fewer'); e.statusCode = 400; throw e; }
+  }
+  if (body.startDate !== undefined || body.dueDate !== undefined) {
+    const pool2 = await getPool();
+    const cur = await pool2.request().input('taskId', sql.Int, taskId)
+      .query(`SELECT start_date AS startDate, due_date AS dueDate FROM pm_tasks WHERE task_id=@taskId`);
+    const row0 = cur.recordset[0] || {};
+    const effStart = body.startDate !== undefined ? body.startDate : row0.startDate;
+    const effDue   = body.dueDate   !== undefined ? body.dueDate   : row0.dueDate;
+    if (effStart && effDue && new Date(effDue) < new Date(effStart)) {
+      const e = new Error("Task due date can't be before its start date."); e.statusCode = 400; throw e;
     }
   }
   const fields = {};
@@ -793,9 +812,7 @@ async function getMyActiveTasks(userId) {
       INNER JOIN pm_projects    pr  ON pr.project_id    = ph.project_id AND pr.is_deleted = 0
       WHERE ta.user_id = @userId
         AND t.status NOT IN ('Complete')
-      ORDER BY
-        CASE t.priority WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 ELSE 4 END,
-        t.due_date ASC
+      ORDER BY ta.assigned_at DESC
     `);
   return result.recordset;
 }

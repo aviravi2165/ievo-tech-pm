@@ -14,6 +14,19 @@ const ENTITY_ROLES = ['Manager', 'Employee', 'Viewer']; // Phase / Activity voca
 // at the label layer, API values are untouched) removes that confusion.
 const ENTITY_ROLE_LABEL = { Manager: 'Manager', Employee: 'Member', Viewer: 'Viewer' };
 
+// Mirrors roleService.js's RANK exactly — used only to detect when an
+// explicit Phase/Activity override is a DOWNGRADE from someone's project
+// role, so the UI can flag it instead of staying silent. This is the exact
+// trap a project owner hit: a stale Activity-level "Member" override
+// silently overrode their project-wide Manager role there, with nothing in
+// the Members tab distinguishing "elevated override" from "downgraded
+// override" — both just looked like a neutral role pill.
+const RANK = { Viewer: 1, Employee: 2, Member: 2, Manager: 3 };
+function isDowngrade(entityRole, projectRole) {
+  if (!entityRole) return false; // "Inherited" — not an override at all
+  return (RANK[entityRole] ?? 0) < (RANK[projectRole] ?? 0);
+}
+
 function initials(name = '') {
   return (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 }
@@ -31,14 +44,22 @@ function rolePill(theme, role) {
 }
 
 // ── Small inline role pill / editable select for a Phase or Activity row ──────
-function EntityRolePill({ role, isManager, onChange }) {
+// downgrade — true when this explicit role is LOWER than the member's
+// project-wide role: rendered in the danger color with a ⚠ prefix and an
+// explanatory tooltip instead of the normal role color, so someone
+// scanning the Members tab can actually SEE it rather than discover it
+// only once something they expected to be able to do silently fails.
+function EntityRolePill({ role, isManager, onChange, downgrade }) {
   const theme = useTheme();
-  const pill = rolePill(theme, role);
+  const pill = downgrade ? { bg: `${theme.colors.danger}1f`, color: theme.colors.danger } : rolePill(theme, role);
+  const warnTitle = downgrade
+    ? `⚠ Lower than their project role — this override REPLACES it here, it doesn't add to it.`
+    : undefined;
   if (!isManager) {
     return (
       <span style={{ fontSize: 9, fontWeight: 700, color: pill.color, background: pill.bg, borderRadius: 8, padding: '1px 7px' }}
-        title={role ? undefined : 'No role set at this level — falls back to their role on the level above.'}>
-        {role ? ENTITY_ROLE_LABEL[role] : 'Inherited'}
+        title={warnTitle || (role ? undefined : 'No role set at this level — falls back to their role on the level above.')}>
+        {downgrade && '⚠ '}{role ? ENTITY_ROLE_LABEL[role] : 'Inherited'}
       </span>
     );
   }
@@ -47,8 +68,8 @@ function EntityRolePill({ role, isManager, onChange }) {
       value={role || ''}
       onChange={e => onChange(e.target.value || null)}
       onClick={e => e.stopPropagation()}
-      title="Inherited = no explicit role here, falls back to the level above"
-      style={{ fontSize: 9, fontWeight: 700, color: pill.color, background: pill.bg, border: 'none', borderRadius: 8, padding: '1px 5px', fontFamily: 'inherit', outline: 'none' }}
+      title={warnTitle || 'Inherited = no explicit role here, falls back to the level above'}
+      style={{ fontSize: 9, fontWeight: 700, color: pill.color, background: pill.bg, border: downgrade ? `1px solid ${theme.colors.danger}` : 'none', borderRadius: 8, padding: '1px 5px', fontFamily: 'inherit', outline: 'none' }}
     >
       <option value="">Inherited</option>
       {ENTITY_ROLES.map(r => <option key={r} value={r}>{ENTITY_ROLE_LABEL[r]}</option>)}
@@ -68,6 +89,13 @@ function MemberCard({ m, onRoleChange, onRemove, roleError, isManager, isSelf, o
   const [expanded, setExpanded] = useState(false);
   const pill = rolePill(theme, m.projectRole);
   const hasPhases = m.phases?.length > 0;
+  // Any downgrade anywhere in this member's overrides — surfaced on the
+  // COLLAPSED card too (not just once expanded), since that's the only
+  // view most people ever glance at.
+  const hasDowngrade = (m.phases || []).some(ph =>
+    isDowngrade(ph.phaseRole, m.projectRole) ||
+    (ph.activities || []).some(act => isDowngrade(act.activityRole, m.projectRole))
+  );
 
   return (
     <div style={{
@@ -105,10 +133,19 @@ function MemberCard({ m, onRoleChange, onRemove, roleError, isManager, isSelf, o
           {m.projectRole}
         </span>
 
-        {/* Phase / activity summary */}
+        {/* Phase / activity summary — flagged red when one of the
+            overrides underneath is a DOWNGRADE from their project role, so
+            it's visible without expanding the card. This exact silent gap
+            (an Activity-level "Member" override quietly beating a
+            project-wide Manager role, with no visual difference from a
+            harmless elevated override) is what caused a project owner to
+            lose their own management controls with no indication why. */}
         {hasPhases && (
-          <span style={{ fontSize: 10, color: theme.colors.ash, flexShrink: 0 }}>
-            {m.phases.length} {m.phases.length === 1 ? 'phase' : 'phases'}
+          <span
+            style={{ fontSize: 10, color: hasDowngrade ? theme.colors.danger : theme.colors.ash, fontWeight: hasDowngrade ? 700 : 400, flexShrink: 0 }}
+            title={hasDowngrade ? '⚠ One of these overrides is LOWER than their project role — expand to see which.' : undefined}
+          >
+            {hasDowngrade && '⚠ '}{m.phases.length} {m.phases.length === 1 ? 'phase' : 'phases'}
           </span>
         )}
 
@@ -147,6 +184,7 @@ function MemberCard({ m, onRoleChange, onRemove, roleError, isManager, isSelf, o
                 <EntityRolePill
                   role={ph.phaseRole}
                   isManager={isManager}
+                  downgrade={isDowngrade(ph.phaseRole, m.projectRole)}
                   onChange={(role) => onPhaseRoleChange(ph.phaseId, m.userId, role)}
                 />
                 {ph.activities.length > 0 && (
@@ -167,6 +205,7 @@ function MemberCard({ m, onRoleChange, onRemove, roleError, isManager, isSelf, o
                       <EntityRolePill
                         role={act.activityRole}
                         isManager={isManager}
+                        downgrade={isDowngrade(act.activityRole, m.projectRole)}
                         onChange={(role) => onActivityRoleChange(act.activityId, m.userId, role)}
                       />
                     </span>

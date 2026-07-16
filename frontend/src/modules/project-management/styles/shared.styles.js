@@ -135,7 +135,7 @@ export const ProgressFill = styled.div`
   width: ${(props) => Math.min(100, props.value || 0)}%;
 `;
 export const ProgressLabel = styled.span`
-  font-size: 11px; color: ${t(th => th.colors.ash)}; min-width: 30px; text-align: right;
+  font-size: 11px; color: ${t(th => th.colors.ash)}; min-width: 30px; flex-shrink: 0; text-align: right;
 `;
 
 // ── Modal ─────────────────────────────────────────────────────────────────────

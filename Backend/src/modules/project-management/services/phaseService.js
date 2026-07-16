@@ -50,7 +50,7 @@ async function getPhasesForProject(projectId, userId, isAdmin = false) {
       FROM pm_phases ph
       INNER JOIN pm_projects parentProj ON parentProj.project_id = ph.project_id
       WHERE ph.project_id=@projectId AND ph.is_deleted=0
-      ORDER BY ph.display_order
+      ORDER BY ph.is_active DESC, ph.display_order
     `);
   const rows = result.recordset.map(r => ({ ...r, dependsOn: parseIdList(r.dependsOn) }));
   for (const ph of rows) {
@@ -81,10 +81,15 @@ async function getPhasesForProject(projectId, userId, isAdmin = false) {
 async function createPhase(projectId, userId, body) {
   const { name, description, plannedStart, plannedEnd, displayOrder } = body;
   if (!name?.trim()) { const e = new Error('Phase name required'); e.statusCode = 400; throw e; }
+  if (name.trim().length > 200) { const e = new Error('Phase name must be 200 characters or fewer'); e.statusCode = 400; throw e; }
 
   if (await isInactive('project', projectId)) {
     const e = new Error('This Project is inactive — reactivate it before adding phases.');
     e.statusCode = 409; throw e;
+  }
+
+  if (plannedStart && plannedEnd && new Date(plannedEnd) < new Date(plannedStart)) {
+    const e = new Error("Phase end date can't be before its start date."); e.statusCode = 400; throw e;
   }
 
   const pool = await getPool();
@@ -149,6 +154,21 @@ async function updatePhase(phaseId, projectId, userId, body) {
     if (projectStart && new Date(body.plannedStart) < new Date(projectStart)) {
       const e = new Error("Phase start date can't be before its Project's planned start date.");
       e.statusCode = 400; throw e;
+    }
+  }
+  if (body.name !== undefined) {
+    if (!body.name.trim()) { const e = new Error('Phase name required'); e.statusCode = 400; throw e; }
+    if (body.name.trim().length > 200) { const e = new Error('Phase name must be 200 characters or fewer'); e.statusCode = 400; throw e; }
+  }
+  if (body.plannedStart !== undefined || body.plannedEnd !== undefined) {
+    const pool1 = await getPool();
+    const cur = await pool1.request().input('phaseId', sql.Int, phaseId)
+      .query(`SELECT planned_start AS plannedStart, planned_end AS plannedEnd FROM pm_phases WHERE phase_id=@phaseId`);
+    const row0 = cur.recordset[0] || {};
+    const effStart = body.plannedStart !== undefined ? body.plannedStart : row0.plannedStart;
+    const effEnd   = body.plannedEnd   !== undefined ? body.plannedEnd   : row0.plannedEnd;
+    if (effStart && effEnd && new Date(effEnd) < new Date(effStart)) {
+      const e = new Error("Phase end date can't be before its start date."); e.statusCode = 400; throw e;
     }
   }
   const fields = {};

@@ -30,6 +30,17 @@ export default function UserSearchInput({ selectedUser, onSelect, excludeUserIds
   const wrapRef     = useRef(null);
   const dropRef     = useRef(null);
 
+  // Resets the visible text whenever the parent clears the selection from
+  // the OUTSIDE (e.g. TaskItem's handleSendRequest sets assignSearch back
+  // to null right after successfully sending a request) — not just via
+  // this component's own "×" clear button, which already clears `query`
+  // itself. Without this, the box kept showing the just-assigned person's
+  // name after a successful send, forcing a manual clear before the next
+  // one could be searched.
+  useEffect(() => {
+    if (!selectedUser) setQuery('');
+  }, [selectedUser]);
+
   useEffect(() => {
     const handler = (e) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target) &&

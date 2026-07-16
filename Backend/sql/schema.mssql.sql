@@ -1068,3 +1068,4 @@ CREATE TABLE dbo.org_group_members (
     CONSTRAINT FK_org_group_members_group FOREIGN KEY (org_group_id) REFERENCES dbo.org_groups(org_group_id) ON DELETE CASCADE,
     CONSTRAINT FK_org_group_members_user  FOREIGN KEY (user_id)      REFERENCES dbo.auth_users(user_id) ON DELETE CASCADE
 );
+ 

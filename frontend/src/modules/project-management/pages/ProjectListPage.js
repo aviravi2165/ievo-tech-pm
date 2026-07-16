@@ -102,7 +102,7 @@ export default function ProjectListPage({ onSelectProject }) {
                 fine, both layout modes agree on exact pixel widths for a
                 fixed-width column, they just need to be told the SAME
                 widths, which this cols string now does. */}
-            <TableHead cols={`1fr ${COL.owner}px ${COL.dates}px ${COL.progress}px ${COL.status}px ${COL.role}px ${COL.actions}px`}>
+            <TableHead cols={`minmax(120px, 1fr) ${COL.owner}px ${COL.dates}px ${COL.progress}px ${COL.status}px ${COL.role}px ${COL.actions}px`}>
               <TableHeadCell>Name</TableHeadCell>
               <TableHeadCell>Owner</TableHeadCell>
               <TableHeadCell>Dates</TableHeadCell>
@@ -119,7 +119,7 @@ export default function ProjectListPage({ onSelectProject }) {
                     unconstrained flex row of text spans doesn't reliably
                     shrink/wrap, which is what caused rows to overflow their
                     fixed height and visually bleed into the row below. */}
-                <Cell style={{ minWidth: 0, flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
+                <Cell style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: '100%' }}>
                     <span style={{ fontSize: 10.5, fontWeight: 700, color: theme.colors.onyx, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }} title={p.name}>
                       {p.name}

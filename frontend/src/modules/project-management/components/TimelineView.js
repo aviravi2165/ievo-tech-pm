@@ -146,7 +146,7 @@ function SegmentBar({ segments, theme, contentWidth }) {
         title={seg.status}
       >
         {widthPx >= MIN_LABEL_PX && (
-          <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', fontSize: 10 }}>{seg.status}</span>
+          <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: 10, display: 'block' }}>{seg.status}</span>
         )}
       </TlBar>
     );
@@ -589,7 +589,7 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
                             style={{ ...barStyle(row.phase.plannedStart, phaseEnd), background: statusBarColor(theme, row.phase.status) }}
                             title={`${row.phase.name} · ${row.phase.status}`}
                           >
-                            <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', fontSize: 10 }}>
+                            <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: 10, display: 'block' }}>
                               {row.phase.status}
                             </span>
                           </TlBar>
@@ -633,7 +633,7 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
                               style={{ ...barStyle(actStart, actEnd), background: statusBarColor(theme, row.act.status) }}
                               title={`${row.act.name} · ${row.act.status}`}
                             >
-                              <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', fontSize: 10 }}>
+                              <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: 10, display: 'block' }}>
                                 {row.act.status}
                               </span>
                             </TlBar>
@@ -690,7 +690,7 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
                     <TlBarWrap style={{ width: contentWidth, height: ROW_H }}>
                       {segs ? <SegmentBar segments={segs} theme={theme} contentWidth={contentWidth} /> : (
                         <TlBar style={{ ...bStyle, background: statusBarColor(theme, row.task.status) }} title={`${row.task.name} · ${row.task.status}`}>
-                          <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', fontSize: 10 }}>
+                          <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: 10, display: 'block' }}>
                             {row.task.status}
                           </span>
                         </TlBar>

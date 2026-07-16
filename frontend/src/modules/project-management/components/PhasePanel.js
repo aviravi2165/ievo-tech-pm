@@ -233,7 +233,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
             </div>
           )}
 
-          <div style={{ width:90, flexShrink:0 }}>
+          <div style={{ width:104, flexShrink:0 }}>
             <ProgressBar value={phase.progress || 0} />
           </div>
           {isInactive && <InactiveBadge />}

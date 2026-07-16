@@ -144,7 +144,10 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
   useEffect(() => { setEditStart(toInput(task.startDate)); }, [task.startDate]);
   useEffect(() => { setEditDesc(task.description || ''); }, [task.description]);
 
-  const togglePanel = (p) => setPanel(v => v === p ? null : p);
+  const togglePanel = (p) => {
+    setPanel(v => v === p ? null : p);
+    if (p === 'deps') setDepError('');
+  };
 
   // ── Status change ──────────────────────────────────────────────────────────
   const handleStatusChange = async (e) => {
@@ -288,7 +291,15 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
         <Cell w={COL.assignee}
           onClick={(canManager && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('assign'); } : undefined}
           style={{ cursor: (canManager && !isInactive) ? 'pointer' : 'default' }}
-          title={(canManager && !isInactive) ? 'Click to manage assignees' : undefined}
+          title={
+            (canManager && !isInactive)
+              ? 'Click to manage assignees'
+              // Non-managers can't open the manage panel, but with more
+              // assignees than the avatar stack can show (the "+N" chip),
+              // a hover is the only way left to see who the rest are.
+              : ([...(task.assignees || []), ...allRequests.filter(r => r.requestStatus === 'Pending')]
+                  .map(a => a.name).join(', ') || undefined)
+          }
         >
           <Avatars assignees={task.assignees} pending={allRequests.filter(r => r.requestStatus === 'Pending')} />
         </Cell>

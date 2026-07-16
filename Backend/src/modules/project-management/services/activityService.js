@@ -58,7 +58,7 @@ async function getActivitiesForPhase(phaseId, userId, isAdmin = false) {
       INNER JOIN pm_phases parentPh ON parentPh.phase_id = a.phase_id
       INNER JOIN pm_projects parentProj ON parentProj.project_id = parentPh.project_id
       WHERE a.phase_id = @phaseId AND a.is_deleted = 0
-      ORDER BY a.display_order
+      ORDER BY a.is_active DESC, a.display_order
     `);
 
   const rows = result.recordset.map(r => ({ ...r, dependsOn: parseIdList(r.dependsOn) }));
@@ -210,6 +210,7 @@ async function removeActivityMember(activityId, targetUserId, actorUserId, proje
 async function createActivity(phaseId, projectId, userId, body) {
   const { name, description, plannedStart, plannedEnd, ownerId, displayOrder, memberIds = [] } = body;
   if (!name?.trim()) { const e = new Error('Activity name required'); e.statusCode = 400; throw e; }
+  if (name.trim().length > 200) { const e = new Error('Activity name must be 200 characters or fewer'); e.statusCode = 400; throw e; }
 
   if (await isBlocked('phase', phaseId)) {
     const e = new Error('This Phase is blocked by an unresolved dependency — resolve it before adding activities.');
@@ -218,6 +219,10 @@ async function createActivity(phaseId, projectId, userId, body) {
   if (await isInactive('phase', phaseId) || await isInactive('project', projectId)) {
     const e = new Error('This Phase is inactive — reactivate it before adding activities.');
     e.statusCode = 409; throw e;
+  }
+
+  if (plannedStart && plannedEnd && new Date(plannedEnd) < new Date(plannedStart)) {
+    const e = new Error("Activity end date can't be before its start date."); e.statusCode = 400; throw e;
   }
 
   const pool = await getPool();
@@ -319,6 +324,21 @@ async function updateActivity(activityId, projectId, userId, body) {
     if (phaseStart && new Date(body.plannedStart) < new Date(phaseStart)) {
       const e = new Error("Activity start date can't be before its Phase's planned start date.");
       e.statusCode = 400; throw e;
+    }
+  }
+  if (body.name !== undefined) {
+    if (!body.name.trim()) { const e = new Error('Activity name required'); e.statusCode = 400; throw e; }
+    if (body.name.trim().length > 200) { const e = new Error('Activity name must be 200 characters or fewer'); e.statusCode = 400; throw e; }
+  }
+  if (body.plannedStart !== undefined || body.plannedEnd !== undefined) {
+    const pool1 = await getPool();
+    const cur = await pool1.request().input('activityId', sql.Int, activityId)
+      .query(`SELECT planned_start AS plannedStart, planned_end AS plannedEnd FROM pm_activities WHERE activity_id=@activityId`);
+    const row0 = cur.recordset[0] || {};
+    const effStart = body.plannedStart !== undefined ? body.plannedStart : row0.plannedStart;
+    const effEnd   = body.plannedEnd   !== undefined ? body.plannedEnd   : row0.plannedEnd;
+    if (effStart && effEnd && new Date(effEnd) < new Date(effStart)) {
+      const e = new Error("Activity end date can't be before its start date."); e.statusCode = 400; throw e;
     }
   }
   const fields = {};
