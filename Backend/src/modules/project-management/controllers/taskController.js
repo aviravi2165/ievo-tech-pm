@@ -6,7 +6,7 @@ const audit = require('../services/auditService');
 const list           = async (req,res,next) => { try { res.json(await svc.getTasksForActivity(req.params.activityId)); } catch(e){next(e);} };
 const create         = async (req,res,next) => { try { res.status(201).json(await svc.createTask(req.params.activityId, req.pmProjectId, req.user.userId, req.body)); } catch(e){next(e);} };
 const update         = async (req,res,next) => { try { res.json(await svc.updateTask(req.params.id, req.pmProjectId, req.user.userId, req.body, req.user.userType === 'admin')); } catch(e){next(e);} };
-const updateStatus   = async (req,res,next) => { try { res.json(await svc.updateTaskStatus(req.params.id, req.pmProjectId, req.user.userId, req.body.status, req.projectRole)); } catch(e){next(e);} };
+const updateStatus   = async (req,res,next) => { try { res.json(await svc.updateTaskStatus(req.params.id, req.pmProjectId, req.user.userId, req.body.status, req.projectRole, req.user.userType === 'admin')); } catch(e){next(e);} };
 const remove         = async (req,res,next) => { try { res.json(await svc.deleteTask(req.params.id, req.pmProjectId, req.user.userId)); } catch(e){next(e);} };
 const reactivate      = async (req,res,next) => { try { await svc.reactivateTask(req.params.id, req.pmProjectId, req.user.userId); res.json({ok:true}); } catch(e){next(e);} };
 

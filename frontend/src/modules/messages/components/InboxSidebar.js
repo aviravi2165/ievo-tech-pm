@@ -142,8 +142,8 @@ export default function InboxSidebar({
                 </GroupIcon>
 
                 <GroupInfo>
-                  <GroupName bold={isUnread}>{primary}</GroupName>
-                  <GroupCount>{secondary}</GroupCount>
+                  <GroupName bold={isUnread} title={primary}>{primary}</GroupName>
+                  <GroupCount title={secondary}>{secondary}</GroupCount>
                 </GroupInfo>
 
                 <RowRight>

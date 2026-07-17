@@ -10,7 +10,14 @@ import styled from '@emotion/styled';
 export const ErpShell = styled.div`
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  /* height: calc(100% - 24px), not 100vh — with the app-wide zoom:0.95 in
+     App.js, 100vh is computed against the browser's real (unzoomed)
+     viewport, so zoom shrinks the box visually but left the full 5% as a
+     blank gap at the bottom (vh is viewport-relative, computed before zoom
+     applies). Anchoring to % instead fixes the runaway gap, and the fixed
+     trim keeps a deliberate margin of breathing room at the bottom rather
+     than the shell going fully edge-to-edge. */
+  height: calc(100% - 24px);
   overflow: hidden;
   background: ${p => p.theme.colors.greige};
 `;

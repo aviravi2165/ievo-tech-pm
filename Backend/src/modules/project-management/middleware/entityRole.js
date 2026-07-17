@@ -17,7 +17,6 @@
  *     requireEntityRole('activity', 'Manager'), ctrl.addMember);
  */
 
-const { getPool, sql } = require('../../../config/db');
 const { getEffectiveActivityRole, getEffectivePhaseRole, rank } = require('../services/roleService');
 
 function requireEntityRole(level, minRole) {
@@ -36,21 +35,23 @@ function requireEntityRole(level, minRole) {
         return next();
       }
 
-      // A project-level Manager can always administer Phases/Activities
-      // inside their own project — check this first, it's a single cheap query.
-      if (req.pmProjectId) {
-        const pool = await getPool();
-        const projResult = await pool.request()
-          .input('projectId', sql.Int, req.pmProjectId)
-          .input('userId',    sql.UniqueIdentifier, userId)
-          .query(`SELECT role FROM pm_members WHERE project_id=@projectId AND user_id=@userId`);
-        if (projResult.recordset[0]?.role === 'Manager') {
-          req.effectiveRole = 'Manager';
-          req.effectiveLevel = 'project';
-          return next();
-        }
-      }
-
+      // NOTE: there used to be a shortcut here that granted Manager access
+      // whenever the user was a project-level Manager, checked BEFORE
+      // looking at any entity-level row. It was meant to cover the
+      // bootstrap case — a project Manager acting on a Phase/Activity with
+      // no explicit row of their own yet — but getEffectiveActivityRole/
+      // getEffectivePhaseRole below already LEFT JOINs pm_members as a
+      // fallback and returns {role: projectRole, level:'project'} in
+      // exactly that case, so the shortcut was redundant for it. The only
+      // case where it actually changed behavior was the opposite one: a
+      // project Manager who has an EXPLICIT, LOWER role on this specific
+      // Phase/Activity (e.g. downgraded to Viewer to scope them out of
+      // sensitive work) — the shortcut silently overrode that downgrade for
+      // every write endpoint, even though the read side (this same
+      // roleService) and the UI (MemberManager's downgrade warning) both
+      // treat an explicit entity-level row as REPLACING the project role,
+      // not topping it up. Removed so both sides agree: most-specific-row-
+      // wins, consistently, for both reads and writes.
       let effective;
       if (level === 'activity') {
         // Prefer an explicitly-resolved activityId (set by a resolve*Project

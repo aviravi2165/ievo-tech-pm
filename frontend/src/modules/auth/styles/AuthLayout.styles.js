@@ -7,7 +7,7 @@ import styled from '@emotion/styled';
 // across both files. One shared file now, theme read via props.theme.
 export const Root = styled.div`
   display: flex;
-  height: 100vh;
+  height: 100%; /* not 100vh — see ErpShell in Shell.styles.js for why (zoom/vh gap) */
   font-family: 'DM Sans', 'Segoe UI', system-ui, sans-serif;
 `;
 

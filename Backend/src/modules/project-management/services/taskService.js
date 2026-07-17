@@ -466,7 +466,7 @@ async function updateTask(taskId, projectId, userId, body, isAdmin = false) {
   return { taskId, ...fields };
 }
 
-async function updateTaskStatus(taskId, projectId, userId, newStatus, projectRole) {
+async function updateTaskStatus(taskId, projectId, userId, newStatus, projectRole, isAdmin = false) {
   const pool = await getPool();
   const cur = await pool.request()
     .input('taskId', sql.Int,              taskId)
@@ -480,10 +480,26 @@ async function updateTaskStatus(taskId, projectId, userId, newStatus, projectRol
       WHERE t.task_id=@taskId AND t.is_deleted=0
     `);
   if (!cur.recordset[0]) { const e = new Error('Task not found'); e.statusCode = 404; throw e; }
+  const { status: oldStatus, activityId, phaseId, activityStatus } = cur.recordset[0];
+
+  // Entity-level check, not just the flat project role — a project Manager
+  // (or anyone) explicitly downgraded to Viewer on THIS task's Activity must
+  // stay read-only there, same as everywhere else Viewer is enforced in this
+  // file (see createTask's assignee guard above). requireRole('Member') at
+  // the route level only ever checked the coarse project-wide role, so an
+  // explicit Activity-level Viewer override previously had no effect at all
+  // on this endpoint — a project Manager downgraded on one Activity could
+  // still freely change status on every task in it via direct API call, even
+  // though the UI (correctly) showed them as read-only there.
+  if (!isAdmin) {
+    const effective = await getEffectiveActivityRole(userId, activityId);
+    if (effective.role === 'Viewer') {
+      const e = new Error('You have read-only access to this task.'); e.statusCode = 403; throw e;
+    }
+  }
   if (projectRole === 'Member' && !cur.recordset[0].isAssigned) {
     const e = new Error('Members can only update their own assigned tasks'); e.statusCode = 403; throw e;
   }
-  const { status: oldStatus, activityId, phaseId, activityStatus } = cur.recordset[0];
 
   // Refuse to change the status of a task sitting inside something that's
   // currently Blocked (Activity or Phase) — it cascades down until the
@@ -607,13 +623,23 @@ async function updateTaskStatus(taskId, projectId, userId, newStatus, projectRol
     }
   } else if (oldStatus === DONE_STATUS) {
     // The reverse case: this task was Complete and just moved away from it
-    // (e.g. back to Ongoing), which can drop its Activity's (and in turn
-    // Phase's) progress back below 100%. Anything that depends on that
-    // Activity/Phase — and hasn't been touched yet (still 'To Do') — needs
-    // to go back to Blocked, since it was only ever unblocked on the
-    // assumption the Activity/Phase had genuinely finished. A dependent
-    // that already has work done on it (Ongoing/Complete) is left alone —
-    // reevaluateDependents/blockIfNeeded only ever flips FROM 'To Do'.
+    // (e.g. back to Ongoing). Re-check any OTHER task that directly depends
+    // on this one via pm_task_deps first — it was only ever unblocked on the
+    // assumption this task had genuinely finished, so if it hasn't been
+    // touched yet (still 'To Do') it needs to go back to Blocked. This is
+    // the task-level counterpart to the Activity/Phase-level re-blocking
+    // below (which only covers dependents of the parent Activity/Phase, not
+    // of this task itself — a plain task->task dependency edge was
+    // previously never re-checked on regression).
+    const reblockedTaskIds = await reevaluateDependents(() => pool.request(), 'task', taskId);
+    for (const id of reblockedTaskIds) broadcastStatusChanged(projectId, { entityType:'task', entityId:id, status:'Blocked' });
+
+    // Same idea one level up: dropping this task out of Complete can also
+    // drop its Activity's (and in turn Phase's) progress back below 100%.
+    // Anything that depends on that Activity/Phase — and hasn't been
+    // touched yet (still 'To Do') — needs to go back to Blocked too. A
+    // dependent that already has work done on it (Ongoing/Complete) is left
+    // alone — reevaluateDependents/blockIfNeeded only ever flips FROM 'To Do'.
     const activityProgress = await getActivityProgress(activityId);
     if (activityProgress < 100) {
       const reblockedActivityIds = await reevaluateDependents(() => pool.request(), 'activity', activityId);
