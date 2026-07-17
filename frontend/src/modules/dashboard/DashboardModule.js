@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTheme } from '@emotion/react';
 import { requestApi, taskApi, projectApi } from '../project-management/api/projectApi';
 import AdminDashboard from './AdminDashboard';
@@ -84,6 +84,12 @@ function navigateToProject(projectId) {
   setTimeout(() => {
     window.dispatchEvent(new CustomEvent('open-project', { detail: { projectId } }));
   }, 80);
+}
+
+// Just switches to the Projects module and lands on its list view — no
+// specific project to jump into, unlike navigateToProject above.
+function navigateToProjectsList() {
+  window.dispatchEvent(new CustomEvent('navigate-to-module', { detail: { moduleId: 'project-management' } }));
 }
 
 // ── Audit action humanizer ─────────────────────────────────────────────────────
@@ -284,6 +290,7 @@ export default function DashboardModule({ currentUser }) {
 
 function DashboardModuleInner({ currentUser }) {
   const theme = useTheme();
+  const attentionRef = useRef(null);
   const [requests,    setRequests]    = useState([]);
   const [activeTasks, setActiveTasks] = useState([]);
   const [auditFeed,   setAuditFeed]   = useState([]);
@@ -370,7 +377,7 @@ function DashboardModuleInner({ currentUser }) {
       ) : (
         <>
           <StatGrid>
-            <StatTile>
+            <StatTile clickable onClick={navigateToProjectsList} title="Open Projects">
               <StatValue>{projects.length}</StatValue>
               <StatLabel>My Projects</StatLabel>
             </StatTile>
@@ -386,11 +393,16 @@ function DashboardModuleInner({ currentUser }) {
               <StatValue accent={overdueCount ? theme.colors.danger : undefined}>{overdueCount}</StatValue>
               <StatLabel>Overdue (mine)</StatLabel>
             </StatTile>
-            <StatTile clickable={blockedCount > 0} accent={blockedCount ? theme.colors.danger : undefined} onClick={() => attention[0] && navigateToProject(attention[0].projectId)}>
+            {/* Clicking scrolls down to the "Needs Attention" section below
+                (which lists every one of these, not just one) instead of
+                jumping straight into a single arbitrary project — with
+                more than one blocked/overdue task, there's no single
+                "right" project to jump to. */}
+            <StatTile clickable={blockedCount > 0} accent={blockedCount ? theme.colors.danger : undefined} onClick={() => attentionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
               <StatValue accent={blockedCount ? theme.colors.danger : undefined}>{blockedCount}</StatValue>
               <StatLabel>Blocked in My Projects</StatLabel>
             </StatTile>
-            <StatTile clickable={attnOverdueCount > 0} accent={attnOverdueCount ? theme.colors.danger : undefined} onClick={() => attention[0] && navigateToProject(attention[0].projectId)}>
+            <StatTile clickable={attnOverdueCount > 0} accent={attnOverdueCount ? theme.colors.danger : undefined} onClick={() => attentionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
               <StatValue accent={attnOverdueCount ? theme.colors.danger : undefined}>{attnOverdueCount}</StatValue>
               <StatLabel>Overdue in My Projects</StatLabel>
             </StatTile>
@@ -443,7 +455,7 @@ function DashboardModuleInner({ currentUser }) {
             {/* Needs Attention — blocked/overdue anywhere in MY projects, not
                 just tasks assigned to me (useful for Managers watching their
                 team's blockers, same framing as the admin dashboard). */}
-            <Section tight>
+            <Section tight ref={attentionRef}>
               <SectionHeadRow>
                 <SectionTitle>Needs Attention — My Projects</SectionTitle>
                 {attention.length > 0 && <SectionPill bg={theme.colors.danger}>{attention.length}</SectionPill>}

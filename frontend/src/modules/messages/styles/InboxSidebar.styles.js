@@ -58,23 +58,21 @@ export const SidebarNav = styled.nav`
   flex-shrink: 0;
 `;
 
-// Compose button + search + nav used to be siblings of ConvListWrap
-// (ConversationList.styles.js) rather than living inside it — ConvListWrap
-// is the only one of the two with `overflow-y: auto`, so whenever it grew
-// a scrollbar (enough conversations to scroll), its own available content
-// width shrank by the scrollbar's width while this sibling block above it
-// didn't, since it never scrolls. The search box (and everything else up
-// here) then rendered a few pixels wider than the conversation cards below
-// it — reading as the search box "overflowing" relative to its neighbors,
-// even though it was technically still inside the sidebar. Wrapping this
-// in a sticky header INSIDE the same scrolling container as the cards
-// (see ConvListWrap usage in InboxSidebar.js/GroupManager.js) means both
-// share the exact same available width always, by construction — not by
-// matching scrollbar-width guesses.
+// Compose button + search + nav are a non-scrolling sibling ABOVE
+// ConvListWrap, not living inside its scroll flow. An earlier attempt put
+// this block inside ConvListWrap as a `position: sticky` first child, to
+// fix a different (purely cosmetic) bug: as a true sibling, this block
+// didn't share the conversation list's scrollbar-narrowed width, so it
+// rendered a few px wider than the cards below it once the list grew a
+// scrollbar. That sticky-inside approach traded a cosmetic width mismatch
+// for a much worse bug — the same unreliable sticky-inside-a-flex-scroll
+// behavior seen elsewhere in this app (see TimelineView's frozen-column
+// comment) — rows would scroll up OVER this header instead of staying
+// beneath it. Reverted to a real sibling; the original width mismatch is
+// fixed instead by `scrollbar-gutter: stable` on ConvListWrap (reserves
+// the scrollbar's width always, so its content width never shifts based
+// on whether a scrollbar is actually showing).
 export const StickyTop = styled.div`
-  position: sticky;
-  top: 0;
-  z-index: 2;
   background: ${p => p.theme.colors.white};
   flex-shrink: 0;
 `;

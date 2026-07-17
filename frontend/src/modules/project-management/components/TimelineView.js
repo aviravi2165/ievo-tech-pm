@@ -62,6 +62,40 @@ function daysBetween(a, b) {
   return Math.round((db - da) / 86400000);
 }
 
+function toISODateStr(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+const DONE_PHASE_ACTIVITY = ['Completed'];
+const DONE_TASK = ['Complete'];
+
+// An item's ACTUAL finish can run past its planned end/due date — either
+// it's still open and currently overdue (the overrun grows day by day
+// until it's resolved) or it finished late. Either way the bar should
+// visually show the real delay instead of silently clipping at the
+// original deadline. Returns the later of plannedEnd and whichever
+// "actually happened" reference point applies:
+//   - done now  → when it actually transitioned to done (from its own
+//     status history's last segment, which IS that transition since the
+//     history's final segment is always the current status)
+//   - still open → today (so an overdue-and-still-open bar keeps growing)
+function effectiveEndDate(plannedEnd, status, doneStatuses, history) {
+  const pe = parseDate(plannedEnd);
+  if (!pe) return plannedEnd;
+  const isDone = doneStatuses.includes(status);
+  let reference;
+  if (isDone) {
+    const last = history && history.length ? history[history.length - 1] : null;
+    reference = (last && doneStatuses.includes(last.status) && last.from) ? new Date(last.from) : pe;
+  } else {
+    reference = new Date();
+  }
+  return reference > pe ? toISODateStr(reference) : plannedEnd;
+}
+
 function fmt(d) {
   const dt = d instanceof Date ? d : parseDate(d);
   if (!dt) return '';
@@ -112,7 +146,7 @@ function SegmentBar({ segments, theme, contentWidth }) {
         title={seg.status}
       >
         {widthPx >= MIN_LABEL_PX && (
-          <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', fontSize: 10 }}>{seg.status}</span>
+          <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: 10, display: 'block' }}>{seg.status}</span>
         )}
       </TlBar>
     );
@@ -214,14 +248,20 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
     phases.forEach(p => {
       if (p.plannedStart) dates.push(p.plannedStart);
       if (p.plannedEnd)   dates.push(p.plannedEnd);
+      // Overrun/delay can push the actual end past plannedEnd — the range
+      // needs to cover that too, or a late-finishing bar would render past
+      // 100% of the scrollable width (invisible / clipped).
+      dates.push(effectiveEndDate(p.plannedEnd, p.status, DONE_PHASE_ACTIVITY, phaseHistory[p.phaseId]));
     });
     Object.values(actCache).forEach(acts => acts.forEach(a => {
       if (a.plannedStart) dates.push(a.plannedStart);
       if (a.plannedEnd)   dates.push(a.plannedEnd);
+      dates.push(effectiveEndDate(a.plannedEnd, a.status, DONE_PHASE_ACTIVITY, actHistory[a.activityId]));
     }));
     Object.values(taskCache).forEach(tasks => tasks.forEach(t => {
       if (t.startDate) dates.push(t.startDate);
       if (t.dueDate)   dates.push(t.dueDate);
+      dates.push(effectiveEndDate(t.dueDate, t.status, DONE_TASK, taskHistory[t.taskId]));
     }));
     const valid = dates.filter(Boolean).map(d => parseDate(d)).filter(Boolean);
 
@@ -240,7 +280,7 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
       totalDays: Math.max(daysBetween(min, max), 14),
       hasDates: true,
     };
-  }, [phases, projectStart, projectEnd, actCache, taskCache]);
+  }, [phases, projectStart, projectEnd, actCache, taskCache, phaseHistory, actHistory, taskHistory]);
 
   // Day markers — every single day gets its own tick (not just once a
   // week), per explicit request: label is just the day-of-month number
@@ -289,13 +329,6 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
 
   const contentWidth = Math.max(totalDays * PX_PER_DAY, MIN_CONTENT_W);
 
-  function toISODateStr(d) {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  }
-
   // A child's real dates (task.createdAt/dueDate, activity.plannedStart/End)
   // can legitimately fall outside its parent's planned range — e.g. a task
   // created before the activity's planned-start was set, or moved out
@@ -310,9 +343,24 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
     const ps = parseDate(parentStart);
     const pe = parseDate(parentEnd);
     let cs = s, ce = e;
-    if (ps && cs < ps) cs = ps;
-    if (pe && ce > pe) ce = pe;
-    if (cs > ce) cs = ce;
+    // A child's range can end up with NO overlap with its parent's at all —
+    // not just at creation (validated server-side) but later, if the
+    // PARENT's own dates get edited/narrowed afterward (nothing currently
+    // stops a Phase's dates from shrinking below an Activity's range).
+    // Clamping start/end independently in that case put the result OUTSIDE
+    // the parent entirely (e.g. child entirely before parent → collapsed to
+    // the child's own end date, still left of the parent's start) — exactly
+    // the "nesting looks broken" bug this clamp exists to prevent. Detect
+    // the no-overlap case first and snap to a single point INSIDE the
+    // parent's range instead.
+    if (ps && e < ps) {
+      cs = ce = ps;
+    } else if (pe && s > pe) {
+      cs = ce = pe;
+    } else {
+      if (ps && cs < ps) cs = ps;
+      if (pe && ce > pe) ce = pe;
+    }
     return [toISODateStr(cs), toISODateStr(ce)];
   };
 
@@ -527,17 +575,21 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
                 background: levelBg(row.kind, theme),
                 ...(row.kind === 'phase' && row.groupStart ? { borderTop: `2px solid ${theme.colors.border}`, paddingTop: 6, marginTop: 2 } : null),
               }}>
-                {row.kind === 'phase' && (
+                {row.kind === 'phase' && (() => {
+                  // Extend past plannedEnd if this Phase finished late (or is
+                  // still open and currently overdue) — see effectiveEndDate.
+                  const phaseEnd = effectiveEndDate(row.phase.plannedEnd, row.phase.status, DONE_PHASE_ACTIVITY, phaseHistory[row.phase.phaseId]);
+                  return (
                   <TlBarWrap style={{ width: contentWidth, height: ROW_H }}>
-                    {barStyle(row.phase.plannedStart, row.phase.plannedEnd) ? (
+                    {barStyle(row.phase.plannedStart, phaseEnd) ? (
                       (() => {
-                        const segs = segmentedBarStyle(row.phase.plannedStart, row.phase.plannedEnd, phaseHistory[row.phase.phaseId]);
+                        const segs = segmentedBarStyle(row.phase.plannedStart, phaseEnd, phaseHistory[row.phase.phaseId]);
                         return segs ? <SegmentBar segments={segs} theme={theme} contentWidth={contentWidth} /> : (
                           <TlBar
-                            style={{ ...barStyle(row.phase.plannedStart, row.phase.plannedEnd), background: statusBarColor(theme, row.phase.status) }}
+                            style={{ ...barStyle(row.phase.plannedStart, phaseEnd), background: statusBarColor(theme, row.phase.status) }}
                             title={`${row.phase.name} · ${row.phase.status}`}
                           >
-                            <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', fontSize: 10 }}>
+                            <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: 10, display: 'block' }}>
                               {row.phase.status}
                             </span>
                           </TlBar>
@@ -553,15 +605,23 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
                       </div>
                     )}
                   </TlBarWrap>
-                )}
+                  );
+                })()}
                 {row.kind === 'activity' && (() => {
-                  // Clamp the rendered range to the parent Phase's planned
-                  // range (when it has one) — an Activity's own dates can
-                  // legitimately sit outside it, but drawing it that way
-                  // makes the nesting look broken.
+                  // Extend past plannedEnd if this Activity finished late (or
+                  // is still open and currently overdue).
+                  const actOwnEnd = effectiveEndDate(row.act.plannedEnd, row.act.status, DONE_PHASE_ACTIVITY, actHistory[row.act.activityId]);
+                  // Clamp the rendered range to the parent Phase's EFFECTIVE
+                  // range (its own delay-extended end, not just its raw
+                  // planned end) — otherwise a Phase that's also running
+                  // late would clip this Activity's overrun right back down
+                  // to the Phase's stale original deadline.
+                  const parentPhaseEnd = row.parentPhase
+                    ? effectiveEndDate(row.parentPhase.plannedEnd, row.parentPhase.status, DONE_PHASE_ACTIVITY, phaseHistory[row.parentPhase.phaseId])
+                    : undefined;
                   const [actStart, actEnd] = clampToParent(
-                    row.act.plannedStart, row.act.plannedEnd,
-                    row.parentPhase?.plannedStart, row.parentPhase?.plannedEnd
+                    row.act.plannedStart, actOwnEnd,
+                    row.parentPhase?.plannedStart, parentPhaseEnd
                   );
                   return (
                     <TlBarWrap style={{ width: contentWidth, height: ROW_H }}>
@@ -573,7 +633,7 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
                               style={{ ...barStyle(actStart, actEnd), background: statusBarColor(theme, row.act.status) }}
                               title={`${row.act.name} · ${row.act.status}`}
                             >
-                              <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', fontSize: 10 }}>
+                              <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: 10, display: 'block' }}>
                                 {row.act.status}
                               </span>
                             </TlBar>
@@ -597,10 +657,21 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
                   // existed) — clamped to the parent Activity's planned
                   // range, same reasoning as the Activity→Phase clamp above.
                   const rawStart = row.task.startDate || row.task.createdAt;
-                  const rawEnd   = row.task.dueDate || new Date().toISOString();
+                  // Extend past dueDate if this Task finished late (or is
+                  // still open and currently overdue).
+                  const rawEnd = effectiveEndDate(
+                    row.task.dueDate || new Date().toISOString(),
+                    row.task.status, DONE_TASK, taskHistory[row.task.taskId]
+                  );
+                  // Clamp against the parent Activity's own EFFECTIVE end
+                  // (its delay-extended end, not its raw planned end) — same
+                  // reasoning as the Activity→Phase clamp above.
+                  const parentActEnd = row.parentAct
+                    ? effectiveEndDate(row.parentAct.plannedEnd, row.parentAct.status, DONE_PHASE_ACTIVITY, actHistory[row.parentAct.activityId])
+                    : undefined;
                   const [taskStart, taskEnd] = clampToParent(
                     rawStart, rawEnd,
-                    row.parentAct?.plannedStart, row.parentAct?.plannedEnd
+                    row.parentAct?.plannedStart, parentActEnd
                   );
                   const bStyle = barStyle(taskStart, taskEnd);
                   if (!bStyle) return (
@@ -619,7 +690,7 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
                     <TlBarWrap style={{ width: contentWidth, height: ROW_H }}>
                       {segs ? <SegmentBar segments={segs} theme={theme} contentWidth={contentWidth} /> : (
                         <TlBar style={{ ...bStyle, background: statusBarColor(theme, row.task.status) }} title={`${row.task.name} · ${row.task.status}`}>
-                          <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', fontSize: 10 }}>
+                          <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: 10, display: 'block' }}>
                             {row.task.status}
                           </span>
                         </TlBar>

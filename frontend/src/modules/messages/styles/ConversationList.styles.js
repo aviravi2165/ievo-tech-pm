@@ -5,7 +5,12 @@ import styled from '@emotion/styled';
 // .msg-conv-item styles that turned out to be unused dead CSS — confirmed
 // via grep before dropping them here) and GroupManager.
 
-export const ConvListWrap = styled.div` flex: 1; overflow-y: auto; padding: 4px 0; `;
+// scrollbar-gutter: stable reserves the scrollbar's width in the layout
+// at all times, whether or not a scrollbar is actually showing — so this
+// element's content width never shifts as items are added/removed, and
+// the non-scrolling header sibling above it (StickyTop) always lines up
+// with it without needing to literally share its scroll container.
+export const ConvListWrap = styled.div` flex: 1; overflow-y: auto; padding: 4px 0; scrollbar-gutter: stable; `;
 
 export const ListError = styled.div`
   padding: 20px 16px;

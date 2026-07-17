@@ -12,7 +12,7 @@ const server = http.createServer(app);
 const { closeSocket } = initAllRealtime(server);
 
 server.listen(PORT ,() => {
-  console.log(`I.EVO ERP API listening on port ${PORT}`);
+  console.log(`SPECULA listening on port ${PORT}`);
   console.log('Modules: dashboard, project-management, scheduling, messages');
 });
 

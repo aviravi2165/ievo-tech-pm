@@ -608,23 +608,21 @@ export default function GroupManager({
             <p>Threads · Design | Demonstrate | Deliver</p>
           </SidebarHeader>
 
-          {/* Search now lives inside the same scrolling container as the
-              rows (wrapped in StickyTop) rather than as a non-scrolling
-              sibling of ConvListWrap — see StickyTop's comment in
-              InboxSidebar.styles.js: as a sibling it didn't share the
-              list's scrollbar-narrowed width, so it rendered a few pixels
-              wider than the rows below it. */}
-          <ConvListWrap>
-            <StickyTop>
-              <SearchWrap style={isSuperAdmin ? { margin: '16px 12px 8px 12px' } : undefined}>
-                <SearchInput
-                  placeholder="Search threads by subject…"
-                  value={threadSearch}
-                  onChange={e => setThreadSearch(e.target.value)}
-                />
-              </SearchWrap>
-            </StickyTop>
+          {/* Search — a non-scrolling header sibling ABOVE ConvListWrap, not
+              living inside its scroll flow (see StickyTop's comment in
+              InboxSidebar.styles.js — a sticky-inside-scroll approach here
+              previously let rows scroll up OVER this header). */}
+          <StickyTop>
+            <SearchWrap style={isSuperAdmin ? { margin: '16px 12px 8px 12px' } : undefined}>
+              <SearchInput
+                placeholder="Search threads by subject…"
+                value={threadSearch}
+                onChange={e => setThreadSearch(e.target.value)}
+              />
+            </SearchWrap>
+          </StickyTop>
 
+          <ConvListWrap>
             <div style={{ padding: '8px 12px' }}>
             {threadsLoading && <LoaderWrap><Spinner /></LoaderWrap>}
 
@@ -730,31 +728,32 @@ export default function GroupManager({
           </AddCard>
         )}
 
-        {/* Compose/search now live inside the same scrolling container as
-            the rows (wrapped in StickyTop) rather than as non-scrolling
-            siblings of ConvListWrap — see StickyTop's comment in
-            InboxSidebar.styles.js. */}
+        {/* Compose/search — a non-scrolling header sibling ABOVE
+            ConvListWrap, not living inside its scroll flow (see
+            StickyTop's comment in InboxSidebar.styles.js — a
+            sticky-inside-scroll approach here previously let group rows
+            scroll up OVER this header instead of staying beneath it). */}
+        <StickyTop>
+          {!isSuperAdmin && (
+            <ComposeBtn onClick={() => setCreating(true)}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              New Group
+            </ComposeBtn>
+          )}
+
+          <SearchWrap style={isSuperAdmin ? { margin: '16px 12px 8px 12px' } : undefined}>
+            <SearchInput
+              type="text"
+              placeholder="Search groups by name…"
+              value={groupSearch}
+              onChange={e => setGroupSearch(e.target.value)}
+            />
+          </SearchWrap>
+        </StickyTop>
+
         <ConvListWrap>
-          <StickyTop>
-            {!isSuperAdmin && (
-              <ComposeBtn onClick={() => setCreating(true)}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                </svg>
-                New Group
-              </ComposeBtn>
-            )}
-
-            <SearchWrap style={isSuperAdmin ? { margin: '16px 12px 8px 12px' } : undefined}>
-              <SearchInput
-                type="text"
-                placeholder="Search groups by name…"
-                value={groupSearch}
-                onChange={e => setGroupSearch(e.target.value)}
-              />
-            </SearchWrap>
-          </StickyTop>
-
           <div style={{ padding: '8px 12px' }}>
           {loading && <LoaderWrap><Spinner /></LoaderWrap>}
 

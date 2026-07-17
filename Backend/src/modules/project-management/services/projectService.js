@@ -52,7 +52,7 @@ async function listProjects(userId, isAdmin = false) {
       FROM pm_projects p
       ${joinClause}
       LEFT JOIN auth_users u ON u.user_id=p.owner_id
-      WHERE p.is_deleted=0 ORDER BY p.modified_at DESC
+      WHERE p.is_deleted=0 ORDER BY p.is_active DESC, p.modified_at DESC
     `);
   const rows = result.recordset;
   // Admins always get full manage access regardless of any explicit
@@ -124,6 +124,10 @@ async function getProject(projectId, userId, isAdmin = false) {
 async function createProject(userId, body) {
   const { name, description, plannedStart, plannedEnd, deptId } = body;
   if (!name?.trim()) { const e = new Error('Project name is required'); e.statusCode = 400; throw e; }
+  if (name.trim().length > 200) { const e = new Error('Project name must be 200 characters or fewer'); e.statusCode = 400; throw e; }
+  if (plannedStart && plannedEnd && new Date(plannedEnd) < new Date(plannedStart)) {
+    const e = new Error("Project end date can't be before its start date."); e.statusCode = 400; throw e;
+  }
 
   let project;
   await withTransaction(async (req) => {
@@ -163,6 +167,21 @@ async function updateProject(projectId, userId, body) {
   if (await isInactive('project', projectId)) {
     const e = new Error('This Project is inactive — reactivate it before making changes.');
     e.statusCode = 409; throw e;
+  }
+  if (body.name !== undefined) {
+    if (!body.name.trim()) { const e = new Error('Project name is required'); e.statusCode = 400; throw e; }
+    if (body.name.trim().length > 200) { const e = new Error('Project name must be 200 characters or fewer'); e.statusCode = 400; throw e; }
+  }
+  if (body.plannedStart !== undefined || body.plannedEnd !== undefined) {
+    const pool0 = await getPool();
+    const cur = await pool0.request().input('projectId', sql.Int, projectId)
+      .query(`SELECT planned_start AS plannedStart, planned_end AS plannedEnd FROM pm_projects WHERE project_id=@projectId`);
+    const row0 = cur.recordset[0] || {};
+    const effStart = body.plannedStart !== undefined ? body.plannedStart : row0.plannedStart;
+    const effEnd   = body.plannedEnd   !== undefined ? body.plannedEnd   : row0.plannedEnd;
+    if (effStart && effEnd && new Date(effEnd) < new Date(effStart)) {
+      const e = new Error("Project end date can't be before its start date."); e.statusCode = 400; throw e;
+    }
   }
   const fields = {};
   if (body.name         !== undefined) fields.name          = body.name.trim();

@@ -237,8 +237,14 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
                             style={{ background:theme.colors.mid, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm, padding:'3px 6px', color:theme.colors.onyx, fontSize:11, fontFamily:'inherit', outline:'none' }}>
                             {PROJECT_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
                           </select>
-                          <BtnGhost style={{ fontSize:11, padding:'2px 8px', color: theme.colors.danger, borderColor:'rgba(168,93,77,.35)' }}
-                            onClick={() => handleRemoveProjectMember(m.userId, m.name)}>Remove</BtnGhost>
+                          {/* No self-removal — same guard as MemberManager's
+                              full Members tab (and enforced server-side);
+                              this quick popover was missed when that rule
+                              was added and still offered the button. */}
+                          {String(m.userId) !== String(myUserId) && (
+                            <BtnGhost style={{ fontSize:11, padding:'2px 8px', color: theme.colors.danger, borderColor:'rgba(168,93,77,.35)' }}
+                              onClick={() => handleRemoveProjectMember(m.userId, m.name)}>Remove</BtnGhost>
+                          )}
                         </>
                       ) : (
                         <DepBadge as="span" style={{ padding:'2px 10px' }}>{m.role}</DepBadge>

@@ -72,8 +72,15 @@ export const GROUP_COL = {
 // re-added as an explicit icon). Rows with fewer icons than the track's
 // width just show a bit of slack on the left within their OWN actions
 // cell — contained there, never touching any other column.
-export const GROUP_GRID_COLS = `1fr ${GROUP_COL.manager}px ${GROUP_COL.dates}px ${GROUP_COL.status}px 124px`;
-export const TASK_GRID_COLS  = `1fr ${COL.assignee}px ${COL.due}px ${COL.priority}px ${COL.status}px 124px`;
+// minmax(120px, 1fr), not bare 1fr — a bare 1fr track has no min-content
+// floor once overflow:hidden is on its cell (which it is, see TableHeadCell/
+// Cell below), so under enough width pressure elsewhere in the page (e.g.
+// the message panel's own min-width) this track computes all the way down
+// to 0 and the Name column silently disappears instead of the Table's own
+// overflow-x:auto kicking in. The 120px floor forces horizontal scrolling
+// once things get that tight, instead of erasing the column.
+export const GROUP_GRID_COLS = `minmax(120px, 1fr) ${GROUP_COL.manager}px ${GROUP_COL.dates}px ${GROUP_COL.status}px 124px`;
+export const TASK_GRID_COLS  = `minmax(120px, 1fr) ${COL.assignee}px ${COL.due}px ${COL.priority}px ${COL.status}px 124px`;
 
 // flex-shrink: 0 — Table is rendered as a flex child of DetailBody
 // (display:flex; flex-direction:column). Without this, a flex child
@@ -187,7 +194,7 @@ export const TaskTableRow = styled.div`
 // inside a Cell needs to escape its bounds (native <select> dropdowns paint
 // in their own browser layer, unaffected by ancestor overflow).
 export const Cell = styled.div`
-  ${(props) => (props.w ? `width:${props.w}px; flex-shrink:0;` : 'flex:1; min-width:0;')}
+  ${(props) => (props.w ? `width:${props.w}px; flex-shrink:0;` : 'flex:1 1 120px; min-width:120px;')}
   display: flex; align-items: center; gap: 6px; min-height: 0; overflow: hidden;
   ${(props) => (props.center ? 'justify-content:center;' : '')}
 `;

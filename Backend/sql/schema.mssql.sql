@@ -1035,3 +1035,37 @@ IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_tas
 -- ────────────────────────────────────────────────────────────
 IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_tasks') AND name = 'start_date')
     ALTER TABLE dbo.pm_tasks ADD start_date date NULL;
+
+-- ────────────────────────────────────────────────────────────
+-- org_groups / org_group_members — admin-managed, org-wide "distribution
+-- list" style groups (e.g. "Production Team"), distinct from comm_groups
+-- (user-created CHAT groups with their own conversation thread). An org
+-- group has no conversation of its own — it exists purely as a named,
+-- reusable set of users, created/managed by admins only, visible to
+-- everyone, and used as a quick way to add many recipients at once in the
+-- New Message composer (selecting one immediately expands to its member
+-- users as individual recipient chips — same behavior as a Gmail contact
+-- group/label, not a persistent group entity in the sent message).
+-- ────────────────────────────────────────────────────────────
+IF OBJECT_ID('dbo.org_groups', 'U') IS NULL
+CREATE TABLE dbo.org_groups (
+    org_group_id  int IDENTITY(1,1) NOT NULL,
+    name          varchar(150) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    description   nvarchar(500) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+    created_by    uniqueidentifier NOT NULL,
+    is_active     bit DEFAULT 1 NOT NULL,
+    created_at    datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_org_groups PRIMARY KEY (org_group_id),
+    CONSTRAINT FK_org_groups_createdby FOREIGN KEY (created_by) REFERENCES dbo.auth_users(user_id)
+);
+
+IF OBJECT_ID('dbo.org_group_members', 'U') IS NULL
+CREATE TABLE dbo.org_group_members (
+    org_group_id int NOT NULL,
+    user_id      uniqueidentifier NOT NULL,
+    added_at     datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_org_group_members PRIMARY KEY (org_group_id, user_id),
+    CONSTRAINT FK_org_group_members_group FOREIGN KEY (org_group_id) REFERENCES dbo.org_groups(org_group_id) ON DELETE CASCADE,
+    CONSTRAINT FK_org_group_members_user  FOREIGN KEY (user_id)      REFERENCES dbo.auth_users(user_id) ON DELETE CASCADE
+);
+ 

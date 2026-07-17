@@ -30,6 +30,19 @@
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const { resolveTaskManagerIds, resolveActivityThreadSeedIds } = require('./roleService');
 
+// Column widths the composed names must fit into. Entity names are each
+// valid on their own (≤200 chars), but the thread subject/group name is a
+// CONCATENATION of up to four of them — which can far exceed these column
+// limits and made the INSERT throw "String or binary data would be
+// truncated", failing the whole Activity/Task creation it was part of.
+const GROUP_NAME_MAX = 150; // comm_groups.group_name  varchar(150)
+const SUBJECT_MAX    = 300; // comm_conversations.subject varchar(300)
+
+function clip(str, max) {
+  const s = String(str ?? '');
+  return s.length <= max ? s : s.slice(0, max - 1) + '…';
+}
+
 // ── Low-level: mirrors messageService's MERGE-based participant upsert ────────
 // Duplicated intentionally rather than importing from messageService — these
 // system threads are not subject to the "only the CC creator can add
@@ -180,7 +193,7 @@ async function ensureTaskThread(taskId) {
   if (!task) return null;
 
   // Hierarchical subject: Project / Phase / Activity / Task
-  const subject = `${task.projectName} / ${task.phaseName} / ${task.activityName} / ${task.taskName}`;
+  const subject = clip(`${task.projectName} / ${task.phaseName} / ${task.activityName} / ${task.taskName}`, SUBJECT_MAX);
 
   // resolveTaskManagerIds (not resolveActivityManagerIds) — cumulatively
   // includes Phase and Project Managers too, not just the Activity's own
@@ -273,9 +286,9 @@ async function ensureActivityThread(activityId) {
   if (!activity) return null;
 
   // Group name: "ProjectName / ActivityName" — short and recognisable in the Groups tab
-  const groupName = `${activity.projectName} · ${activity.activityName}`;
+  const groupName = clip(`${activity.projectName} · ${activity.activityName}`, GROUP_NAME_MAX);
   // Conversation subject: full hierarchy for context in thread header
-  const subject   = `${activity.projectName} / ${activity.phaseName} / ${activity.activityName}`;
+  const subject   = clip(`${activity.projectName} / ${activity.phaseName} / ${activity.activityName}`, SUBJECT_MAX);
 
   const seedIds   = await resolveActivityThreadSeedIds(activityId);
   const creatorId = seedIds[0];

@@ -76,6 +76,14 @@ export const ToggleBadge = styled.span`
   justify-content: center;
 `;
 
+// Always mounted now (see MessagePanel.js) — CommunicationModule no longer
+// unmounts/remounts on every toggle (was losing scroll position, drafts,
+// open thread, etc. each time), and fades in/out instead of popping,
+// matching the Panel's own width transition instead of jumping the instant
+// `open` flips. Fades out FASTER than the width collapses (0.12s vs 0.22s)
+// so content doesn't visibly get squashed into the narrowing rail before
+// it's gone; fades in with a short delay so it doesn't appear cramped
+// before the rail has finished widening.
 export const PanelBody = styled.div`
   flex: 1;
   min-width: 0;
@@ -83,4 +91,7 @@ export const PanelBody = styled.div`
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  opacity: ${p => (p.open ? 1 : 0)};
+  pointer-events: ${p => (p.open ? 'auto' : 'none')};
+  transition: opacity ${p => (p.open ? '0.16s ease 0.08s' : '0.12s ease')};
 `;

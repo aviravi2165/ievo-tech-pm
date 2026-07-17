@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useTheme } from '@emotion/react';
 import { X } from 'lucide-react';
 import { userApi } from '../api/projectApi';
@@ -24,16 +25,56 @@ export default function UserSearchInput({ selectedUser, onSelect, excludeUserIds
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [open,    setOpen]    = useState(false);
+  const [dropRect, setDropRect] = useState(null);
   const debounceRef = useRef(null);
   const wrapRef     = useRef(null);
+  const dropRef     = useRef(null);
+
+  // Resets the visible text whenever the parent clears the selection from
+  // the OUTSIDE (e.g. TaskItem's handleSendRequest sets assignSearch back
+  // to null right after successfully sending a request) — not just via
+  // this component's own "×" clear button, which already clears `query`
+  // itself. Without this, the box kept showing the just-assigned person's
+  // name after a successful send, forcing a manual clear before the next
+  // one could be searched.
+  useEffect(() => {
+    if (!selectedUser) setQuery('');
+  }, [selectedUser]);
 
   useEffect(() => {
     const handler = (e) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+      if (wrapRef.current && !wrapRef.current.contains(e.target) &&
+          dropRef.current  && !dropRef.current.contains(e.target)) setOpen(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  // Dropdown is portaled to <body> and positioned via getBoundingClientRect
+  // instead of a plain `position: absolute` child of this input — this
+  // component gets embedded inside cards/panels all over the PM module
+  // (Activity/Phase member pickers, etc.), any one of which can have a
+  // lower stacking context or clipping ancestor than something else on the
+  // page, which silently buried the dropdown behind other content (same
+  // fix already applied to the messaging module's RecipientPicker).
+  const computeDropRect = useCallback(() => {
+    if (wrapRef.current) {
+      const r = wrapRef.current.getBoundingClientRect();
+      setDropRect({ top: r.bottom + 4, left: r.left, width: r.width });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    computeDropRect();
+    const h = () => computeDropRect();
+    window.addEventListener('scroll', h, true);
+    window.addEventListener('resize', h);
+    return () => {
+      window.removeEventListener('scroll', h, true);
+      window.removeEventListener('resize', h);
+    };
+  }, [open, computeDropRect]);
 
   const search = useCallback(async (q) => {
     setLoading(true);
@@ -101,8 +142,17 @@ export default function UserSearchInput({ selectedUser, onSelect, excludeUserIds
           title="Clear"
         ><X size={13} strokeWidth={2} /></button>
       )}
-      {open && (loading || results.length > 0) && (
-        <UserDropdown>
+      {open && (loading || results.length > 0) && dropRect && createPortal(
+        <UserDropdown
+          ref={dropRef}
+          style={{
+            position: 'fixed',
+            top: dropRect.top,
+            left: dropRect.left,
+            width: dropRect.width,
+            zIndex: 99999,
+          }}
+        >
           {loading && (
             <div style={{ padding: '10px 12px', fontSize: 12, color: theme.colors.ash }}>Searching…</div>
           )}
@@ -119,8 +169,10 @@ export default function UserSearchInput({ selectedUser, onSelect, excludeUserIds
                   {initials(name || u.email)}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: theme.colors.onyx, fontWeight: 500 }}>{name || '—'}</div>
-                  <div style={{ fontSize: 11, color: theme.colors.ash }}>{u.email}</div>
+                  <div style={{ fontSize: 12, color: theme.colors.onyx, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name || '—'}</div>
+                  {/* emails are one unbreakable token — without an ellipsis
+                      a long one paints past the dropdown's right edge */}
+                  <div style={{ fontSize: 11, color: theme.colors.ash, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={u.email}>{u.email}</div>
                 </div>
                 <div style={{
                   fontSize: 10, fontWeight: 600, color: theme.colors.ash, flexShrink: 0,
@@ -135,7 +187,8 @@ export default function UserSearchInput({ selectedUser, onSelect, excludeUserIds
           {!loading && results.length === 0 && (
             <div style={{ padding: '10px 12px', fontSize: 12, color: theme.colors.ash }}>No users found.</div>
           )}
-        </UserDropdown>
+        </UserDropdown>,
+        document.body
       )}
     </div>
   );

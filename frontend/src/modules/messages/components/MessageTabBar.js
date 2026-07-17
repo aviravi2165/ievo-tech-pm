@@ -14,6 +14,9 @@ export default function MessageTabBar({ tab, onTabChange, isSuperAdmin = false }
         <NavBtn type="button" active={tab === 'groups'} onClick={() => onTabChange('groups')}>
           Groups
         </NavBtn>
+        <NavBtn type="button" active={tab === 'teams'} onClick={() => onTabChange('teams')}>
+          Teams
+        </NavBtn>
       </TabBarNav>
     );
   }
@@ -27,6 +30,12 @@ export default function MessageTabBar({ tab, onTabChange, isSuperAdmin = false }
       <NavBtn type="button" active={tab === 'groups'} onClick={() => onTabChange('groups')}>
         Groups
         {groupUnreadCount > 0 && <Badge>{groupUnreadCount > 99 ? '99+' : groupUnreadCount}</Badge>}
+      </NavBtn>
+      {/* Teams — admin-managed org-wide groups (e.g. "Production Team"),
+          browsable read-only here by everyone; creating/editing is admin
+          only (gated inside TeamManager itself via isAdmin). */}
+      <NavBtn type="button" active={tab === 'teams'} onClick={() => onTabChange('teams')}>
+        Teams
       </NavBtn>
     </TabBarNav>
   );

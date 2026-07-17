@@ -34,7 +34,14 @@ async function getProjectAudit(projectId) {
              COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''), u.email) AS userName
       FROM pm_audit_log a
       LEFT JOIN auth_users u ON u.user_id = a.user_id
-      WHERE a.project_id = @projectId
+      -- 'status_computed' rows are a background recording of Phase/Activity
+      -- status-over-time for the Timeline's segmented bars (see
+      -- recordStatusIfChanged below) — they fire on ordinary page reads
+      -- whenever a computed status happens to differ, not on anything a
+      -- person actually did, so they don't belong in a human-facing
+      -- "what happened" feed. getStatusHistory queries them directly and is
+      -- the only consumer that should ever see this action.
+      WHERE a.project_id = @projectId AND a.action <> 'status_computed'
       ORDER BY a.changed_at DESC
     `);
   return result.recordset;
@@ -63,6 +70,7 @@ async function getAllRecentAudit() {
       FROM pm_audit_log a
       INNER JOIN pm_projects pr ON pr.project_id = a.project_id
       LEFT  JOIN auth_users  u  ON u.user_id = a.user_id
+      WHERE a.action <> 'status_computed'
       ORDER BY a.changed_at DESC
     `);
   return result.recordset;
@@ -212,6 +220,7 @@ async function getMyRecentAudit(userId) {
         INNER JOIN pm_phases     ph2 ON ph2.phase_id     = ac2.phase_id
         WHERE ta.user_id = @userId
       )
+      AND a.action <> 'status_computed'
       ORDER BY a.changed_at DESC
     `);
   return result.recordset;
