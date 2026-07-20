@@ -1,7 +1,21 @@
 const svc   = require('../services/projectService');
 const audit = require('../services/auditService');
 
-const list   = async (req,res,next) => { try { res.json(await svc.listProjects(req.user.userId, req.user.userType === 'admin')); } catch(e){next(e);} };
+const list   = async (req,res,next) => {
+  try {
+    // page/pageSize both required to opt into pagination — see
+    // listProjects' own comment for why this is additive, not a replacement
+    // for the plain-array shape (Dashboard/AdminDashboard need the full set).
+    const { page, pageSize, search } = req.query;
+    const opts = {};
+    if (page !== undefined && pageSize !== undefined) {
+      opts.page = parseInt(page, 10);
+      opts.pageSize = Math.min(parseInt(pageSize, 10) || 25, 100);
+      if (search !== undefined) opts.search = search;
+    }
+    res.json(await svc.listProjects(req.user.userId, req.user.userType === 'admin', opts));
+  } catch(e){next(e);}
+};
 const get    = async (req,res,next) => { try { res.json(await svc.getProject(req.params.id, req.user.userId, req.user.userType === 'admin')); } catch(e){next(e);} };
 const create = async (req,res,next) => { try { res.status(201).json(await svc.createProject(req.user.userId, req.body)); } catch(e){next(e);} };
 const update = async (req,res,next) => { try { res.json(await svc.updateProject(req.params.id, req.user.userId, req.body)); } catch(e){next(e);} };

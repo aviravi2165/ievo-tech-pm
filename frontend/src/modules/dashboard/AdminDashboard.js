@@ -27,6 +27,10 @@ function fmtRel(d) {
   const dy = Math.floor(h / 24);
   return dy === 1 ? 'yesterday' : `${dy}d ago`;
 }
+function fmtExact(d) {
+  if (!d) return '';
+  return new Date(d).toLocaleString([], { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+}
 function timeOfDay() {
   const h = new Date().getHours();
   return h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening';
@@ -102,7 +106,7 @@ function AuditRow({ entry, isLast }) {
           </AuditLine>
           <AuditMeta>
             <AuditProject>{entry.projectName}</AuditProject>
-            {' · '}{fmtRel(entry.createdAt)}
+            {' · '}<span title={fmtExact(entry.createdAt)}>{fmtRel(entry.createdAt)}</span>
           </AuditMeta>
         </AuditBody>
       </AuditRowWrap>

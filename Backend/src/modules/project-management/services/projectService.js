@@ -29,7 +29,16 @@ async function resyncProjectActivityThreads(projectId) {
   await Promise.all(result.recordset.map(a => pmChatService.onActivityManagersChanged(a.activityId)));
 }
 
-async function listProjects(userId, isAdmin = false) {
+// opts.page/opts.pageSize are OPT-IN — omitting them keeps the original
+// unbounded-array return shape, since Dashboard/AdminDashboard both call
+// this with no options to compute aggregate stats (overdue/blocked counts
+// etc.) across the user's ENTIRE project set, not just one page of it.
+// Only the Project List page passes page/pageSize, and only then does this
+// return the {items, total} paginated shape instead of a flat array.
+async function listProjects(userId, isAdmin = false, opts = {}) {
+  const { page, pageSize, search } = opts;
+  const paginated = Number.isInteger(page) && Number.isInteger(pageSize);
+
   const pool = await getPool();
   const req = pool.request().input('userId', sql.UniqueIdentifier, userId);
   // Admins see every project (oversight view, mirrors the messaging
@@ -40,6 +49,20 @@ async function listProjects(userId, isAdmin = false) {
   const joinClause = isAdmin
     ? 'LEFT JOIN pm_members pm ON pm.project_id=p.project_id AND pm.user_id=@userId'
     : 'INNER JOIN pm_members pm ON pm.project_id=p.project_id AND pm.user_id=@userId';
+
+  let searchClause = '';
+  if (search?.trim()) {
+    req.input('search', sql.NVarChar(200), `%${search.trim()}%`);
+    searchClause = 'AND p.name LIKE @search';
+  }
+
+  let paginationClause = '';
+  if (paginated) {
+    req.input('offset', sql.Int, Math.max(0, page - 1) * pageSize);
+    req.input('pageSize', sql.Int, pageSize);
+    paginationClause = 'OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY';
+  }
+
   const result = await req.query(`
       SELECT p.project_id AS projectId, p.name, p.description, p.status,
              p.planned_start AS plannedStart, p.planned_end AS plannedEnd,
@@ -49,12 +72,17 @@ async function listProjects(userId, isAdmin = false) {
                   THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS isOverdue,
              (SELECT COUNT(*) FROM pm_phases ph WHERE ph.project_id=p.project_id AND ph.is_deleted=0) AS phaseCount,
              (SELECT COUNT(*) FROM pm_members WHERE project_id=p.project_id) AS memberCount
+             ${paginated ? ', COUNT(*) OVER() AS totalCount' : ''}
       FROM pm_projects p
       ${joinClause}
       LEFT JOIN auth_users u ON u.user_id=p.owner_id
-      WHERE p.is_deleted=0 ORDER BY p.is_active DESC, p.modified_at DESC
+      WHERE p.is_deleted=0 ${searchClause}
+      ORDER BY p.is_active DESC, p.modified_at DESC
+      ${paginationClause}
     `);
   const rows = result.recordset;
+  const total = paginated ? (rows[0]?.totalCount ?? 0) : rows.length;
+  rows.forEach(r => { delete r.totalCount; });
   // Admins always get full manage access regardless of any explicit
   // (lower) pm_members role they might separately hold.
   if (isAdmin) rows.forEach(r => { r.isSuperAdmin = true; r.myRole = 'Manager'; });
@@ -74,12 +102,15 @@ async function listProjects(userId, isAdmin = false) {
   // endpoint measurably the slowest thing in the PM module (~1.5s with a
   // few dozen projects, and it only gets worse as more are created).
   // Promise.all-ing across projects runs all of those chains concurrently
-  // instead — same queries, same math, just not serialized.
+  // instead — same queries, same math, just not serialized. Paginating the
+  // SQL fetch itself (above) is what actually bounds this loop's size now —
+  // a page of 25 always does 25 concurrent chains, not however many
+  // projects exist in total.
   await Promise.all(rows.map(async (p) => {
     p.progress = await getProjectProgress(p.projectId);
     p.status = deriveProjectStatus(p.progress, p.status, await getProjectHasActiveWork(p.projectId));
   }));
-  return rows;
+  return paginated ? { items: rows, total, page, pageSize } : rows;
 }
 
 async function getProject(projectId, userId, isAdmin = false) {

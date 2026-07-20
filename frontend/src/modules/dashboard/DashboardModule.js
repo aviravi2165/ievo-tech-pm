@@ -76,6 +76,13 @@ function fmtRel(d) {
   const dy = Math.floor(h / 24);
   return dy === 1 ? 'yesterday' : `${dy}d ago`;
 }
+// Exact timestamp for a hover tooltip on relative-time labels ("3m ago",
+// "6d ago") — relative time is the right default for scanning a feed, but
+// without this there was no way to see precisely when something happened.
+function fmtExact(d) {
+  if (!d) return '';
+  return new Date(d).toLocaleString([], { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+}
 function overdue(d) { return d && new Date(d) < new Date(); }
 
 function navigateToProject(projectId) {
@@ -167,7 +174,7 @@ function RequestCardView({ req, onAccept, onDecline, acting }) {
         </ReqActions>
       ) : req.respondedAt && (
         <RespondedNote>
-          {req.status === 'Accepted' ? 'Accepted' : 'Declined'} {fmtRel(req.respondedAt)}
+          {req.status === 'Accepted' ? 'Accepted' : 'Declined'} <span title={fmtExact(req.respondedAt)}>{fmtRel(req.respondedAt)}</span>
         </RespondedNote>
       )}
     </RequestCard>
@@ -248,7 +255,7 @@ function AuditRow({ entry, isLast }) {
           </AuditLine>
           <AuditMeta>
             <AuditProject>{entry.projectName}</AuditProject>
-            {' · '}{fmtRel(entry.createdAt)}
+            {' · '}<span title={fmtExact(entry.createdAt)}>{fmtRel(entry.createdAt)}</span>
           </AuditMeta>
         </AuditBody>
       </AuditRowWrap>
