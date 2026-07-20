@@ -129,6 +129,14 @@ export const FieldLabel = styled.label`
   margin-bottom: 5px;
 `;
 
+// Required-field marker — same visual convention as the PM module's
+// `.req` (project-management/styles/shared.styles.js), reimplemented here
+// since the two modules don't share a stylesheet.
+export const Req = styled.span`
+  color: ${p => p.theme.colors.espresso};
+  margin-left: 2px;
+`;
+
 export const FieldInput = styled.input`
   width: 100%;
   padding: 9px 12px;

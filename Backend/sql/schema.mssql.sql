@@ -57,7 +57,7 @@ CREATE TABLE [ievo-tech-pm].dbo.auth_users (
 
 CREATE TABLE [ievo-tech-pm].dbo.comm_groups (
 	group_id int IDENTITY(1,1) NOT NULL,
-	group_name varchar(150) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+	group_name nvarchar(150) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
 	description nvarchar(MAX) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
 	created_by uniqueidentifier NOT NULL,
 	is_active bit DEFAULT 1 NOT NULL,
@@ -79,7 +79,7 @@ CREATE TABLE [ievo-tech-pm].dbo.comm_groups (
 
 CREATE TABLE [ievo-tech-pm].dbo.comm_conversations (
 	conversation_id int IDENTITY(1,1) NOT NULL,
-	subject varchar(300) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+	subject nvarchar(300) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
 	allow_reply bit DEFAULT 1 NOT NULL,
 	created_by uniqueidentifier NOT NULL,
 	group_id int NULL,
@@ -206,7 +206,7 @@ CREATE TABLE [ievo-tech-pm].dbo.comm_attachments (
 	attachment_id int IDENTITY(1,1) NOT NULL,
 	message_id int NULL,
 	uploaded_by uniqueidentifier NOT NULL,
-	original_name varchar(500) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+	original_name nvarchar(500) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
 	stored_name varchar(500) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
 	storage_path varchar(500) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
 	mime_type varchar(100) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
@@ -380,7 +380,7 @@ WHERE p.conversation_id = <that_id>
 IF OBJECT_ID('dbo.pm_projects', 'U') IS NULL
 CREATE TABLE dbo.pm_projects (
     project_id    int IDENTITY(1,1) NOT NULL,
-    name          varchar(200)  COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    name          nvarchar(200)  COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
     description   nvarchar(MAX) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
     planned_start date NULL,
     planned_end   date NULL,
@@ -424,7 +424,7 @@ IF OBJECT_ID('dbo.pm_phases', 'U') IS NULL
 CREATE TABLE dbo.pm_phases (
     phase_id        int IDENTITY(1,1) NOT NULL,
     project_id      int NOT NULL,
-    name            varchar(200)  COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    name            nvarchar(200)  COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
     description     nvarchar(MAX) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
     display_order   int DEFAULT 0 NOT NULL,
     planned_start   date NULL,
@@ -478,7 +478,7 @@ IF OBJECT_ID('dbo.pm_activities', 'U') IS NULL
 CREATE TABLE dbo.pm_activities (
     activity_id     int IDENTITY(1,1) NOT NULL,
     phase_id        int NOT NULL,
-    name            varchar(200)  COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    name            nvarchar(200)  COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
     description     nvarchar(MAX) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
     display_order   int DEFAULT 0 NOT NULL,
     planned_start   date NULL,
@@ -515,7 +515,7 @@ IF OBJECT_ID('dbo.pm_tasks', 'U') IS NULL
 CREATE TABLE dbo.pm_tasks (
     task_id         int IDENTITY(1,1) NOT NULL,
     activity_id     int NOT NULL,
-    name            varchar(200)  COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    name            nvarchar(200)  COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
     description     nvarchar(MAX) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
     priority        varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT 'Medium' NOT NULL,
     status          varchar(30) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT 'To Do' NOT NULL,
@@ -1050,7 +1050,7 @@ IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_tas
 IF OBJECT_ID('dbo.org_groups', 'U') IS NULL
 CREATE TABLE dbo.org_groups (
     org_group_id  int IDENTITY(1,1) NOT NULL,
-    name          varchar(150) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    name          nvarchar(150) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
     description   nvarchar(500) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
     created_by    uniqueidentifier NOT NULL,
     is_active     bit DEFAULT 1 NOT NULL,

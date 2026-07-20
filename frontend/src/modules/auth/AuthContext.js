@@ -1,7 +1,17 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 
-const BASE_URL = import.meta.env?.VITE_API_BASE_URL + '/api' || 'http://localhost:3001/api';
+// (import.meta.env?.VITE_API_BASE_URL || '') + '/api' — NOT
+// `VITE_API_BASE_URL + '/api' || fallback`. `+` binds tighter than `||`, so
+// the old form evaluated as `(VITE_API_BASE_URL + '/api') || fallback`:
+// when the env var is unset, `undefined + '/api'` is the STRING
+// "undefined/api" (truthy), so the `|| fallback` never actually ran — every
+// request would have hit the literal path "undefined/api/...". Falls back
+// to '' (relative, via Vite's dev proxy — see vite.config.js) rather than a
+// hardcoded 'http://localhost:3001', which only works for whoever's running
+// the dev server locally; anyone else on the LAN hitting this host's own IP
+// needs same-origin relative requests, not a literal "localhost".
+const BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '') + '/api';
 
 const AuthContext = createContext(null);
 

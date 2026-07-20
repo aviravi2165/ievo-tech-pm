@@ -75,7 +75,7 @@ export default function ProjectFormModal({ onClose, onCreated }) {
             value={form.description}
             onChange={e => set('description', e.target.value)}
             placeholder="Brief overview of what this project aims to achieve…"
-            rows={3}
+            rows={5}
           />
         </Field>
 

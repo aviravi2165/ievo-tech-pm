@@ -3,7 +3,11 @@ import axiosInstance from '../../messages/api/axiosInstance';
 const BASE = '/api/projects';
 
 export const projectApi = {
-  list:              ()              => axiosInstance.get(BASE).then(r => r.data),
+  // No args → full unbounded array (unchanged, used by Dashboard/AdminDashboard
+  // for aggregate stats across ALL of a user's projects). Passing
+  // {page, pageSize, search} opts into paginated mode instead, returning
+  // {items, total, page, pageSize} — see projectService.listProjects.
+  list:              (params)        => axiosInstance.get(BASE, { params }).then(r => r.data),
   get:               (id)            => axiosInstance.get(`${BASE}/${id}`).then(r => r.data),
   create:            (body)          => axiosInstance.post(BASE, body).then(r => r.data),
   update:            (id, body)      => axiosInstance.patch(`${BASE}/${id}`, body).then(r => r.data),

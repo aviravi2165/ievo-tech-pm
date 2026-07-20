@@ -86,20 +86,51 @@ export function useProject(projectId) {
   return { project, phases, loading, error, refetch: fetchProject };
 }
 
+// PAGE_SIZE=25 — see projectService.listProjects' PERF comment: every
+// returned row runs its own concurrent progress/status computation, so
+// bounding how many rows a single request returns is what actually caps
+// the work done per fetch, not just the row count on screen.
+const PAGE_SIZE = 25;
+
+// Paginated, with a server-side `search` term (not a client-side filter
+// over an already-fetched array) — a client-side filter would only ever
+// search whatever page happened to be loaded already, silently missing
+// matches on projects further down the list. `search` changing resets back
+// to page 1, same as any search-within-a-paginated-list UX.
 export function useProjectList() {
   const [projects, setProjects] = useState([]);
-  const [loading,  setLoading]  = useState(true);
+  const [total,    setTotal]    = useState(0);
+  const [page,     setPage]     = useState(1);
+  const [search,   setSearchState] = useState('');
+  const [loading,  setLoading]  = useState(true);   // first page of a given search
+  const [loadingMore, setLoadingMore] = useState(false); // subsequent pages
   const [error,    setError]    = useState(null);
 
-  const fetch = useCallback(async () => {
+  const fetchPage = useCallback(async (pageNum, searchTerm, append) => {
+    (append ? setLoadingMore : setLoading)(true);
     try {
-      setLoading(true);
-      setProjects(await projectApi.list());
+      const { items, total: t } = await projectApi.list({ page: pageNum, pageSize: PAGE_SIZE, search: searchTerm });
+      setProjects(prev => (append ? [...prev, ...items] : items));
+      setTotal(t);
+      setPage(pageNum);
       setError(null);
     } catch (err) { setError(err.message); }
-    finally { setLoading(false); }
+    finally { (append ? setLoadingMore : setLoading)(false); }
   }, []);
 
-  useEffect(() => { fetch(); }, [fetch]);
-  return { projects, loading, error, refetch: fetch };
+  useEffect(() => { fetchPage(1, search, false); }, [search, fetchPage]);
+
+  const setSearch = useCallback((term) => setSearchState(term), []);
+  const loadMore = useCallback(() => {
+    if (loadingMore || projects.length >= total) return;
+    fetchPage(page + 1, search, true);
+  }, [fetchPage, loadingMore, page, projects.length, total, search]);
+  const refetch = useCallback(() => fetchPage(1, search, false), [fetchPage, search]);
+
+  return {
+    projects, total, search, setSearch,
+    hasMore: projects.length < total,
+    loading, loadingMore, error,
+    loadMore, refetch,
+  };
 }

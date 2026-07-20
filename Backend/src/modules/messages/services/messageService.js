@@ -1,17 +1,36 @@
 'use strict';
 
 const { getPool, withTransaction, sql } = require('../../../config/db');
+const createDOMPurify = require('dompurify');
+const { JSDOM } = require('jsdom');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The previous version of this used a handful of regexes (strip <script>,
+// strip <iframe>, strip on*="..." attrs) — that's not real HTML sanitization:
+// it missed unquoted/single-quoted event handlers, <svg onload>, <img
+// onerror>, <style> blocks, and javascript: URIs in href/src entirely.
+// Regex can't reliably parse HTML at all (nesting, malformed markup, encoding
+// tricks routinely defeat it). The frontend already sanitizes with DOMPurify
+// using this exact allowlist before rendering (MessageBubble.js), so the
+// live app was never actually exploitable — but storing the raw payload
+// server-side meant any OTHER consumer of this data (an export, a future
+// email digest, an admin tool) would have inherited the vulnerability. Using
+// the real DOMPurify (via jsdom, since there's no DOM in Node) here too means
+// sanitization happens at the point data enters the system, not only at the
+// point one particular client happens to render it.
+const domPurifyWindow = new JSDOM('').window;
+const DOMPurify = createDOMPurify(domPurifyWindow);
+const BODY_HTML_ALLOWED_TAGS = ['b','i','u','strong','em','p','br','ul','ol','li','a','table','thead','tbody','tr','th','td','span'];
+const BODY_HTML_ALLOWED_ATTR = ['href','target','rel','style'];
+
 function sanitizeBodyHtml(html = '') {
-  return html
-    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
-    .replace(/<iframe[\s\S]*?>[\s\S]*?<\/iframe>/gi, '')
-    .replace(/on\w+="[^"]*"/gi, '')
-    .trim();
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: BODY_HTML_ALLOWED_TAGS,
+    ALLOWED_ATTR: BODY_HTML_ALLOWED_ATTR,
+  }).trim();
 }
 
 function displayName(row) {

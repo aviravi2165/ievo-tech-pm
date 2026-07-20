@@ -55,6 +55,14 @@ function AuthGate() {
 // base font/color. Genuinely global, so it belongs here at the app root,
 // not in any one module's styles.
 const globalStyles = (t) => css`
+  html {
+    /* Whole app scaled down 5% by default ("a bit more zoomed out") — most
+       component styles here use fixed px, not rem, so a root font-size
+       change wouldn't cascade into a proportional shrink. zoom does: it
+       scales the actual layout (not just a visual transform), so hit
+       targets/scrollbars/measurements all stay correct at the new size. */
+    zoom: 0.95;
+  }
   html, body, #root {
     height: 100%;
     background: ${t.colors.greige};
@@ -83,7 +91,7 @@ export default function App() {
 
 const loadingStyles = {
   root: {
-    height: '100vh',
+    height: '100%', // not 100vh — see ErpShell in Shell.styles.js for why (zoom/vh gap)
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',

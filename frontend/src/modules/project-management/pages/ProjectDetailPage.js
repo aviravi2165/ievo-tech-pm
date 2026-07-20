@@ -46,6 +46,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
   const [newPhaseStart, setNewPhaseStart] = useState('');
   const [newPhaseEnd,   setNewPhaseEnd]   = useState('');
   const [phaseErrors,   setPhaseErrors]   = useState({});
+  const [addingPhase,   setAddingPhase]   = useState(false);
 
   // Inline "add project member" popover off the header badge — same
   // add-with-role pattern as Phase/Activity member panels, instead of
@@ -81,6 +82,8 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
     if (!newPhaseEnd)         errs.end   = 'End date required';
     if (newPhaseStart && newPhaseEnd && newPhaseEnd < newPhaseStart) errs.end = 'End must be after start';
     if (Object.keys(errs).length) { setPhaseErrors(errs); return; }
+    if (addingPhase) return; // already in flight — the disabled button below should already stop this, but guard the handler itself too
+    setAddingPhase(true);
     try {
       await projectApi.createPhase(projectId, {
         name:         newPhaseName.trim(),
@@ -91,6 +94,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
       setShowAddPhase(false); setPhaseErrors({});
       refetch();
     } catch (err) { showToast(apiErrorMessage(err, 'Failed to add phase.')); }
+    finally { setAddingPhase(false); }
   };
 
   const handleAddProjectMember = async () => {
@@ -318,7 +322,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
                   </div>
                 </div>
                 <div style={{ display:'flex', gap:8 }}>
-                  <BtnPrimary onClick={handleAddPhase}>Add Phase</BtnPrimary>
+                  <BtnPrimary onClick={handleAddPhase} disabled={addingPhase}>{addingPhase ? 'Adding…' : 'Add Phase'}</BtnPrimary>
                   <BtnGhost onClick={() => { setShowAddPhase(false); setPhaseErrors({}); }}>Cancel</BtnGhost>
                 </div>
               </EditPanel>

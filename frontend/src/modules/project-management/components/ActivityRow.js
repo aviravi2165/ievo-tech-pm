@@ -79,6 +79,7 @@ export default function ActivityRow({
   const [newTaskDeps,  setNewTaskDeps]  = useState([]);
   const [taskAssignees, setTaskAssignees] = useState([]);
   const [taskAssignSearch, setTaskAssignSearch] = useState(null);
+  const [addingTask, setAddingTask] = useState(false);
   const [addErrors,    setAddErrors]    = useState({});
   const [depError, setDepError] = useState('');
 
@@ -180,6 +181,8 @@ export default function ActivityRow({
     if (!newTaskName.trim()) errs.name = 'Task name required';
     if (!newTaskDue)         errs.due  = 'Due date is required';
     if (Object.keys(errs).length) { setAddErrors(errs); return; }
+    if (addingTask) return;
+    setAddingTask(true);
     try {
       await activityApi.createTask(activity.activityId, {
         name:        newTaskName.trim(),
@@ -194,6 +197,7 @@ export default function ActivityRow({
       setPanel(null); setAddErrors({});
       fetchTasks(); onRefetchProject?.();
     } catch (err) { showToast(apiErrorMessage(err, 'Failed to add task.')); }
+    finally { setAddingTask(false); }
   };
 
   // ── Activity dependencies ────────────────────────────────────────────────────
@@ -637,7 +641,7 @@ export default function ActivityRow({
               </div>
 
               <div style={{ display: 'flex', gap: 6 }}>
-                <BtnPrimary style={{ fontSize: 11, padding: '6px 16px' }} onClick={handleAddTask}>Add Task</BtnPrimary>
+                <BtnPrimary style={{ fontSize: 11, padding: '6px 16px' }} onClick={handleAddTask} disabled={addingTask}>{addingTask ? 'Adding…' : 'Add Task'}</BtnPrimary>
                 <BtnGhost style={{ fontSize: 11, padding: '6px 10px' }} onClick={() => { setPanel(null); setAddErrors({}); }}>Cancel</BtnGhost>
               </div>
             </div>

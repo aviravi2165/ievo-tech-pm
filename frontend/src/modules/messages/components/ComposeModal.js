@@ -8,7 +8,7 @@ import { useAuth }    from '../../auth/AuthContext';
 import { useOrgGroups } from '../hooks/useOrgGroups';
 import api            from '../api/axiosInstance';
 import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB } from '../api/allowedFileTypes';
-import { IconBtn, Btn, BtnGhost, BtnPrimary, FieldLabel, FieldInput, Dropdown, DropdownItem, Spinner } from '../styles/shared.styles';
+import { IconBtn, Btn, BtnGhost, BtnPrimary, FieldLabel, FieldInput, Dropdown, DropdownItem, Spinner, Req } from '../styles/shared.styles';
 import { RecipientBox } from '../styles/RecipientPicker.styles';
 import { Toolbar, FmtBtn, FmtSep, ComposerArea, ComposerAttachments, ComposerAttachChip, ComposerAttachRemove } from '../styles/Composer.styles';
 import {
@@ -501,6 +501,7 @@ export default function ComposeModal({ onClose, onSent, initialRecipients = [], 
               {mode === 'bcc' && 'To — Private (separate threads per recipient)'}
               {mode === 'cc' && 'To — Shared thread (everyone sees each other)'}
               {mode === 'group_thread' && 'Group(s)'}
+              <Req>*</Req>
             </FieldLabel>
             <RecipientBox
               // Clicking anywhere in the box focuses its input — without
@@ -553,7 +554,7 @@ export default function ComposeModal({ onClose, onSent, initialRecipients = [], 
 
           {/* Subject */}
           <div>
-            <FieldLabel>Subject</FieldLabel>
+            <FieldLabel>Subject<Req>*</Req></FieldLabel>
             <FieldInput type="text"
               placeholder="What is this about?"
               value={subject}

@@ -55,6 +55,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
   const [newActStart, setNewActStart] = useState('');
   const [newActEnd,   setNewActEnd]   = useState('');
   const [actErrors,   setActErrors]   = useState({});
+  const [addingAct,   setAddingAct]   = useState(false);
 
   // Deps
   const [depError,    setDepError]    = useState('');
@@ -148,6 +149,8 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
     if (!newActEnd)         errs.end   = 'End date required';
     if (newActStart && newActEnd && newActEnd < newActStart) errs.end = 'End must be after start';
     if (Object.keys(errs).length) { setActErrors(errs); return; }
+    if (addingAct) return;
+    setAddingAct(true);
     try {
       await phaseApi.createActivity(phase.phaseId, {
         name:         newActName.trim(),
@@ -158,6 +161,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
       setPanel(null);
       fetchActivities();
     } catch (err) { showToast(apiErrorMessage(err, 'Failed to add activity.')); }
+    finally { setAddingAct(false); }
   };
 
   // Deps
@@ -525,7 +529,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
                 </div>
               </div>
               <div style={{ display:'flex', gap:6 }}>
-                <BtnPrimary style={{ fontSize:11, padding:'6px 16px' }} onClick={handleAddActivity}>Add</BtnPrimary>
+                <BtnPrimary style={{ fontSize:11, padding:'6px 16px' }} onClick={handleAddActivity} disabled={addingAct}>{addingAct ? 'Adding…' : 'Add'}</BtnPrimary>
                 <BtnGhost style={{ fontSize:11, padding:'6px 12px' }} onClick={() => { setPanel(null); setActErrors({}); }}>Cancel</BtnGhost>
               </div>
             </EditPanel>

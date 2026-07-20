@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTheme } from '@emotion/react';
 import { FolderKanban, RotateCcw, Trash2 } from 'lucide-react';
 import StatusBadge, { InactiveBadge } from '../components/StatusBadge';
@@ -9,7 +9,7 @@ import { useProjectList } from '../hooks/useProject';
 import { projectApi } from '../api/projectApi';
 import { Table, TableHead, TableHeadCell, ListRow, Cell } from '../styles/Table.styles';
 import { Topbar, TopbarH1, TopbarActions, List } from '../styles/ProjectListPage.styles';
-import { Wrap, Empty, BtnPrimary, DepBadge, IconBtn, IconBtnDanger } from '../styles/shared.styles';
+import { Wrap, Empty, BtnPrimary, BtnGhost, DepBadge, IconBtn, IconBtnDanger } from '../styles/shared.styles';
 
 const COL = { owner: 105, dates: 140, progress: 100, status: 96, role: 74, actions: 28 };
 
@@ -27,13 +27,23 @@ function fmtDate(d) {
 
 export default function ProjectListPage({ onSelectProject }) {
   const theme = useTheme();
-  const { projects, loading, error, refetch } = useProjectList();
+  const {
+    projects, total, search, setSearch, hasMore,
+    loading, loadingMore, error, loadMore, refetch,
+  } = useProjectList();
   const [showCreate, setShowCreate] = useState(false);
-  const [search, setSearch] = useState('');
 
-  const filtered = projects.filter(p =>
-    p.name.toLowerCase().includes(search.toLowerCase())
-  );
+  // Debounced search box — types locally into its own state, only pushes
+  // to the hook (which fires a new server request) after a short pause.
+  // Without this, every keystroke would fire its own paginated fetch.
+  const [searchInput, setSearchInput] = useState(search);
+  const debounceRef = useRef(null);
+  useEffect(() => {
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setSearch(searchInput), 300);
+    return () => clearTimeout(debounceRef.current);
+  }, [searchInput, setSearch]);
+
   const isAdminView = projects.some(p => p.isSuperAdmin);
 
   const handleDelete = async (e, project) => {
@@ -64,8 +74,8 @@ export default function ProjectListPage({ onSelectProject }) {
         )}
         <input
           placeholder="Search projects…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
+          value={searchInput}
+          onChange={e => setSearchInput(e.target.value)}
           style={{
             background: theme.colors.greige, border: `1px solid ${theme.colors.border}`,
             borderRadius: theme.radius.sm, padding: '6px 12px', color: theme.colors.onyx,
@@ -83,14 +93,14 @@ export default function ProjectListPage({ onSelectProject }) {
         {loading && <div style={{ color: theme.colors.ash, fontSize: 13 }}>Loading projects…</div>}
         {error   && <div style={{ color: theme.colors.danger, fontSize: 13 }}>{error}</div>}
 
-        {!loading && !filtered.length && (
+        {!loading && !projects.length && (
           <Empty>
             <FolderKanban size={44} strokeWidth={1.2} />
             <p>{search ? 'No projects match your search.' : 'No projects yet. Create one to get started.'}</p>
           </Empty>
         )}
 
-        {filtered.length > 0 && (
+        {projects.length > 0 && (
           <Table>
             {/* cols is required now that TableHead is CSS Grid — without
                 it, this defaulted silently to the Phase/Activity table's
@@ -112,7 +122,7 @@ export default function ProjectListPage({ onSelectProject }) {
               <TableHeadCell />
             </TableHead>
 
-            {filtered.map(p => (
+            {projects.map(p => (
               <ListRow key={p.projectId} onClick={() => onSelectProject(p.projectId)} style={{ minHeight: 36, padding: '5px 10px' }}>
                 {/* Explicit 2-line stack (title row, meta row) rather than
                     packing name+badges+meta all inline on one line — an
@@ -172,6 +182,14 @@ export default function ProjectListPage({ onSelectProject }) {
               </ListRow>
             ))}
           </Table>
+        )}
+
+        {hasMore && (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '14px 0' }}>
+            <BtnGhost onClick={loadMore} disabled={loadingMore}>
+              {loadingMore ? 'Loading…' : `Load more (${total - projects.length} remaining)`}
+            </BtnGhost>
+          </div>
         )}
       </List>
 

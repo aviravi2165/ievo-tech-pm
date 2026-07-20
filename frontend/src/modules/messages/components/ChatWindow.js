@@ -635,7 +635,7 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
 
        <ThreadHeaderInfo>
           {/* Subject line */}
-          <ThreadSubject>
+          <ThreadSubject title={isGroupThread ? (liveGroupName || conv.groupName || conv.subject) : conv.subject}>
             {isGroupThread ? (liveGroupName || conv.groupName || conv.subject) : conv.subject}
           </ThreadSubject>
 

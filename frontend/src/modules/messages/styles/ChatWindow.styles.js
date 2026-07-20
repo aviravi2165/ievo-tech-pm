@@ -14,13 +14,21 @@ export const ThreadHeader = styled.div`
 
 export const ThreadHeaderInfo = styled.div` flex: 1; min-width: 0; `;
 
+// Clamped to 2 lines (not 1) — a single nowrap+ellipsis line was hiding
+// long auto-generated subjects (e.g. "Project / Phase / Activity / Task")
+// entirely with no way to read the rest short of hovering for the title
+// tooltip. Wrapping to a second line surfaces most of the text outright;
+// the tooltip (see ChatWindow.js usage) is still there as a fallback for
+// anything that overflows even two lines.
 export const ThreadSubject = styled.div`
   font-size: 13.5px;
   font-weight: 500;
   color: ${p => p.theme.colors.onyx};
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.3;
 `;
 
 export const TypeBadge = styled.span`
