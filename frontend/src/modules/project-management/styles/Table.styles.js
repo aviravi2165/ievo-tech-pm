@@ -37,10 +37,16 @@ export const COL = {
 // not a single "Due Date"), each rendered under ITS OWN header placed
 // right where that level's rows start, not one header trying to describe
 // three different shapes of data at once.
+// progress: 104 — same width the progress bar div previously used inline
+// (`<div style={{width:104}}>`) inside the Name cluster in PhasePanel.js/
+// ActivityRow.js, before BUG-030 moved it into its own column here to
+// match ProjectListPage's dedicated Progress column (Status already had
+// its own column; Progress was the only one still crammed into Name).
 export const GROUP_COL = {
-  manager: 110,
-  dates:   170,
-  status:  86,
+  manager:  110,
+  dates:    170,
+  progress: 104,
+  status:   86,
 };
 
 // CSS Grid templates — replaces the flexbox "spacer + fixed-width cells +
@@ -79,7 +85,7 @@ export const GROUP_COL = {
 // to 0 and the Name column silently disappears instead of the Table's own
 // overflow-x:auto kicking in. The 120px floor forces horizontal scrolling
 // once things get that tight, instead of erasing the column.
-export const GROUP_GRID_COLS = `minmax(120px, 1fr) ${GROUP_COL.manager}px ${GROUP_COL.dates}px ${GROUP_COL.status}px 124px`;
+export const GROUP_GRID_COLS = `minmax(120px, 1fr) ${GROUP_COL.manager}px ${GROUP_COL.dates}px ${GROUP_COL.progress}px ${GROUP_COL.status}px 124px`;
 export const TASK_GRID_COLS  = `minmax(120px, 1fr) ${COL.assignee}px ${COL.due}px ${COL.priority}px ${COL.status}px 124px`;
 
 // flex-shrink: 0 — Table is rendered as a flex child of DetailBody

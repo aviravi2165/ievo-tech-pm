@@ -14,6 +14,8 @@ import { ActivityName, ActivityBody } from '../styles/ActivityRow.styles';
 import {
   DepBadge, IconBtn, IconBtnDanger, EditPanelTitle, BtnPrimary, BtnGhost, TaskList,
 } from '../styles/shared.styles';
+import { useSortFilter } from '../../shared/hooks/useSortFilter';
+import { SortSelect, FilterSelect } from '../../shared/components/TableControls';
 
 const PRIORITY_OPTS = ['Low', 'Medium', 'High', 'Critical'];
 
@@ -129,6 +131,26 @@ export default function ActivityRow({
   }, [open, fetchTasks, fetchMembers]);
 
   const togglePanel = (p) => setPanel(v => v === p ? null : p);
+
+  // UI-only sort/filter over this activity's already-loaded tasks list.
+  const taskStatusOptions = [...new Set(tasks.map(t => t.status).filter(Boolean))].map(s => ({ value: s, label: s }));
+  const {
+    items: visibleTasks, sortKey: taskSortKey, setSortKey: setTaskSortKey,
+    sortDir: taskSortDir, toggleSortDir: toggleTaskSortDir, filters: taskFilters, setFilter: setTaskFilter,
+  } = useSortFilter(tasks, {
+    sorters: {
+      name:     (a, b) => (a.name || '').localeCompare(b.name || ''),
+      due:      (a, b) => (parseLocalDate(a.dueDate)?.getTime() ?? 0) - (parseLocalDate(b.dueDate)?.getTime() ?? 0),
+      priority: (a, b) => PRIORITY_OPTS.indexOf(a.priority) - PRIORITY_OPTS.indexOf(b.priority),
+      status:   (a, b) => (a.status || '').localeCompare(b.status || ''),
+    },
+    defaultSortKey: 'due',
+    filters: {
+      status:   { predicate: (t, v) => t.status === v },
+      priority: { predicate: (t, v) => t.priority === v },
+      active:   { predicate: (t, v) => (v === 'active' ? t.isActive !== false : t.isActive === false) },
+    },
+  });
 
   // ── Edit activity save ───────────────────────────────────────────────────────
   const handleEditSave = async () => {
@@ -256,7 +278,6 @@ export default function ActivityRow({
             </DepBadge>
           )}
 
-          <div style={{ width:104, flexShrink:0 }}><ProgressBar value={activity.progress || 0} /></div>
           {isInactive && <InactiveBadge />}
         </div>
 
@@ -300,12 +321,18 @@ export default function ActivityRow({
           {activity.delayDays > 0 && <DelayBadge days={activity.delayDays} label="Late by" />}
         </div>
 
-        {/* Grid column 4: Status */}
+        {/* Grid column 4: Progress — BUG-030, same fix as PhasePanel.js's
+            Phase rows: this used to be crammed into the Name cluster. */}
+        <div style={{ overflow:'hidden' }} onClick={e => e.stopPropagation()}>
+          <ProgressBar value={activity.progress || 0} />
+        </div>
+
+        {/* Grid column 5: Status */}
         <div style={{ overflow:'hidden' }}>
           <StatusBadge status={activity.status} />
         </div>
 
-        {/* Grid column 5 (max-content): actions — always visible. "Edit"
+        {/* Grid column 6 (max-content): actions — always visible. "Edit"
             icon removed: clicking the Dates cell above opens the same
             panel. "Members" icon was ALSO removed earlier in favor of
             clicking the Manager cell text — that made adding a Manager/
@@ -536,16 +563,31 @@ export default function ActivityRow({
             </div>
           )}
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '8px 0 6px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '8px 0 6px', flexWrap: 'wrap', gap: 8 }}>
             <span style={{ fontSize: 11, color: theme.colors.ash, textTransform: 'uppercase', letterSpacing: '.06em' }}>
-              Tasks ({tasks.length})
+              Tasks ({visibleTasks.length}{visibleTasks.length !== tasks.length ? ` of ${tasks.length}` : ''})
             </span>
-            {canEdit && !isBlocked && !isInactive && (
-              <BtnGhost style={{ padding: '4px 10px', fontSize: 11 }}
-                onClick={() => togglePanel('addtask')}>
-                + Add Task
-              </BtnGhost>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {tasks.length > 0 && (
+                <>
+                  <SortSelect
+                    value={taskSortKey} onChange={setTaskSortKey} dir={taskSortDir} onToggleDir={toggleTaskSortDir}
+                    options={[
+                      { value: 'name', label: 'Name' }, { value: 'due', label: 'Due Date' },
+                      { value: 'priority', label: 'Priority' }, { value: 'status', label: 'Status' },
+                    ]}
+                  />
+                  <FilterSelect placeholder="All statuses" value={taskFilters.status} onChange={v => setTaskFilter('status', v)} options={taskStatusOptions} />
+                  <FilterSelect placeholder="All priorities" value={taskFilters.priority} onChange={v => setTaskFilter('priority', v)} options={PRIORITY_OPTS.map(p => ({ value: p, label: p }))} />
+                </>
+              )}
+              {canEdit && !isBlocked && !isInactive && (
+                <BtnGhost style={{ padding: '4px 10px', fontSize: 11 }}
+                  onClick={() => togglePanel('addtask')}>
+                  + Add Task
+                </BtnGhost>
+              )}
+            </div>
           </div>
 
           {/* ── Add task form ── */}
@@ -671,7 +713,7 @@ export default function ActivityRow({
                 <TableHeadCell w={COL.status}>Status</TableHeadCell>
               </TableHead>
             )}
-            {!loadingTasks && tasks.map(t => (
+            {!loadingTasks && visibleTasks.map(t => (
               <TaskItem
                 key={t.taskId}
                 task={t}
@@ -683,6 +725,9 @@ export default function ActivityRow({
                 onRefetchProject={onRefetchProject}
               />
             ))}
+            {!loadingTasks && tasks.length > 0 && !visibleTasks.length && (
+              <div style={{ fontSize: 12, color: theme.colors.ash, padding: '8px 0' }}>No tasks match the current filters.</div>
+            )}
             {!loadingTasks && !tasks.length && (
               <div style={{ fontSize: 12, color: theme.colors.ash, padding: '8px 0' }}>No tasks yet.</div>
             )}

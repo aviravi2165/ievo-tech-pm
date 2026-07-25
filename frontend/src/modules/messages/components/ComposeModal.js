@@ -18,6 +18,7 @@ import {
   Chip, ChipMemberCount, ChipExpandBtn, ChipExpandedTag, ChipRemoveBtn,
   DropdownGroupLabel,
 } from '../styles/ComposeModal.styles';
+import { useEscapeKey } from '../../shared/hooks/useEscapeKey';
 
 // ── User-search hook (debounced 240 ms) ──────────────────────────────────────
 // Fetches on an empty query too (not just once you start typing) — the
@@ -277,6 +278,8 @@ export default function ComposeModal({ onClose, onSent, initialRecipients = [], 
 
   const bodyRef = useRef(null);
   const fileRef = useRef(null);
+
+  useEscapeKey(onClose);
 
   useEffect(() => {
     if (initialRecipients?.length) setRecipients(initialRecipients);

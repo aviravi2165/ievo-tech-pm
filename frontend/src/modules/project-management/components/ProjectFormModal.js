@@ -3,6 +3,7 @@ import { useTheme } from '@emotion/react';
 import { X } from 'lucide-react';
 import { projectApi } from '../api/projectApi';
 import { ModalOverlay, Modal, Field, FieldHint, ModalFooter, BtnGhost, BtnPrimary } from '../styles/shared.styles';
+import { useEscapeKey } from '../../shared/hooks/useEscapeKey';
 
 /**
  * ProjectFormModal — fixed:
@@ -17,6 +18,8 @@ export default function ProjectFormModal({ onClose, onCreated }) {
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [apiError, setApiError] = useState('');
+
+  useEscapeKey(onClose);
 
   const set = (k, v) => {
     setForm(f => ({ ...f, [k]: v }));

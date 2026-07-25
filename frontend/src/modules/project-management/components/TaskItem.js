@@ -289,17 +289,15 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
             click target instead of a stack of avatars PLUS a separate
             icon that does the same thing. */}
         <Cell w={COL.assignee}
-          onClick={(canManager && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('assign'); } : undefined}
-          style={{ cursor: (canManager && !isInactive) ? 'pointer' : 'default' }}
-          title={
-            (canManager && !isInactive)
-              ? 'Click to manage assignees'
-              // Non-managers can't open the manage panel, but with more
-              // assignees than the avatar stack can show (the "+N" chip),
-              // a hover is the only way left to see who the rest are.
-              : ([...(task.assignees || []), ...allRequests.filter(r => r.requestStatus === 'Pending')]
-                  .map(a => a.name).join(', ') || undefined)
-          }
+          // Previously only a Manager could click this cell at all — a
+          // plain assignee with more assignees than the "+N" chip could
+          // show had no way to see the rest of the list except a
+          // browser-native hover tooltip (easy to miss, doesn't work on
+          // touch). Now everyone can click: a Manager gets the full manage
+          // panel (unchanged), anyone else gets a read-only list.
+          onClick={!isInactive ? (e) => { e.stopPropagation(); togglePanel(canManager ? 'assign' : 'viewAssignees'); } : undefined}
+          style={{ cursor: !isInactive ? 'pointer' : 'default' }}
+          title={!isInactive ? (canManager ? 'Click to manage assignees' : 'Click to see all assignees') : undefined}
         >
           <Avatars assignees={task.assignees} pending={allRequests.filter(r => r.requestStatus === 'Pending')} />
         </Cell>
@@ -489,6 +487,32 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
               </MemberRow>
             );
           })}
+        </SubPanel>
+      )}
+
+      {/* ── Read-only assignee list — for anyone who isn't a Manager (so
+          can't open the full manage panel above). Same info the manage
+          panel shows, minus the edit controls. */}
+      {panel === 'viewAssignees' && !canManager && (
+        <SubPanel style={{ margin: 0 }}>
+          <SubPanelTitle>Task Assignees</SubPanelTitle>
+          {allRequests.length === 0 ? (
+            <div style={{ fontSize: 12, color: theme.colors.ash, fontStyle: 'italic' }}>No one assigned yet.</div>
+          ) : (
+            allRequests.map(r => {
+              const badge = requestBadge(theme, r.requestStatus);
+              return (
+                <MemberRow key={r.userId} selected style={{ marginBottom: 4 }}>
+                  <Avatar style={{ flexShrink: 0, marginLeft: 0 }}>{initials(r.name)}</Avatar>
+                  <span style={{ flex: 1, minWidth: 60, fontSize: 12, color: theme.colors.onyx, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.name}>{r.name}</span>
+                  <span style={{ fontSize: 10, fontWeight: 600, color: badge.color, background: badge.bg, borderRadius: 8, padding: '2px 8px', flexShrink: 0 }}>
+                    {badge.label}
+                  </span>
+                </MemberRow>
+              );
+            })
+          )}
+          <BtnGhost style={{ fontSize: 11, padding: '5px 10px', marginTop: 8 }} onClick={() => setPanel(null)}>Close</BtnGhost>
         </SubPanel>
       )}
 

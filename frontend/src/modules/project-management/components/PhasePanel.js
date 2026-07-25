@@ -13,6 +13,8 @@ import { PhaseName, PhaseBody } from '../styles/PhasePanel.styles';
 import {
   DepBadge, IconBtn, IconBtnDanger, EditPanel, EditPanelTitle, BtnPrimary, BtnGhost,
 } from '../styles/shared.styles';
+import { useSortFilter } from '../../shared/hooks/useSortFilter';
+import { SortSelect, FilterSelect } from '../../shared/components/TableControls';
 
 function toInput(d) { return d ? String(d).split('T')[0] : ''; }
 function parseLocalDate(d) {
@@ -95,6 +97,25 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
   useEffect(() => { if (open) fetchActivities(); }, [open, fetchActivities]);
 
   const togglePanel = (p) => setPanel(v => v === p ? null : p);
+
+  // UI-only sort/filter over this phase's already-loaded activities list.
+  const activityStatusOptions = [...new Set(activities.map(a => a.status).filter(Boolean))].map(s => ({ value: s, label: s }));
+  const {
+    items: visibleActivities, sortKey: actSortKey, setSortKey: setActSortKey,
+    sortDir: actSortDir, toggleSortDir: toggleActSortDir, filters: actFilters, setFilter: setActFilter,
+  } = useSortFilter(activities, {
+    sorters: {
+      name:   (a, b) => (a.name || '').localeCompare(b.name || ''),
+      start:  (a, b) => (parseLocalDate(a.plannedStart)?.getTime() ?? 0) - (parseLocalDate(b.plannedStart)?.getTime() ?? 0),
+      end:    (a, b) => (parseLocalDate(a.plannedEnd)?.getTime() ?? 0) - (parseLocalDate(b.plannedEnd)?.getTime() ?? 0),
+      status: (a, b) => (a.status || '').localeCompare(b.status || ''),
+    },
+    defaultSortKey: 'name',
+    filters: {
+      status: { predicate: (a, v) => a.status === v },
+      active: { predicate: (a, v) => (v === 'active' ? a.isActive !== false : a.isActive === false) },
+    },
+  });
 
   // ── Phase member management ──────────────────────────────────────────────────
   const fetchPhaseMembers = useCallback(async () => {
@@ -237,9 +258,6 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
             </div>
           )}
 
-          <div style={{ width:104, flexShrink:0 }}>
-            <ProgressBar value={phase.progress || 0} />
-          </div>
           {isInactive && <InactiveBadge />}
         </div>
 
@@ -284,12 +302,20 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
           {phase.delayDays > 0 && <DelayBadge days={phase.delayDays} label="Late by" />}
         </div>
 
-        {/* Grid column 4: Status */}
+        {/* Grid column 4: Progress — BUG-030: this used to be crammed into
+            the Name cluster (column 1); Status already had its own column,
+            Progress now matches it and ProjectListPage's own dedicated
+            Progress column. */}
+        <div style={{ overflow:'hidden' }} onClick={e => e.stopPropagation()}>
+          <ProgressBar value={phase.progress || 0} />
+        </div>
+
+        {/* Grid column 5: Status */}
         <div style={{ overflow:'hidden' }}>
           <StatusBadge status={phase.status} />
         </div>
 
-        {/* Grid column 5 (max-content track): action buttons — always
+        {/* Grid column 6 (max-content track): action buttons — always
             visible. "Edit dates" icon removed: clicking the Dates cell
             above opens the same panel. "Members" icon was ALSO removed in
             an earlier pass in favor of clicking the Manager cell text —
@@ -333,13 +359,13 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
           <EditPanelTitle style={{ marginBottom:10 }}>Phase Dates</EditPanelTitle>
           <div style={{ display:'flex', gap:12, flexWrap:'wrap', alignItems:'flex-end' }}>
             <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
-              <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase' }}>Start Date *</label>
+              <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase' }}>Start Date <span style={{ color:theme.colors.espresso }}>*</span></label>
               <input type="date" value={editStart} onChange={e => { setEditStart(e.target.value); setDateErrors(er=>({...er,start:''})); }}
                 style={{ background:theme.colors.mid, border:`1px solid ${dateErrors.start?theme.colors.danger:theme.colors.border}`, borderRadius:theme.radius.sm, padding:'6px 10px', color:theme.colors.onyx, fontSize:12, fontFamily:'inherit', outline:'none' }} />
               {dateErrors.start && <span style={{ fontSize:10, color:theme.colors.danger }}>{dateErrors.start}</span>}
             </div>
             <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
-              <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase' }}>End Date *</label>
+              <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase' }}>End Date <span style={{ color:theme.colors.espresso }}>*</span></label>
               <input type="date" value={editEnd} onChange={e => { setEditEnd(e.target.value); setDateErrors(er=>({...er,end:''})); }}
                 min={editStart||undefined}
                 style={{ background:theme.colors.mid, border:`1px solid ${dateErrors.end?theme.colors.danger:theme.colors.border}`, borderRadius:theme.radius.sm, padding:'6px 10px', color:theme.colors.onyx, fontSize:12, fontFamily:'inherit', outline:'none' }} />
@@ -488,16 +514,30 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
             <p style={{ fontSize:12, color:theme.colors.ash, marginBottom:12, lineHeight:1.5 }}>{phase.description}</p>
           )}
 
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8, flexWrap:'wrap', gap:8 }}>
             <span style={{ fontSize:11, color:theme.colors.ash, textTransform:'uppercase', letterSpacing:'.06em' }}>
-              Activities ({activities.length})
+              Activities ({visibleActivities.length}{visibleActivities.length !== activities.length ? ` of ${activities.length}` : ''})
             </span>
-            {canEdit && !isInactive && (
-              <BtnGhost style={{ padding:'4px 12px', fontSize:11 }}
-                onClick={() => togglePanel('addact')}>
-                + Add Activity
-              </BtnGhost>
-            )}
+            <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+              {activities.length > 0 && (
+                <>
+                  <SortSelect
+                    value={actSortKey} onChange={setActSortKey} dir={actSortDir} onToggleDir={toggleActSortDir}
+                    options={[
+                      { value:'name', label:'Name' }, { value:'start', label:'Start' },
+                      { value:'end', label:'End' }, { value:'status', label:'Status' },
+                    ]}
+                  />
+                  <FilterSelect placeholder="All statuses" value={actFilters.status} onChange={v => setActFilter('status', v)} options={activityStatusOptions} />
+                </>
+              )}
+              {canEdit && !isInactive && (
+                <BtnGhost style={{ padding:'4px 12px', fontSize:11 }}
+                  onClick={() => togglePanel('addact')}>
+                  + Add Activity
+                </BtnGhost>
+              )}
+            </div>
           </div>
 
           {/* ── Add activity form (with dates required) ── */}
@@ -505,7 +545,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
             <EditPanel style={{ marginTop:0, marginBottom:10 }}>
               <EditPanelTitle>New Activity</EditPanelTitle>
               <div style={{ marginBottom:8 }}>
-                <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase', display:'block', marginBottom:3 }}>Name *</label>
+                <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase', display:'block', marginBottom:3 }}>Name <span style={{ color:theme.colors.espresso }}>*</span></label>
                 <input value={newActName} onChange={e => { setNewActName(e.target.value); setActErrors(er=>({...er,name:''})); }}
                   placeholder="Activity name…"
                   autoFocus
@@ -515,13 +555,13 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
               </div>
               <div style={{ display:'flex', gap:10, flexWrap:'wrap', marginBottom:10 }}>
                 <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
-                  <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase' }}>Start Date *</label>
+                  <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase' }}>Start Date <span style={{ color:theme.colors.espresso }}>*</span></label>
                   <input type="date" value={newActStart} onChange={e => { setNewActStart(e.target.value); setActErrors(er=>({...er,start:''})); }}
                     style={{ background:theme.colors.mid, border:`1px solid ${actErrors.start?theme.colors.danger:theme.colors.border}`, borderRadius:theme.radius.sm, padding:'6px 10px', color:theme.colors.onyx, fontSize:12, fontFamily:'inherit', outline:'none' }} />
                   {actErrors.start && <span style={{ fontSize:10, color:theme.colors.danger }}>{actErrors.start}</span>}
                 </div>
                 <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
-                  <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase' }}>End Date *</label>
+                  <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase' }}>End Date <span style={{ color:theme.colors.espresso }}>*</span></label>
                   <input type="date" value={newActEnd} onChange={e => { setNewActEnd(e.target.value); setActErrors(er=>({...er,end:''})); }}
                     min={newActStart||undefined}
                     style={{ background:theme.colors.mid, border:`1px solid ${actErrors.end?theme.colors.danger:theme.colors.border}`, borderRadius:theme.radius.sm, padding:'6px 10px', color:theme.colors.onyx, fontSize:12, fontFamily:'inherit', outline:'none' }} />
@@ -557,10 +597,11 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
               <TableHeadCell>Activity</TableHeadCell>
               <TableHeadCell w={GROUP_COL.manager}>Manager</TableHeadCell>
               <TableHeadCell w={GROUP_COL.dates}>Dates</TableHeadCell>
+              <TableHeadCell w={GROUP_COL.progress} center>Progress</TableHeadCell>
               <TableHeadCell w={GROUP_COL.status}>Status</TableHeadCell>
             </TableHead>
           )}
-          {!loading && activities.map(act => (
+          {!loading && visibleActivities.map(act => (
             <ActivityRow
               key={act.activityId}
               activity={act}
@@ -571,7 +612,14 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
               onRefetchProject={onRefetchProject}
             />
           ))}
-          {!loading && !activities.length && (
+          {!loading && activities.length > 0 && !visibleActivities.length && (
+            <div style={{ fontSize:12, color:theme.colors.ash, padding:'8px 0' }}>No activities match the current filters.</div>
+          )}
+          {/* BUG-031: this used to stay visible even while the Add
+              Activity form above was open, reading as contradictory
+              ("no activities yet" directly above an open add-activity
+              form). panel !== 'addact' hides it while that form is open. */}
+          {!loading && !activities.length && panel !== 'addact' && (
             <div style={{ fontSize:12, color:theme.colors.ash, padding:'8px 0' }}>No activities yet.</div>
           )}
         </PhaseBody>

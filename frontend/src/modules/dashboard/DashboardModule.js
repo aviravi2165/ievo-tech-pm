@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useTheme } from '@emotion/react';
 import { requestApi, taskApi, projectApi } from '../project-management/api/projectApi';
 import AdminDashboard from './AdminDashboard';
@@ -13,6 +13,9 @@ import {
   AuditLine, AuditActor, AuditDetail, AuditMeta, AuditProject,
   StatGrid, StatTile, StatValue, StatLabel,
 } from './styles/DashboardModule.styles';
+import { useSortFilter } from '../shared/hooks/useSortFilter';
+import { usePagination } from '../shared/hooks/usePagination';
+import { SortSelect, FilterSelect, LoadMoreBar } from '../shared/components/TableControls';
 
 function priorityColor(theme, v) {
   return { Critical: theme.colors.danger, High: theme.colors.espresso, Medium: theme.colors.info, Low: theme.colors.ash }[v] || theme.colors.ash;
@@ -359,6 +362,69 @@ function DashboardModuleInner({ currentUser }) {
   const blockedCount     = attention.filter(t => t.status === 'Blocked').length;
   const attnOverdueCount = attention.filter(t => t.isOverdue).length;
 
+  // ── Task Requests: sort on top of the existing status-tab filter (the
+  // TabBar above already filters by status — this was the one section with
+  // literally zero sort control, only the tabs). Named reqSort* to avoid
+  // colliding with the tab bar's own `filter`/`setFilter` state.
+  const {
+    items: sortedRequests, sortKey: reqSortKey, setSortKey: setReqSortKey,
+    sortDir: reqSortDir, toggleSortDir: toggleReqSortDir,
+  } = useSortFilter(filtered, {
+    sorters: {
+      due:  (a, b) => new Date(a.dueDate || 0).getTime() - new Date(b.dueDate || 0).getTime(),
+      name: (a, b) => (a.taskName || '').localeCompare(b.taskName || ''),
+    },
+    defaultSortKey: 'due',
+  });
+
+  // ── My Active Tasks: sort by due date/priority/status/name, filter by status/priority
+  const PRIORITY_ORDER = ['Low', 'Medium', 'High', 'Critical'];
+  const activeTaskStatusOptions = useMemo(() => [...new Set(activeTasks.map(t => t.status).filter(Boolean))].map(s => ({ value: s, label: s })), [activeTasks]);
+  const {
+    items: sortedActiveTasks, sortKey: atSortKey, setSortKey: setAtSortKey,
+    sortDir: atSortDir, toggleSortDir: toggleAtSortDir, filters: atFilters, setFilter: setAtFilter,
+  } = useSortFilter(activeTasks, {
+    sorters: {
+      due:      (a, b) => new Date(a.dueDate || 0).getTime() - new Date(b.dueDate || 0).getTime(),
+      priority: (a, b) => PRIORITY_ORDER.indexOf(a.priority) - PRIORITY_ORDER.indexOf(b.priority),
+      status:   (a, b) => (a.status || '').localeCompare(b.status || ''),
+      name:     (a, b) => (a.taskName || '').localeCompare(b.taskName || ''),
+    },
+    defaultSortKey: 'due',
+    filters: {
+      status:   { predicate: (t, v) => t.status === v },
+      priority: { predicate: (t, v) => t.priority === v },
+    },
+  });
+
+  // ── Needs Attention: sort by due date, filter by status/overdue — same
+  // status/overdueOnly dimensions as AdminDashboard's version, so the two
+  // stat tiles below can pre-filter this section to what was clicked
+  // instead of just scrolling to an unfiltered list.
+  const attentionStatusOptions = useMemo(() => [...new Set(attention.map(t => t.status).filter(Boolean))].map(s => ({ value: s, label: s })), [attention]);
+  const {
+    items: sortedAttention, sortKey: attnSortKey, setSortKey: setAttnSortKey,
+    sortDir: attnSortDir, toggleSortDir: toggleAttnSortDir, filters: attnFilters, setFilter: setAttnFilter, clearFilters: clearAttnFilters,
+  } = useSortFilter(attention, {
+    sorters: { due: (a, b) => new Date(a.dueDate || 0).getTime() - new Date(b.dueDate || 0).getTime() },
+    defaultSortKey: 'due',
+    filters: {
+      status:      { predicate: (t, v) => t.status === v },
+      overdueOnly: { predicate: (t) => !!t.isOverdue },
+    },
+  });
+
+  // ── Recent Project Activity: sort/filter + real pagination (was a
+  // hardcoded slice(0,50) with no way to reach anything past it).
+  const auditActionOptions = useMemo(() => [...new Set(auditFeed.map(e => e.action).filter(Boolean))].map(a => ({ value: a, label: a })), [auditFeed]);
+  const { items: sortedAudit, sortDir: auditSortDir, toggleSortDir: toggleAuditSortDir, filters: auditFilters, setFilter: setAuditFilter } = useSortFilter(auditFeed, {
+    sorters: { time: (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime() },
+    filters: { action: { predicate: (e, v) => e.action === v } },
+    defaultSortKey: 'time',
+    defaultSortDir: 'desc',
+  });
+  const { pageItems: auditPage, hasMore: auditHasMore, loadMore: auditLoadMore, total: auditTotal } = usePagination(sortedAudit, 25);
+
   // Tab order: All | Accepted | Declined | Pending
   const reqTabs = [
     { key:'All',      label:'All' },
@@ -400,16 +466,15 @@ function DashboardModuleInner({ currentUser }) {
               <StatValue accent={overdueCount ? theme.colors.danger : undefined}>{overdueCount}</StatValue>
               <StatLabel>Overdue (mine)</StatLabel>
             </StatTile>
-            {/* Clicking scrolls down to the "Needs Attention" section below
-                (which lists every one of these, not just one) instead of
-                jumping straight into a single arbitrary project — with
-                more than one blocked/overdue task, there's no single
-                "right" project to jump to. */}
-            <StatTile clickable={blockedCount > 0} accent={blockedCount ? theme.colors.danger : undefined} onClick={() => attentionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+            {/* Clicking pre-filters the "Needs Attention" section below to
+                exactly what was clicked (Blocked / Overdue), then scrolls to
+                it — lands on the filtered thing itself, not just the
+                general neighborhood of it. */}
+            <StatTile clickable={blockedCount > 0} accent={blockedCount ? theme.colors.danger : undefined} onClick={() => { clearAttnFilters(); setAttnFilter('status', 'Blocked'); attentionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
               <StatValue accent={blockedCount ? theme.colors.danger : undefined}>{blockedCount}</StatValue>
               <StatLabel>Blocked in My Projects</StatLabel>
             </StatTile>
-            <StatTile clickable={attnOverdueCount > 0} accent={attnOverdueCount ? theme.colors.danger : undefined} onClick={() => attentionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+            <StatTile clickable={attnOverdueCount > 0} accent={attnOverdueCount ? theme.colors.danger : undefined} onClick={() => { clearAttnFilters(); setAttnFilter('overdueOnly', true); attentionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
               <StatValue accent={attnOverdueCount ? theme.colors.danger : undefined}>{attnOverdueCount}</StatValue>
               <StatLabel>Overdue in My Projects</StatLabel>
             </StatTile>
@@ -429,10 +494,20 @@ function DashboardModuleInner({ currentUser }) {
                 ? <Empty text={filter === 'All'
                     ? 'No requests yet.'
                     : `No ${filter.toLowerCase()} requests.`} />
-                : filtered.map(req => (
-                    <RequestCardView key={req.requestId} req={req}
-                      onAccept={handleAccept} onDecline={handleDecline} acting={acting} />
-                  ))
+                : (
+                  <>
+                    {filtered.length > 0 && (
+                      <div style={{ display:'flex', alignItems:'center', gap:6, margin:'8px 0' }}>
+                        <SortSelect value={reqSortKey} onChange={setReqSortKey} dir={reqSortDir} onToggleDir={toggleReqSortDir}
+                          options={[{ value:'due', label:'Due Date' }, { value:'name', label:'Task Name' }]} />
+                      </div>
+                    )}
+                    {sortedRequests.map(req => (
+                      <RequestCardView key={req.requestId} req={req}
+                        onAccept={handleAccept} onDecline={handleDecline} acting={acting} />
+                    ))}
+                  </>
+                )
               }
             </Section>
 
@@ -444,12 +519,29 @@ function DashboardModuleInner({ currentUser }) {
               {activeTasks.length === 0
                 ? <Empty text="No active tasks assigned to you." />
                 : (
-                  <CardWrap>
-                    {activeTasks.map((t, i) => (
-                      <ActiveTaskRow key={t.taskId} task={t}
-                        isLast={i === activeTasks.length - 1} />
-                    ))}
-                  </CardWrap>
+                  <>
+                    {activeTasks.length > 0 && (
+                      <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8, flexWrap:'wrap' }}>
+                        <SortSelect value={atSortKey} onChange={setAtSortKey} dir={atSortDir} onToggleDir={toggleAtSortDir}
+                          options={[
+                            { value:'due', label:'Due Date' }, { value:'priority', label:'Priority' },
+                            { value:'status', label:'Status' }, { value:'name', label:'Name' },
+                          ]} />
+                        <FilterSelect placeholder="All statuses" value={atFilters.status} onChange={v => setAtFilter('status', v)} options={activeTaskStatusOptions} />
+                        <FilterSelect placeholder="All priorities" value={atFilters.priority} onChange={v => setAtFilter('priority', v)} options={PRIORITY_ORDER.map(p => ({ value:p, label:p }))} />
+                      </div>
+                    )}
+                    {sortedActiveTasks.length === 0
+                      ? <Empty text="No tasks match the current filters." />
+                      : (
+                        <CardWrap>
+                          {sortedActiveTasks.map((t, i) => (
+                            <ActiveTaskRow key={t.taskId} task={t}
+                              isLast={i === sortedActiveTasks.length - 1} />
+                          ))}
+                        </CardWrap>
+                      )}
+                  </>
                 )
               }
               {activeTasks.length > 0 && (
@@ -468,13 +560,36 @@ function DashboardModuleInner({ currentUser }) {
                 {attention.length > 0 && <SectionPill bg={theme.colors.danger}>{attention.length}</SectionPill>}
               </SectionHeadRow>
               {attention.length === 0
-                ? <Empty text="Nothing blocked or overdue across your projects. 🎉" />
+                ? <Empty text="Nothing blocked or overdue across your projects." />
                 : (
-                  <CardWrap>
-                    {attention.map((t, i) => (
-                      <AttentionTaskRow key={t.taskId} task={t} isLast={i === attention.length - 1} />
-                    ))}
-                  </CardWrap>
+                  <>
+                    {attention.length > 0 && (
+                      <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8, flexWrap:'wrap' }}>
+                        <SortSelect value={attnSortKey} onChange={setAttnSortKey} dir={attnSortDir} onToggleDir={toggleAttnSortDir}
+                          options={[{ value:'due', label:'Due Date' }]} />
+                        <FilterSelect placeholder="All statuses" value={attnFilters.status} onChange={v => setAttnFilter('status', v)} options={attentionStatusOptions} />
+                        <label style={{ display:'flex', alignItems:'center', gap:4, fontSize:11, cursor:'pointer' }}>
+                          <input type="checkbox" checked={!!attnFilters.overdueOnly} onChange={e => setAttnFilter('overdueOnly', e.target.checked || null)} />
+                          Overdue only
+                        </label>
+                        {(attnFilters.status || attnFilters.overdueOnly) && (
+                          <button type="button" onClick={clearAttnFilters}
+                            style={{ background:'none', border:'none', color:theme.colors.ash, fontSize:11, cursor:'pointer', textDecoration:'underline', padding:0 }}>
+                            Clear filters
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {sortedAttention.length === 0
+                      ? <Empty text="No tasks match the current filters." />
+                      : (
+                        <CardWrap>
+                          {sortedAttention.map((t, i) => (
+                            <AttentionTaskRow key={t.taskId} task={t} isLast={i === sortedAttention.length - 1} />
+                          ))}
+                        </CardWrap>
+                      )}
+                  </>
                 )
               }
             </Section>
@@ -486,12 +601,19 @@ function DashboardModuleInner({ currentUser }) {
             {auditFeed.length === 0
               ? <Empty text="No recent activity across your projects." />
               : (
-                <CardWrap>
-                  {auditFeed.slice(0, 50).map((e, i) => (
-                    <AuditRow key={e.id} entry={e}
-                      isLast={i === Math.min(auditFeed.length, 50) - 1} />
-                  ))}
-                </CardWrap>
+                <>
+                  <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8, flexWrap:'wrap' }}>
+                    <SortSelect value="time" onChange={() => {}} dir={auditSortDir} onToggleDir={toggleAuditSortDir}
+                      options={[{ value:'time', label: auditSortDir === 'desc' ? 'Newest first' : 'Oldest first' }]} />
+                    <FilterSelect placeholder="All actions" value={auditFilters.action} onChange={v => setAuditFilter('action', v)} options={auditActionOptions} />
+                  </div>
+                  <CardWrap>
+                    {auditPage.map((e, i) => (
+                      <AuditRow key={e.id} entry={e} isLast={i === auditPage.length - 1} />
+                    ))}
+                  </CardWrap>
+                  <LoadMoreBar hasMore={auditHasMore} onLoadMore={auditLoadMore} remaining={auditTotal - auditPage.length} />
+                </>
               )
             }
           </RightCol>

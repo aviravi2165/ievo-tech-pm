@@ -4,6 +4,7 @@ import {
   Overlay, ModalCard, ModalTitle, FormField, FieldLabel, FieldInput,
   ErrorText, SuccessText, FormActions, CancelBtn, SubmitBtn,
 } from '../styles/ChangePasswordModal.styles';
+import { useEscapeKey } from '../../modules/shared/hooks/useEscapeKey';
 
 export default function ChangePasswordModal({
   open,
@@ -17,6 +18,8 @@ export default function ChangePasswordModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
+  useEscapeKey(onClose, open);
 
   if (!open) return null;
 

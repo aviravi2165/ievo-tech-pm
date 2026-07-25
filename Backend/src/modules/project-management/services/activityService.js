@@ -227,17 +227,25 @@ async function createActivity(phaseId, projectId, userId, body) {
 
   const pool = await getPool();
 
-  // An Activity can't be planned to start before its own Phase — same rule
-  // as Phase→Project (phaseService.createPhase) and Task→Activity
-  // (taskService.createTask), enforced here too so the chain holds at
-  // every level, not just the ends.
-  if (plannedStart) {
+  // An Activity can't be planned to start before its own Phase, or end
+  // after it — same containment rule as Phase→Project
+  // (phaseService.createPhase) and Task→Activity (taskService.createTask),
+  // enforced here too so the chain holds at every level, not just the
+  // starts. BUG-028: the end-date half of this check didn't exist at all
+  // — an activity dated entirely after its phase ended was silently
+  // accepted (201) with no validation error.
+  if (plannedStart || plannedEnd) {
     const phaseResult = await pool.request()
       .input('phaseId', sql.Int, phaseId)
-      .query(`SELECT planned_start AS plannedStart FROM pm_phases WHERE phase_id=@phaseId`);
+      .query(`SELECT planned_start AS plannedStart, planned_end AS plannedEnd FROM pm_phases WHERE phase_id=@phaseId`);
     const phaseStart = phaseResult.recordset[0]?.plannedStart;
-    if (phaseStart && new Date(plannedStart) < new Date(phaseStart)) {
+    const phaseEnd   = phaseResult.recordset[0]?.plannedEnd;
+    if (plannedStart && phaseStart && new Date(plannedStart) < new Date(phaseStart)) {
       const e = new Error("Activity start date can't be before its Phase's planned start date.");
+      e.statusCode = 400; throw e;
+    }
+    if (plannedEnd && phaseEnd && new Date(plannedEnd) > new Date(phaseEnd)) {
+      const e = new Error("Activity end date can't be after its Phase's planned end date.");
       e.statusCode = 400; throw e;
     }
   }

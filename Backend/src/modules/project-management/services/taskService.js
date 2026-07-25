@@ -300,6 +300,23 @@ async function acceptAssignmentRequest(requestId, userId) {
   if (!row) { const e = new Error('Request not found'); e.statusCode = 404; throw e; }
   if (row.status !== 'Pending') { const e = new Error('Request already responded to'); e.statusCode = 400; throw e; }
 
+  // BUG: a user with an INHERITED higher role (project/phase Manager, with
+  // no explicit row of their own on this specific activity) who accepts a
+  // task here used to get an explicit 'Employee' row inserted below purely
+  // because "no existing row" — but per roleService's inheritance rule, an
+  // explicit activity-level row always wins over an inherited one,
+  // regardless of rank. That silently downgraded a project Manager to
+  // Employee on that one activity, hiding every Manager-only action
+  // (Delete/Chat/Members/Prerequisites) there while leaving every sibling
+  // activity (where they never happened to accept a task) unaffected —
+  // exactly the "identical activities, one has no icons" report. Only
+  // insert the Employee row when the user has no effective access at all
+  // yet (nothing to preserve); skip it entirely if they already have
+  // Employee-or-above access via inheritance so there's no explicit row to
+  // shadow their real (possibly higher) role.
+  const effectiveBefore = await getEffectiveActivityRole(userId, row.activity_id);
+  const needsExplicitRow = !effectiveBefore.role || effectiveBefore.role === 'Viewer';
+
   await withTransaction(async (req) => {
     // Mark request as Accepted
     await req()
@@ -320,15 +337,23 @@ async function acceptAssignmentRequest(requestId, userId) {
           INSERT INTO pm_task_assignees (task_id, user_id) VALUES (@taskId, @userId)
       `);
 
-    // Auto-add accepted user to the activity's member roster (default Employee —
-    // never downgrades if they already hold a higher role there)
-    await req()
-      .input('activityId', sql.Int,              row.activity_id)
-      .input('userId',     sql.UniqueIdentifier, userId)
-      .query(`
-        IF NOT EXISTS (SELECT 1 FROM pm_activity_members WHERE activity_id = @activityId AND user_id = @userId)
-          INSERT INTO pm_activity_members (activity_id, user_id, role) VALUES (@activityId, @userId, 'Employee')
-      `);
+    // Auto-add accepted user to the activity's member roster as Employee —
+    // but only when they had no effective access there at all (see
+    // effectiveBefore/needsExplicitRow above). Skipping this for anyone who
+    // already has Employee-or-above access via phase/project inheritance is
+    // what actually prevents the downgrade the old comment claimed to
+    // already handle — an explicit row here always wins over an inherited
+    // one, so creating one for someone who's already a Manager by
+    // inheritance would silently demote them on this one activity.
+    if (needsExplicitRow) {
+      await req()
+        .input('activityId', sql.Int,              row.activity_id)
+        .input('userId',     sql.UniqueIdentifier, userId)
+        .query(`
+          IF NOT EXISTS (SELECT 1 FROM pm_activity_members WHERE activity_id = @activityId AND user_id = @userId)
+            INSERT INTO pm_activity_members (activity_id, user_id, role) VALUES (@activityId, @userId, 'Employee')
+        `);
+    }
 
     // Also ensure they're in pm_members as a project Member (so they can see the project)
     await req()

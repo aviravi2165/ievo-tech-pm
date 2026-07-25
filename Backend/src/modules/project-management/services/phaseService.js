@@ -94,17 +94,24 @@ async function createPhase(projectId, userId, body) {
 
   const pool = await getPool();
 
-  // A Phase can't be planned to start before its own Project — mirrors the
-  // same rule enforced for Task→Activity (see taskService.createTask) and
-  // the Timeline's visual clamp-to-parent, but at the write boundary so the
-  // underlying data can't drift out of sync with what the UI shows.
-  if (plannedStart) {
+  // A Phase can't be planned to start before, or end after, its own
+  // Project — mirrors the same rule enforced for Task→Activity (see
+  // taskService.createTask) and the Timeline's visual clamp-to-parent, but
+  // at the write boundary so the underlying data can't drift out of sync
+  // with what the UI shows. BUG-028: the end-date half of this didn't
+  // exist — same gap as Activity→Phase one level down.
+  if (plannedStart || plannedEnd) {
     const projResult = await pool.request()
       .input('projectId', sql.Int, projectId)
-      .query(`SELECT planned_start AS plannedStart FROM pm_projects WHERE project_id=@projectId`);
+      .query(`SELECT planned_start AS plannedStart, planned_end AS plannedEnd FROM pm_projects WHERE project_id=@projectId`);
     const projectStart = projResult.recordset[0]?.plannedStart;
-    if (projectStart && new Date(plannedStart) < new Date(projectStart)) {
+    const projectEnd   = projResult.recordset[0]?.plannedEnd;
+    if (plannedStart && projectStart && new Date(plannedStart) < new Date(projectStart)) {
       const e = new Error("Phase start date can't be before its Project's planned start date.");
+      e.statusCode = 400; throw e;
+    }
+    if (plannedEnd && projectEnd && new Date(plannedEnd) > new Date(projectEnd)) {
+      const e = new Error("Phase end date can't be after its Project's planned end date.");
       e.statusCode = 400; throw e;
     }
   }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { userApi } from './userApi';
 import {
   Overlay, Modal, ModalHeader, HeaderTitleRow, HeaderTitle, CloseBtn,
@@ -10,6 +10,9 @@ import {
   UserListRow, UserRowName, UserRowSub, UserRowInactive, UserRowMeta,
   EditCol, EditEmptyState, EditHeaderRow, EditTitle, BackBtn,
 } from './styles/UserManagementModal.styles';
+import { useSortFilter } from '../shared/hooks/useSortFilter';
+import { SortSelect, FilterSelect } from '../shared/components/TableControls';
+import { useEscapeKey } from '../shared/hooks/useEscapeKey';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -307,6 +310,25 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
     if (open && tab === 'manage') loadUsers(userSearch);
   }, [open, tab, loadUsers, userSearch]);
 
+  useEscapeKey(onClose, open);
+
+  const deptOptions = useMemo(() => [...new Set(users.map(u => u.deptName).filter(Boolean))].map(d => ({ value: d, label: d })), [users]);
+  const {
+    items: visibleUsers, sortKey: userSortKey, setSortKey: setUserSortKey,
+    sortDir: userSortDir, toggleSortDir: toggleUserSortDir, filters: userFilters, setFilter: setUserFilter,
+  } = useSortFilter(users, {
+    sorters: {
+      name:   (a, b) => (`${a.firstName || ''} ${a.lastName || ''}`.trim() || a.username).localeCompare(`${b.firstName || ''} ${b.lastName || ''}`.trim() || b.username),
+      dept:   (a, b) => (a.deptName || '').localeCompare(b.deptName || ''),
+      active: (a, b) => Number(b.isActive) - Number(a.isActive),
+    },
+    defaultSortKey: 'name',
+    filters: {
+      dept:   { predicate: (u, v) => u.deptName === v },
+      active: { predicate: (u) => !!u.isActive },
+    },
+  });
+
   const switchTab = (t) => {
     setTab(t);
     setError('');
@@ -461,10 +483,20 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
                   onChange={e => { setUserSearch(e.target.value); loadUsers(e.target.value); }}
                   style={{ marginBottom: 0 }}
                 />
+                <div style={{ display:'flex', alignItems:'center', gap:6, margin:'8px 0', flexWrap:'wrap' }}>
+                  <SortSelect value={userSortKey} onChange={setUserSortKey} dir={userSortDir} onToggleDir={toggleUserSortDir}
+                    options={[{ value:'name', label:'Name' }, { value:'dept', label:'Department' }, { value:'active', label:'Active status' }]} />
+                  <FilterSelect placeholder="All departments" value={userFilters.dept} onChange={v => setUserFilter('dept', v)} options={deptOptions} />
+                  <label style={{ display:'flex', alignItems:'center', gap:4, fontSize:11, cursor:'pointer' }}>
+                    <input type="checkbox" checked={!!userFilters.active} onChange={e => setUserFilter('active', e.target.checked || null)} />
+                    Active only
+                  </label>
+                </div>
                 <UserListBox>
                   {usersLoading && <UserListMsg>Loading…</UserListMsg>}
                   {!usersLoading && users.length === 0 && <UserListMsg>No users found.</UserListMsg>}
-                  {!usersLoading && users.map(u => {
+                  {!usersLoading && users.length > 0 && visibleUsers.length === 0 && <UserListMsg>No users match the current filters.</UserListMsg>}
+                  {!usersLoading && visibleUsers.map(u => {
                     const name = `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.username;
                     const isSelected = selectedUser?.userId === u.userId;
                     return (

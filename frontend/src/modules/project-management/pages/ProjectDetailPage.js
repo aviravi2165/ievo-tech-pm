@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTheme } from '@emotion/react';
-import { ChevronLeft, LayoutGrid } from 'lucide-react';
+import { ChevronLeft, LayoutGrid, RotateCcw } from 'lucide-react';
 import StatusBadge, { InactiveBadge } from '../components/StatusBadge';
 import ProgressBar from '../components/ProgressBar';
 import OverdueBadge from '../components/OverdueBadge';
@@ -97,6 +97,16 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
     finally { setAddingPhase(false); }
   };
 
+  // BUG-029: previously the only "Reactivate" control visible anywhere on
+  // this page belonged to a Phase row (PhasePanel.js), which reactivates
+  // that phase, not the project — leaving the project itself still
+  // INACTIVE with no explanation. projectApi.reactivate already existed
+  // and worked (used on ProjectListPage), it just wasn't wired up here.
+  const handleReactivateProject = async () => {
+    try { await projectApi.reactivate(projectId); refetch(); }
+    catch (err) { showToast(apiErrorMessage(err, 'Failed to reactivate project.')); }
+  };
+
   const handleAddProjectMember = async () => {
     if (!memberSearch) return;
     setMemberError(''); setMemberSaving(true);
@@ -175,6 +185,11 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
           <DelayBadge days={project.delayDays} label="Delayed by" />
           <StatusBadge status={project.status} />
           {isProjectInactive && <InactiveBadge />}
+          {isProjectInactive && myRole === 'Manager' && (
+            <IconBtn title="Reactivate project" onClick={handleReactivateProject} style={{ width:26, height:26 }}>
+              <RotateCcw size={13} strokeWidth={2} />
+            </IconBtn>
+          )}
           {project.isSuperAdmin && (
             <DepBadge as="span" title="You're not a member of this project — you have manage access via admin oversight." style={{ background: theme.colors.warning, color: '#fff' }}>
               Admin access
@@ -298,7 +313,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
               <EditPanel style={{ marginTop: 0, padding: '16px 18px', marginBottom: 12 }}>
                 <EditPanelTitle style={{ marginBottom: 12 }}>New Phase</EditPanelTitle>
                 <div style={{ marginBottom:10 }}>
-                  <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase', display:'block', marginBottom:3 }}>Phase Name *</label>
+                  <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase', display:'block', marginBottom:3 }}>Phase Name <span style={{ color:theme.colors.espresso }}>*</span></label>
                   <input value={newPhaseName} onChange={e => { setNewPhaseName(e.target.value); setPhaseErrors(er=>({...er,name:''})); }}
                     placeholder="e.g. Design, Development, QA…"
                     autoFocus
@@ -308,13 +323,13 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
                 </div>
                 <div style={{ display:'flex', gap:12, flexWrap:'wrap', marginBottom:12 }}>
                   <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
-                    <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase' }}>Start Date *</label>
+                    <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase' }}>Start Date <span style={{ color:theme.colors.espresso }}>*</span></label>
                     <input type="date" value={newPhaseStart} onChange={e => { setNewPhaseStart(e.target.value); setPhaseErrors(er=>({...er,start:''})); }}
                       style={{ background:theme.colors.mid, border:`1px solid ${phaseErrors.start?theme.colors.danger:theme.colors.border}`, borderRadius:theme.radius.sm, padding:'7px 10px', color:theme.colors.onyx, fontSize:12, fontFamily:'inherit', outline:'none' }} />
                     {phaseErrors.start && <span style={{ fontSize:10, color:theme.colors.danger }}>{phaseErrors.start}</span>}
                   </div>
                   <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
-                    <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase' }}>End Date *</label>
+                    <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase' }}>End Date <span style={{ color:theme.colors.espresso }}>*</span></label>
                     <input type="date" value={newPhaseEnd} onChange={e => { setNewPhaseEnd(e.target.value); setPhaseErrors(er=>({...er,end:''})); }}
                       min={newPhaseStart||undefined}
                       style={{ background:theme.colors.mid, border:`1px solid ${phaseErrors.end?theme.colors.danger:theme.colors.border}`, borderRadius:theme.radius.sm, padding:'7px 10px', color:theme.colors.onyx, fontSize:12, fontFamily:'inherit', outline:'none' }} />
@@ -358,6 +373,11 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
                   <TableHeadCell>Name</TableHeadCell>
                   <TableHeadCell w={GROUP_COL.manager}>Manager</TableHeadCell>
                   <TableHeadCell w={GROUP_COL.dates}>Dates</TableHeadCell>
+                  {/* BUG-030: Progress used to be crammed inside the Name
+                      cell's cluster with no header of its own — it now gets
+                      a dedicated column matching Status and matching
+                      ProjectListPage's own Progress column. */}
+                  <TableHeadCell w={GROUP_COL.progress} center>Progress</TableHeadCell>
                   <TableHeadCell w={GROUP_COL.status}>Status</TableHeadCell>
                   {/* No trailing spacer needed anymore — RowActions is
                       position:absolute now, so it never consumes flex
