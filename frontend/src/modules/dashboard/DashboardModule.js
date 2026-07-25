@@ -15,7 +15,7 @@ import {
 } from './styles/DashboardModule.styles';
 import { useSortFilter } from '../shared/hooks/useSortFilter';
 import { usePagination } from '../shared/hooks/usePagination';
-import { SortSelect, FilterSelect, LoadMoreBar } from '../shared/components/TableControls';
+import { SortSelect, FilterSelect, FilterToggle, LoadMoreBar } from '../shared/components/TableControls';
 
 function priorityColor(theme, v) {
   return { Critical: theme.colors.danger, High: theme.colors.espresso, Medium: theme.colors.info, Low: theme.colors.ash }[v] || theme.colors.ash;
@@ -131,11 +131,12 @@ function auditText({ entityType, action, fieldChanged, oldValue, newValue, actor
 }
 
 // ── Section heading ────────────────────────────────────────────────────────────
-function SectionHead({ title, pill, pillBg }) {
+function SectionHead({ title, pill, pillBg, right }) {
   return (
     <SectionHeadRow>
       <SectionTitle>{title}</SectionTitle>
       {pill != null && <SectionPill bg={pillBg}>{pill}</SectionPill>}
+      {right && <div style={{ marginLeft: 'auto' }}>{right}</div>}
     </SectionHeadRow>
   );
 }
@@ -311,6 +312,10 @@ function DashboardModuleInner({ currentUser }) {
   const [error,       setError]       = useState('');
   // Default tab is 'All' — shows everything at a glance on load
   const [filter,      setFilter]      = useState('All');
+  // Which section's sort/filter row is expanded — mutually exclusive,
+  // same convention as AdminDashboard.js's openControls.
+  const [openControls, setOpenControls] = useState(null);
+  const toggleControls = (k) => setOpenControls(v => v === k ? null : k);
 
   const fetchAll = useCallback(async () => {
     setLoading(true); setError('');
@@ -488,7 +493,10 @@ function DashboardModuleInner({ currentUser }) {
 
             {/* Task Requests */}
             <Section>
-              <SectionHead title="Task Requests" pill={pendingCount > 0 ? pendingCount : null} />
+              <SectionHead title="Task Requests" pill={pendingCount > 0 ? pendingCount : null}
+                right={filtered.length > 0 && (
+                  <FilterToggle open={openControls === 'requests'} onClick={() => toggleControls('requests')} title="Sort" />
+                )} />
               <TabBar tabs={reqTabs} active={filter} onChange={setFilter} />
               {filtered.length === 0
                 ? <Empty text={filter === 'All'
@@ -496,8 +504,8 @@ function DashboardModuleInner({ currentUser }) {
                     : `No ${filter.toLowerCase()} requests.`} />
                 : (
                   <>
-                    {filtered.length > 0 && (
-                      <div style={{ display:'flex', alignItems:'center', gap:6, margin:'8px 0' }}>
+                    {openControls === 'requests' && (
+                      <div style={{ display:'flex', alignItems:'center', gap:6, margin:'8px 0', padding:'8px 10px', background:theme.colors.greige, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm }}>
                         <SortSelect value={reqSortKey} onChange={setReqSortKey} dir={reqSortDir} onToggleDir={toggleReqSortDir}
                           options={[{ value:'due', label:'Due Date' }, { value:'name', label:'Task Name' }]} />
                       </div>
@@ -515,13 +523,17 @@ function DashboardModuleInner({ currentUser }) {
             <Section tight>
               <SectionHead title="My Active Tasks"
                 pill={overdueCount > 0 ? `${overdueCount} overdue` : null}
-                pillBg={theme.colors.danger} />
+                pillBg={theme.colors.danger}
+                right={activeTasks.length > 0 && (
+                  <FilterToggle open={openControls === 'activeTasks'} onClick={() => toggleControls('activeTasks')}
+                    active={!!(atFilters.status || atFilters.priority)} title="Sort & filter" />
+                )} />
               {activeTasks.length === 0
                 ? <Empty text="No active tasks assigned to you." />
                 : (
                   <>
-                    {activeTasks.length > 0 && (
-                      <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8, flexWrap:'wrap' }}>
+                    {openControls === 'activeTasks' && (
+                      <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8, flexWrap:'wrap', padding:'8px 10px', background:theme.colors.greige, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm }}>
                         <SortSelect value={atSortKey} onChange={setAtSortKey} dir={atSortDir} onToggleDir={toggleAtSortDir}
                           options={[
                             { value:'due', label:'Due Date' }, { value:'priority', label:'Priority' },
@@ -558,13 +570,17 @@ function DashboardModuleInner({ currentUser }) {
               <SectionHeadRow>
                 <SectionTitle>Needs Attention — My Projects</SectionTitle>
                 {attention.length > 0 && <SectionPill bg={theme.colors.danger}>{attention.length}</SectionPill>}
+                {attention.length > 0 && (
+                  <FilterToggle open={openControls === 'attention'} onClick={() => toggleControls('attention')}
+                    active={!!(attnFilters.status || attnFilters.overdueOnly)} title="Sort & filter" style={{ marginLeft: 'auto' }} />
+                )}
               </SectionHeadRow>
               {attention.length === 0
                 ? <Empty text="Nothing blocked or overdue across your projects." />
                 : (
                   <>
-                    {attention.length > 0 && (
-                      <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8, flexWrap:'wrap' }}>
+                    {openControls === 'attention' && (
+                      <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8, flexWrap:'wrap', padding:'8px 10px', background:theme.colors.greige, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm }}>
                         <SortSelect value={attnSortKey} onChange={setAttnSortKey} dir={attnSortDir} onToggleDir={toggleAttnSortDir}
                           options={[{ value:'due', label:'Due Date' }]} />
                         <FilterSelect placeholder="All statuses" value={attnFilters.status} onChange={v => setAttnFilter('status', v)} options={attentionStatusOptions} />
@@ -597,16 +613,22 @@ function DashboardModuleInner({ currentUser }) {
 
           {/* ── Right column — Audit feed (scrollable) ── */}
           <RightCol>
-            <SectionHead title="Recent Project Activity" />
+            <SectionHead title="Recent Project Activity"
+              right={auditFeed.length > 0 && (
+                <FilterToggle open={openControls === 'audit'} onClick={() => toggleControls('audit')}
+                  active={!!auditFilters.action} title="Sort & filter" />
+              )} />
             {auditFeed.length === 0
               ? <Empty text="No recent activity across your projects." />
               : (
                 <>
-                  <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8, flexWrap:'wrap' }}>
-                    <SortSelect value="time" onChange={() => {}} dir={auditSortDir} onToggleDir={toggleAuditSortDir}
-                      options={[{ value:'time', label: auditSortDir === 'desc' ? 'Newest first' : 'Oldest first' }]} />
-                    <FilterSelect placeholder="All actions" value={auditFilters.action} onChange={v => setAuditFilter('action', v)} options={auditActionOptions} />
-                  </div>
+                  {openControls === 'audit' && (
+                    <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8, flexWrap:'wrap', padding:'8px 10px', background:theme.colors.greige, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm }}>
+                      <SortSelect value="time" onChange={() => {}} dir={auditSortDir} onToggleDir={toggleAuditSortDir}
+                        options={[{ value:'time', label: auditSortDir === 'desc' ? 'Newest first' : 'Oldest first' }]} />
+                      <FilterSelect placeholder="All actions" value={auditFilters.action} onChange={v => setAuditFilter('action', v)} options={auditActionOptions} />
+                    </div>
+                  )}
                   <CardWrap>
                     {auditPage.map((e, i) => (
                       <AuditRow key={e.id} entry={e} isLast={i === auditPage.length - 1} />

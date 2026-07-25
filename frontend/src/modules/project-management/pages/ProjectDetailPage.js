@@ -9,7 +9,7 @@ import PhasePanel from '../components/PhasePanel';
 import MemberManager from '../components/MemberManager';
 import UserSearchInput from '../components/UserSearchInput';
 import AuditLog from '../components/AuditLog';
-import TimelineView from '../components/TimelineView';
+import ProjectAnalytics from '../components/ProjectAnalytics';
 import { useProject } from '../hooks/useProject';
 import { projectApi, phaseApi } from '../api/projectApi';
 import { showToast, apiErrorMessage } from '../hooks/toastStore';
@@ -24,7 +24,7 @@ import {
 const PROJECT_ROLES = ['Manager', 'Member', 'Viewer'];
 
 // Audit tab is visible to ALL members (Managers see full log, others read-only)
-const TABS = ['Phases', 'Timeline', 'Members', 'Audit'];
+const TABS = ['Phases', 'Analytics', 'Members', 'Audit'];
 
 function parseLocalDate(d) {
   if (!d) return null;
@@ -42,6 +42,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
   const { project, phases, loading, error, refetch } = useProject(projectId);
   const [tab,          setTab]          = useState('Phases');
   const [showAddPhase, setShowAddPhase] = useState(false);
+  const [descExpanded, setDescExpanded] = useState(false);
   const [newPhaseName, setNewPhaseName] = useState('');
   const [newPhaseStart, setNewPhaseStart] = useState('');
   const [newPhaseEnd,   setNewPhaseEnd]   = useState('');
@@ -170,7 +171,22 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
                 shown twice). Italic + "Description:" label make it
                 unambiguous that this is a separate field, not more title. */}
             {project.description && (
-              <div style={{ width:'100%', marginTop:3, color:theme.colors.ash, fontSize:11, fontStyle:'italic', maxWidth:600, overflow:'hidden', display:'-webkit-box', WebkitLineClamp:1, WebkitBoxOrient:'vertical' }}>
+              // Previously always clamped to 1 line with no way to read the
+              // rest — no tooltip, no expand, the text was just gone.
+              // Click-to-expand toggles the clamp off entirely; native
+              // title= tooltip covers the collapsed state too, so the full
+              // text is reachable either way.
+              <div
+                onClick={() => setDescExpanded(v => !v)}
+                title={descExpanded ? 'Click to collapse' : project.description}
+                style={{
+                  width:'100%', marginTop:3, color:theme.colors.ash, fontSize:11, fontStyle:'italic',
+                  maxWidth:600, cursor:'pointer',
+                  ...(descExpanded
+                    ? { whiteSpace:'pre-wrap' }
+                    : { overflow:'hidden', display:'-webkit-box', WebkitLineClamp:1, WebkitBoxOrient:'vertical' }),
+                }}
+              >
                 <span style={{ fontStyle:'normal', fontWeight:600, marginRight:4 }}>Description:</span>
                 {project.description}
               </div>
@@ -402,12 +418,12 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
           </>
         )}
 
-        {/* ── Timeline tab ── */}
-        {tab === 'Timeline' && (
-          <TimelineView
+        {/* ── Analytics tab ── */}
+        {tab === 'Analytics' && (
+          <ProjectAnalytics
+            project={project}
             phases={phases}
-            projectStart={project.plannedStart}
-            projectEnd={project.plannedEnd}
+            active={tab === 'Analytics'}
           />
         )}
 

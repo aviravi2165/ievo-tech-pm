@@ -10,6 +10,8 @@ import {
   SectionLabel, MemberScroll, MemberRow, MemberAvatar, MemberInfo, MemberName,
   MemberEmail, MemberActions,
 } from '../styles/GroupManager.styles';
+import { useSortFilter } from '../../shared/hooks/useSortFilter';
+import { SortSelect } from '../../shared/components/TableControls';
 
 function initials(name = '') {
   return (name || '?').split(' ').filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase();
@@ -209,7 +211,14 @@ export default function TeamManager({ isAdmin = false }) {
   }
 
   // ── List view ──────────────────────────────────────────────────────────────
-  const filtered = teams.filter(t => !search.trim() || t.name.toLowerCase().includes(search.toLowerCase()));
+  const searched = teams.filter(t => !search.trim() || t.name.toLowerCase().includes(search.toLowerCase()));
+  const { items: filtered, sortKey, setSortKey, sortDir, toggleSortDir } = useSortFilter(searched, {
+    sorters: {
+      name:    (a, b) => a.name.localeCompare(b.name),
+      members: (a, b) => (a.memberCount || 0) - (b.memberCount || 0),
+    },
+    defaultSortKey: 'name',
+  });
 
   return (
     <Sidebar as="section" data-msg-sidebar style={{ flex: 1 }}>
@@ -262,6 +271,12 @@ export default function TeamManager({ isAdmin = false }) {
           <SearchWrap>
             <SearchInput type="text" placeholder="Search teams by name…" value={search} onChange={e => setSearch(e.target.value)} />
           </SearchWrap>
+          {teams.length > 1 && (
+            <div style={{ padding: '0 12px 8px' }}>
+              <SortSelect value={sortKey} onChange={setSortKey} dir={sortDir} onToggleDir={toggleSortDir}
+                options={[{ value: 'name', label: 'Name' }, { value: 'members', label: 'Member Count' }]} />
+            </div>
+          )}
         </StickyTop>
 
         <div style={{ padding: '8px 12px' }}>

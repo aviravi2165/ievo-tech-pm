@@ -14,7 +14,7 @@ import {
   DepBadge, IconBtn, IconBtnDanger, EditPanel, EditPanelTitle, BtnPrimary, BtnGhost,
 } from '../styles/shared.styles';
 import { useSortFilter } from '../../shared/hooks/useSortFilter';
-import { SortSelect, FilterSelect } from '../../shared/components/TableControls';
+import { SortSelect, FilterSelect, FilterToggle } from '../../shared/components/TableControls';
 
 function toInput(d) { return d ? String(d).split('T')[0] : ''; }
 function parseLocalDate(d) {
@@ -29,6 +29,20 @@ function fmtRange(start, end) {
   return `${s ? fmt(s) : '?'} → ${e ? fmt(e) : '?'}`;
 }
 function initials(name = '') { return (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(); }
+
+// Mirrors MemberManager.js's isDowngrade/RANK exactly — that panel already
+// warns when an explicit Phase/Activity role override is LOWER than
+// someone's project role, but this "Add from project members" quick-add
+// row is a separate surface that had no such check: clicking "+ Name" here
+// with "Add as" left on its default (Employee) for someone who's already
+// an inherited project Manager silently created an explicit Employee row
+// that OVERRIDES their Manager status on this one Phase — same class of
+// bug as the accept-assignment-request auto-demote, just via a manual
+// click instead of an automatic side-effect.
+const RANK = { Viewer: 1, Employee: 2, Member: 2, Manager: 3 };
+function isDowngrade(newRole, currentRole) {
+  return (RANK[newRole] ?? 0) < (RANK[currentRole] ?? 0);
+}
 
 
 export default function PhasePanel({ phase, projectId, allPhases = [], projectMembers = [], myUserId, onReorder, onRefetchProject }) {
@@ -281,9 +295,14 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
             if (!label) return phase.memberCount > 0
               ? <span style={{ fontSize:10, color:theme.colors.ash }}>{phase.memberCount} member{phase.memberCount !== 1 ? 's' : ''}</span>
               : null;
+            // italic when inherited — same reasoning as ActivityRow.js's
+            // Manager cell: color/weight alone wasn't a strong enough
+            // signal that this name is shown because they're the
+            // project's Manager, not because anyone explicitly added them
+            // to this Phase.
             return (
-              <span style={{ fontSize:10, color: phase.managerNames ? theme.colors.onyx : theme.colors.ash, fontWeight: phase.managerNames ? 600 : 400, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', display:'block' }}
-                title={phase.managerNames ? label : `${label} (project Manager — no Phase-specific Manager set)`}>
+              <span style={{ fontSize:10, color: phase.managerNames ? theme.colors.onyx : theme.colors.ash, fontWeight: phase.managerNames ? 600 : 400, fontStyle: phase.managerNames ? 'normal' : 'italic', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', display:'block' }}
+                title={phase.managerNames ? label : `${label} — inherited from the project's Manager role, not explicitly set on this Phase. Click to pin explicitly.`}>
                 {label}
               </span>
             );
@@ -323,7 +342,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
             discoverable at all, so it's back as an explicit icon;
             clicking the Manager cell still works too, this is in addition
             to it, not instead of it. */}
-        <RowActions onClick={e => e.stopPropagation()}>
+        <RowActions data-row-actions onClick={e => e.stopPropagation()}>
           {canEdit && (
             <>
               {!isInactive && (
@@ -404,15 +423,24 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
                 {projectMembers
                   .filter(pm => !phaseMembers.find(fm => String(fm.userId) === String(pm.userId)))
-                  .map(pm => (
-                    <BtnGhost key={pm.userId} style={{ fontSize: 11, padding: '3px 10px' }}
-                      onClick={async () => {
-                        try { await phaseApi.addMember(phase.phaseId, pm.userId, newMemberRole); await fetchPhaseMembers(); }
-                        catch (err) { showToast(apiErrorMessage(err, 'Failed to add member.')); }
-                      }}>
-                      + {pm.name || pm.email}
-                    </BtnGhost>
-                  ))
+                  .map(pm => {
+                    const downgrade = isDowngrade(newMemberRole, pm.role);
+                    return (
+                      <BtnGhost key={pm.userId}
+                        style={{
+                          fontSize: 11, padding: '3px 10px',
+                          ...(downgrade ? { color: theme.colors.danger, borderColor: theme.colors.danger } : null),
+                        }}
+                        title={downgrade ? `${pm.name} is already this project's ${pm.role} — adding them here as ${newMemberRole} REPLACES that on this Phase, it doesn't add to it.` : undefined}
+                        onClick={async () => {
+                          if (downgrade && !window.confirm(`${pm.name} is already this project's ${pm.role}. Adding them here as ${newMemberRole} will override that and reduce their access on this Phase specifically. Continue?`)) return;
+                          try { await phaseApi.addMember(phase.phaseId, pm.userId, newMemberRole); await fetchPhaseMembers(); }
+                          catch (err) { showToast(apiErrorMessage(err, 'Failed to add member.')); }
+                        }}>
+                        {downgrade && '⚠ '}+ {pm.name || pm.email}
+                      </BtnGhost>
+                    );
+                  })
                 }
               </div>
             </div>
@@ -520,16 +548,8 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
             </span>
             <div style={{ display:'flex', alignItems:'center', gap:6 }}>
               {activities.length > 0 && (
-                <>
-                  <SortSelect
-                    value={actSortKey} onChange={setActSortKey} dir={actSortDir} onToggleDir={toggleActSortDir}
-                    options={[
-                      { value:'name', label:'Name' }, { value:'start', label:'Start' },
-                      { value:'end', label:'End' }, { value:'status', label:'Status' },
-                    ]}
-                  />
-                  <FilterSelect placeholder="All statuses" value={actFilters.status} onChange={v => setActFilter('status', v)} options={activityStatusOptions} />
-                </>
+                <FilterToggle open={panel === 'sortfilter'} onClick={() => togglePanel('sortfilter')}
+                  active={!!(actFilters.status || actFilters.active)} title="Sort & filter activities" />
               )}
               {canEdit && !isInactive && (
                 <BtnGhost style={{ padding:'4px 12px', fontSize:11 }}
@@ -539,6 +559,19 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
               )}
             </div>
           </div>
+
+          {panel === 'sortfilter' && activities.length > 0 && (
+            <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap', marginBottom:8, padding:'8px 10px', background:theme.colors.greige, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm }}>
+              <SortSelect
+                value={actSortKey} onChange={setActSortKey} dir={actSortDir} onToggleDir={toggleActSortDir}
+                options={[
+                  { value:'name', label:'Name' }, { value:'start', label:'Start' },
+                  { value:'end', label:'End' }, { value:'status', label:'Status' },
+                ]}
+              />
+              <FilterSelect placeholder="All statuses" value={actFilters.status} onChange={v => setActFilter('status', v)} options={activityStatusOptions} />
+            </div>
+          )}
 
           {/* ── Add activity form (with dates required) ── */}
           {panel === 'addact' && canEdit && (

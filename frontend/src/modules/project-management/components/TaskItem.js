@@ -335,7 +335,7 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
             duplicating the same action was pure redundancy. Description
             stays — there's no visible description text in the row to
             click on instead. */}
-        <RowActions onClick={e => e.stopPropagation()}>
+        <RowActions data-row-actions onClick={e => e.stopPropagation()}>
           {canEdit && (
             <>
               {!isInactive && (

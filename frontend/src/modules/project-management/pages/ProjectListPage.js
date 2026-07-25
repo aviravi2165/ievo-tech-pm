@@ -11,7 +11,7 @@ import { Table, TableHead, TableHeadCell, ListRow, Cell } from '../styles/Table.
 import { Topbar, TopbarH1, TopbarActions, List } from '../styles/ProjectListPage.styles';
 import { Wrap, Empty, BtnPrimary, BtnGhost, DepBadge, IconBtn, IconBtnDanger } from '../styles/shared.styles';
 import { useSortFilter } from '../../shared/hooks/useSortFilter';
-import { SortSelect, FilterSelect } from '../../shared/components/TableControls';
+import { SortSelect, FilterSelect, FilterToggle } from '../../shared/components/TableControls';
 
 const COL = { owner: 105, dates: 140, progress: 100, status: 96, role: 74, actions: 28 };
 
@@ -34,6 +34,7 @@ export default function ProjectListPage({ onSelectProject }) {
     loading, loadingMore, error, loadMore, refetch,
   } = useProjectList();
   const [showCreate, setShowCreate] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
 
   // Debounced search box — types locally into its own state, only pushes
   // to the hook (which fires a new server request) after a short pause.
@@ -121,33 +122,40 @@ export default function ProjectListPage({ onSelectProject }) {
             fontSize: 12, width: 200, outline: 'none',
           }}
         />
-        <SortSelect
-          value={sortKey} onChange={setSortKey} dir={sortDir} onToggleDir={toggleSortDir}
-          options={[
-            { value: 'name', label: 'Name' },
-            { value: 'start', label: 'Start Date' },
-            { value: 'end', label: 'End Date' },
-            { value: 'progress', label: 'Progress' },
-          ]}
-        />
-        <FilterSelect
-          placeholder="All statuses" value={filters.status} onChange={v => setFilter('status', v)}
-          options={statusOptions}
-        />
-        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: theme.colors.ash, cursor: 'pointer' }}>
-          <input type="checkbox" checked={filters.active === 'active'} onChange={e => setFilter('active', e.target.checked ? 'active' : null)} />
-          Active only
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: theme.colors.ash, cursor: 'pointer' }}>
-          <input type="checkbox" checked={!!filters.overdue} onChange={e => setFilter('overdue', e.target.checked || null)} />
-          Overdue only
-        </label>
+        <FilterToggle open={showFilters} onClick={() => setShowFilters(v => !v)}
+          active={!!(filters.status || filters.active || filters.overdue)} title="Sort & filter projects" />
         <TopbarActions>
           <BtnPrimary onClick={() => setShowCreate(true)}>
             + New Project
           </BtnPrimary>
         </TopbarActions>
       </Topbar>
+
+      {showFilters && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 20px', background: theme.colors.greige, borderBottom: `1px solid ${theme.colors.border}` }}>
+          <SortSelect
+            value={sortKey} onChange={setSortKey} dir={sortDir} onToggleDir={toggleSortDir}
+            options={[
+              { value: 'name', label: 'Name' },
+              { value: 'start', label: 'Start Date' },
+              { value: 'end', label: 'End Date' },
+              { value: 'progress', label: 'Progress' },
+            ]}
+          />
+          <FilterSelect
+            placeholder="All statuses" value={filters.status} onChange={v => setFilter('status', v)}
+            options={statusOptions}
+          />
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: theme.colors.ash, cursor: 'pointer' }}>
+            <input type="checkbox" checked={filters.active === 'active'} onChange={e => setFilter('active', e.target.checked ? 'active' : null)} />
+            Active only
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: theme.colors.ash, cursor: 'pointer' }}>
+            <input type="checkbox" checked={!!filters.overdue} onChange={e => setFilter('overdue', e.target.checked || null)} />
+            Overdue only
+          </label>
+        </div>
+      )}
 
       <List>
         {loading && <div style={{ color: theme.colors.ash, fontSize: 13 }}>Loading projects…</div>}

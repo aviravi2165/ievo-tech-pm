@@ -165,6 +165,33 @@ export const TableHeadCell = styled.div`
 // content ends and the next phase begins. margin-top adds actual
 // whitespace between one phase's block and the next, not just a 2px rule
 // sitting flush against it.
+// ClickUp-style hover-reveal: these used to be permanently visible on
+// every row, which is what made an expanded tree of several Phases/
+// Activities read as a wall of icon clusters even when nothing was being
+// acted on. opacity-only (not display/visibility) — the icons still
+// occupy their grid cell at their real size the whole time, so nothing
+// about row height/column alignment shifts on hover; only their visibility
+// changes. Keyboard/touch users still reach them via :focus-within, since
+// neither hover exists for them.
+//
+// Targeted via a plain `[data-row-actions]` attribute selector below, NOT
+// emotion's `${Component}` selector interpolation — that syntax requires
+// @emotion/babel-plugin (or the swc equivalent) to resolve at compile time,
+// which this project's Vite config doesn't have wired up. Using it here
+// threw "Component selectors can only be used in conjunction with
+// @emotion/babel-plugin…" at runtime and crashed every page that rendered
+// a Phase/Activity/Task row (i.e. the whole Project Detail page). A plain
+// attribute selector needs no compiler support at all.
+export const RowActions = styled.div`
+  display: flex; gap: 3px; align-items: center; justify-content: flex-end;
+  justify-self: end;
+  background: ${t(th => th.colors.white)}b3;
+  border: 1px solid ${t(th => th.colors.border)};
+  border-radius: ${t(th => th.radius.sm)};
+  padding: 2px;
+  opacity: 0; transition: opacity 0.12s ease;
+`;
+
 export const GroupRow = styled.div`
   display: grid; grid-template-columns: ${GROUP_GRID_COLS};
   align-items: center; gap: 5px;
@@ -176,6 +203,7 @@ export const GroupRow = styled.div`
   border-top: ${(props) => (props.level === 0 ? `2px solid ${props.theme.colors.onyx}1f` : 'none')};
   cursor: pointer;
   &:hover { background: ${(props) => (props.level === 0 ? props.theme.colors.copper : props.theme.colors.navyTint)}3d; }
+  &:hover [data-row-actions], &:focus-within [data-row-actions] { opacity: 1; }
 `;
 
 // level: 2 = Task. The real data row — same TASK_GRID_COLS template as its
@@ -189,6 +217,7 @@ export const TaskTableRow = styled.div`
   background: ${t(th => th.colors.white)};
   &:last-child { border-bottom: none; }
   &:hover { background: ${t(th => th.colors.greige)}; }
+  &:hover [data-row-actions], &:focus-within [data-row-actions] { opacity: 1; }
 `;
 
 // Shared cell wrapper — same width contract as TableHeadCell so content
@@ -238,15 +267,6 @@ export const ListRow = styled.div`
 // empty bordered box. justify-self:end makes RowActions size to its own
 // content instead, sitting flush against the end of its track; any unused
 // track width is just empty grid space with nothing drawn in it.
-export const RowActions = styled.div`
-  display: flex; gap: 3px; align-items: center; justify-content: flex-end;
-  justify-self: end;
-  background: ${t(th => th.colors.white)}b3;
-  border: 1px solid ${t(th => th.colors.border)};
-  border-radius: ${t(th => th.radius.sm)};
-  padding: 2px;
-`;
-
 // ── Assignee avatars ──────────────────────────────────────────────────────────
 export const Assignees = styled.div` display: flex; flex-shrink: 0; `;
 // pending prop — a request sent but not yet accepted. Rendered as a dashed,

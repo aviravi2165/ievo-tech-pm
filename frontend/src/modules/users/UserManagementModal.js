@@ -11,7 +11,7 @@ import {
   EditCol, EditEmptyState, EditHeaderRow, EditTitle, BackBtn,
 } from './styles/UserManagementModal.styles';
 import { useSortFilter } from '../shared/hooks/useSortFilter';
-import { SortSelect, FilterSelect } from '../shared/components/TableControls';
+import { SortSelect, FilterSelect, FilterToggle } from '../shared/components/TableControls';
 import { useEscapeKey } from '../shared/hooks/useEscapeKey';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -312,6 +312,7 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
 
   useEscapeKey(onClose, open);
 
+  const [showUserFilters, setShowUserFilters] = useState(false);
   const deptOptions = useMemo(() => [...new Set(users.map(u => u.deptName).filter(Boolean))].map(d => ({ value: d, label: d })), [users]);
   const {
     items: visibleUsers, sortKey: userSortKey, setSortKey: setUserSortKey,
@@ -477,21 +478,27 @@ export default function UserManagementModal({ open, defaultTab = 'register', onC
 
               {/* Left: user list */}
               <UserListCol>
-                <Input
-                  placeholder="Search users…"
-                  value={userSearch}
-                  onChange={e => { setUserSearch(e.target.value); loadUsers(e.target.value); }}
-                  style={{ marginBottom: 0 }}
-                />
-                <div style={{ display:'flex', alignItems:'center', gap:6, margin:'8px 0', flexWrap:'wrap' }}>
-                  <SortSelect value={userSortKey} onChange={setUserSortKey} dir={userSortDir} onToggleDir={toggleUserSortDir}
-                    options={[{ value:'name', label:'Name' }, { value:'dept', label:'Department' }, { value:'active', label:'Active status' }]} />
-                  <FilterSelect placeholder="All departments" value={userFilters.dept} onChange={v => setUserFilter('dept', v)} options={deptOptions} />
-                  <label style={{ display:'flex', alignItems:'center', gap:4, fontSize:11, cursor:'pointer' }}>
-                    <input type="checkbox" checked={!!userFilters.active} onChange={e => setUserFilter('active', e.target.checked || null)} />
-                    Active only
-                  </label>
+                <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                  <Input
+                    placeholder="Search users…"
+                    value={userSearch}
+                    onChange={e => { setUserSearch(e.target.value); loadUsers(e.target.value); }}
+                    style={{ marginBottom: 0, flex: 1 }}
+                  />
+                  <FilterToggle open={showUserFilters} onClick={() => setShowUserFilters(v => !v)}
+                    active={!!(userFilters.dept || userFilters.active)} title="Sort & filter" />
                 </div>
+                {showUserFilters && (
+                  <div style={{ display:'flex', alignItems:'center', gap:6, margin:'8px 0', flexWrap:'wrap', padding:'8px 10px', background: 'rgba(46,40,35,0.04)', border: '1px solid rgba(46,40,35,0.12)', borderRadius: 6 }}>
+                    <SortSelect value={userSortKey} onChange={setUserSortKey} dir={userSortDir} onToggleDir={toggleUserSortDir}
+                      options={[{ value:'name', label:'Name' }, { value:'dept', label:'Department' }, { value:'active', label:'Active status' }]} />
+                    <FilterSelect placeholder="All departments" value={userFilters.dept} onChange={v => setUserFilter('dept', v)} options={deptOptions} />
+                    <label style={{ display:'flex', alignItems:'center', gap:4, fontSize:11, cursor:'pointer' }}>
+                      <input type="checkbox" checked={!!userFilters.active} onChange={e => setUserFilter('active', e.target.checked || null)} />
+                      Active only
+                    </label>
+                  </div>
+                )}
                 <UserListBox>
                   {usersLoading && <UserListMsg>Loading…</UserListMsg>}
                   {!usersLoading && users.length === 0 && <UserListMsg>No users found.</UserListMsg>}

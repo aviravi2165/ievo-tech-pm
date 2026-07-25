@@ -13,7 +13,7 @@ import {
 } from './styles/DashboardModule.styles';
 import { useSortFilter } from '../shared/hooks/useSortFilter';
 import { usePagination } from '../shared/hooks/usePagination';
-import { SortSelect, FilterSelect, LoadMoreBar } from '../shared/components/TableControls';
+import { SortSelect, FilterSelect, FilterToggle, LoadMoreBar } from '../shared/components/TableControls';
 
 // ── Helpers (same conventions as the member DashboardModule) ──────────────────
 function fmtDate(d) {
@@ -176,6 +176,10 @@ export default function AdminDashboard({ currentUser }) {
   const [userCounts, setUserCounts] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Which section's sort/filter row is expanded — 'attention'|'overdueProjects'|'audit'|null.
+  // Mutually exclusive on purpose (matches the app's existing togglePanel convention).
+  const [openControls, setOpenControls] = useState(null);
+  const toggleControls = (k) => setOpenControls(v => v === k ? null : k);
 
   const fetchAll = useCallback(async () => {
     setLoading(true); setError('');
@@ -301,13 +305,18 @@ export default function AdminDashboard({ currentUser }) {
                 <SectionHeadRow>
                   <SectionTitle>Needs Attention</SectionTitle>
                   {attention.length > 0 && <SectionPill bg={theme.colors.danger}>{attention.length}</SectionPill>}
+                  {attention.length > 0 && (
+                    <FilterToggle open={openControls === 'attention'} onClick={() => toggleControls('attention')}
+                      active={!!(attnFilters.status || attnFilters.project || attnFilters.overdueOnly)}
+                      title="Sort & filter" style={{ marginLeft: 'auto' }} />
+                  )}
                 </SectionHeadRow>
                 {attention.length === 0
                   ? <EmptyText>Nothing blocked or overdue across any project.</EmptyText>
                   : (
                     <>
-                      {attention.length > 0 && (
-                        <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8, flexWrap:'wrap' }}>
+                      {openControls === 'attention' && (
+                        <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8, flexWrap:'wrap', padding:'8px 10px', background:theme.colors.greige, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm }}>
                           <SortSelect value={attnSortKey} onChange={setAttnSortKey} dir={attnSortDir} onToggleDir={toggleAttnSortDir}
                             options={[{ value:'due', label:'Due Date' }]} />
                           <FilterSelect placeholder="All statuses" value={attnFilters.status} onChange={v => setAttnFilter('status', v)} options={attentionStatusOptions} />
@@ -341,9 +350,11 @@ export default function AdminDashboard({ currentUser }) {
                   <SectionHeadRow>
                     <SectionTitle>Overdue Projects</SectionTitle>
                     <SectionPill bg={theme.colors.danger}>{overdueProjects.length}</SectionPill>
+                    <FilterToggle open={openControls === 'overdueProjects'} onClick={() => toggleControls('overdueProjects')}
+                      title="Sort" style={{ marginLeft: 'auto' }} />
                   </SectionHeadRow>
-                  {overdueProjects.length > 0 && (
-                    <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8 }}>
+                  {openControls === 'overdueProjects' && (
+                    <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8, padding:'8px 10px', background:theme.colors.greige, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm }}>
                       <SortSelect value={opSortKey} onChange={setOpSortKey} dir={opSortDir} onToggleDir={toggleOpSortDir}
                         options={[{ value:'end', label:'End Date' }, { value:'progress', label:'Progress' }]} />
                     </div>
@@ -428,16 +439,22 @@ export default function AdminDashboard({ currentUser }) {
               <Section>
                 <SectionHeadRow>
                   <SectionTitle>Recent Activity — All Projects</SectionTitle>
+                  {auditFeed.length > 0 && (
+                    <FilterToggle open={openControls === 'audit'} onClick={() => toggleControls('audit')}
+                      active={!!auditFilters.action} title="Sort & filter" style={{ marginLeft: 'auto' }} />
+                  )}
                 </SectionHeadRow>
                 {auditFeed.length === 0
                   ? <EmptyText>No recent activity across any project.</EmptyText>
                   : (
                     <>
-                      <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8, flexWrap:'wrap' }}>
-                        <SortSelect value="time" onChange={() => {}} dir={auditSortDir} onToggleDir={toggleAuditSortDir}
-                          options={[{ value:'time', label: auditSortDir === 'desc' ? 'Newest first' : 'Oldest first' }]} />
-                        <FilterSelect placeholder="All actions" value={auditFilters.action} onChange={v => setAuditFilter('action', v)} options={auditActionOptions} />
-                      </div>
+                      {openControls === 'audit' && (
+                        <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8, flexWrap:'wrap', padding:'8px 10px', background:theme.colors.greige, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm }}>
+                          <SortSelect value="time" onChange={() => {}} dir={auditSortDir} onToggleDir={toggleAuditSortDir}
+                            options={[{ value:'time', label: auditSortDir === 'desc' ? 'Newest first' : 'Oldest first' }]} />
+                          <FilterSelect placeholder="All actions" value={auditFilters.action} onChange={v => setAuditFilter('action', v)} options={auditActionOptions} />
+                        </div>
+                      )}
                       <CardWrap>
                         {auditPage.map((e, i) => (
                           <AuditRow key={e.id} entry={e} isLast={i === auditPage.length - 1} />

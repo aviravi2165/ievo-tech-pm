@@ -7,6 +7,8 @@ import {
   ConvListWrap, ListError, ListErrorHint, ListEmptyMsg, GroupCard, GroupIcon,
   GroupInfo, GroupName, GroupCount, RowRight, RowTime, UnreadDot,
 } from '../styles/ConversationList.styles';
+import { useSortFilter } from '../../shared/hooks/useSortFilter';
+import { SortSelect, FilterToggle } from '../../shared/components/TableControls';
 
 function fmtTime(dateStr) {
   if (!dateStr) return '';
@@ -52,8 +54,9 @@ export default function InboxSidebar({
 }) {
   const { unreadCount } = useMessaging();
   const [search, setSearch] = useState('');
+  const [showControls, setShowControls] = useState(false);
 
-  const filtered = useMemo(() => {
+  const searched = useMemo(() => {
     if (!search.trim()) return conversations;
     const q = search.toLowerCase();
     return conversations.filter(c =>
@@ -62,6 +65,21 @@ export default function InboxSidebar({
       c.groupName?.toLowerCase().includes(q)
     );
   }, [conversations, search]);
+
+  // Sort/filter on top of the search results — same collapsed-behind-a-
+  // toggle pattern used everywhere else (see PhasePanel.js's FilterToggle),
+  // so it doesn't add a permanent row of controls above every conversation
+  // list. Default sort is newest-first, matching what the backend already
+  // returns, made an explicit toggleable choice instead of an implicit
+  // assumption about server ordering (same reasoning as AuditLog.js).
+  const {
+    items: filtered, sortDir, toggleSortDir, filters, setFilter,
+  } = useSortFilter(searched, {
+    sorters: { recent: (a, b) => new Date(a.latestAt || a.createdAt || 0).getTime() - new Date(b.latestAt || b.createdAt || 0).getTime() },
+    filters: { unreadOnly: { predicate: (c) => c.unreadCount > 0 } },
+    defaultSortKey: 'recent',
+    defaultSortDir: 'desc',
+  });
 
   return (
     <Sidebar as="aside" data-msg-sidebar>
@@ -85,12 +103,30 @@ export default function InboxSidebar({
         </ComposeBtn>
 
         <SearchWrap>
-          <SearchInput
-            type="text"
-            placeholder="Search conversations…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ flex: 1 }}>
+              <SearchInput
+                type="text"
+                placeholder="Search conversations…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+            </div>
+            {conversations.length > 0 && (
+              <FilterToggle open={showControls} onClick={() => setShowControls(v => !v)}
+                active={!!filters.unreadOnly} title="Sort & filter" />
+            )}
+          </div>
+          {showControls && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+              <SortSelect value="recent" onChange={() => {}} dir={sortDir} onToggleDir={toggleSortDir}
+                options={[{ value: 'recent', label: sortDir === 'desc' ? 'Newest first' : 'Oldest first' }]} />
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer' }}>
+                <input type="checkbox" checked={!!filters.unreadOnly} onChange={e => setFilter('unreadOnly', e.target.checked || null)} />
+                Unread only
+              </label>
+            </div>
+          )}
         </SearchWrap>
 
         {!hideTabs && (
@@ -118,7 +154,9 @@ export default function InboxSidebar({
           )}
 
           {!loading && !error && filtered.length === 0 && (
-            <ListEmptyMsg>{search ? 'No results found.' : 'No conversations yet.'}</ListEmptyMsg>
+            <ListEmptyMsg>
+              {search ? 'No results found.' : filters.unreadOnly ? 'No unread conversations.' : 'No conversations yet.'}
+            </ListEmptyMsg>
           )}
 
           {!loading && !error && filtered.map(conv => {

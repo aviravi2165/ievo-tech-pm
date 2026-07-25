@@ -15,7 +15,7 @@ import {
   DepBadge, IconBtn, IconBtnDanger, EditPanelTitle, BtnPrimary, BtnGhost, TaskList,
 } from '../styles/shared.styles';
 import { useSortFilter } from '../../shared/hooks/useSortFilter';
-import { SortSelect, FilterSelect } from '../../shared/components/TableControls';
+import { SortSelect, FilterSelect, FilterToggle } from '../../shared/components/TableControls';
 
 const PRIORITY_OPTS = ['Low', 'Medium', 'High', 'Critical'];
 
@@ -26,6 +26,15 @@ function parseLocalDate(d) {
   return new Date(y, m - 1, day);
 }
 function initials(name = '') { return (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(); }
+
+// Mirrors PhasePanel.js's isDowngrade/RANK (which mirrors MemberManager.js's) —
+// same fix, same reasoning: "Add from project members" here had no check
+// against silently overriding someone's inherited project Manager role
+// with a lower explicit Activity role.
+const RANK = { Viewer: 1, Employee: 2, Member: 2, Manager: 3 };
+function isDowngrade(newRole, currentRole) {
+  return (RANK[newRole] ?? 0) < (RANK[currentRole] ?? 0);
+}
 function fmtRange(start, end) {
   const s = parseLocalDate(start), e = parseLocalDate(end);
   if (!s && !e) return null;
@@ -298,9 +307,19 @@ export default function ActivityRow({
             if (!label) return activity.memberCount > 0
               ? <span style={{ fontSize:10, color:theme.colors.ash }}>{activity.memberCount} member{activity.memberCount !== 1 ? 's' : ''}</span>
               : null;
+            // italic (not just color+weight) when inherited — color/weight
+            // alone wasn't a strong enough signal without hovering for the
+            // tooltip: this name is shown here because they're the
+            // project's Manager, NOT because anyone explicitly added them
+            // to this activity. Clicking "+ Name" for someone already
+            // listed here (in the Members panel below) still makes sense —
+            // it PINS them as this activity's own explicit Manager, which
+            // is a real, different thing from inheriting it — but without
+            // this visual distinction it read as "why does it let me
+            // re-add someone already added."
             return (
-              <span style={{ fontSize:10, color: activity.managerNames ? theme.colors.onyx : theme.colors.ash, fontWeight: activity.managerNames ? 600 : 400, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', display:'block' }}
-                title={activity.managerNames ? label : `${label} (project Manager — no Activity-specific Manager set)`}>
+              <span style={{ fontSize:10, color: activity.managerNames ? theme.colors.onyx : theme.colors.ash, fontWeight: activity.managerNames ? 600 : 400, fontStyle: activity.managerNames ? 'normal' : 'italic', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', display:'block' }}
+                title={activity.managerNames ? label : `${label} — inherited from the project's Manager role, not explicitly set on this Activity. Click to pin explicitly.`}>
                 {label}
               </span>
             );
@@ -339,7 +358,7 @@ export default function ActivityRow({
             Viewer here undiscoverable, so it's back as an explicit icon
             alongside that click, not instead of it. */}
         {canEdit && (
-          <RowActions onClick={e => e.stopPropagation()}>
+          <RowActions data-row-actions onClick={e => e.stopPropagation()}>
             {!isInactive && (
               <IconBtn active={panel === 'members'} title="Add Manager / Viewer / member"
                 onClick={() => { togglePanel('members'); if (panel !== 'members') fetchMembers(); }} style={{ width:20, height:20 }}>
@@ -434,15 +453,24 @@ export default function ActivityRow({
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
                 {projectMembers
                   .filter(pm => !actMembers.find(am => String(am.userId) === String(pm.userId)))
-                  .map(pm => (
-                    <BtnGhost key={pm.userId} style={{ fontSize: 11, padding: '3px 10px' }}
-                      onClick={async () => {
-                        try { await activityApi.addMember(activity.activityId, pm.userId, newMemberRole); await fetchMembers(); }
-                        catch (err) { showToast(apiErrorMessage(err, 'Failed to add member.')); }
-                      }}>
-                      + {pm.name || pm.email}
-                    </BtnGhost>
-                  ))
+                  .map(pm => {
+                    const downgrade = isDowngrade(newMemberRole, pm.role);
+                    return (
+                      <BtnGhost key={pm.userId}
+                        style={{
+                          fontSize: 11, padding: '3px 10px',
+                          ...(downgrade ? { color: theme.colors.danger, borderColor: theme.colors.danger } : null),
+                        }}
+                        title={downgrade ? `${pm.name} is already this project's ${pm.role} — adding them here as ${newMemberRole} REPLACES that on this Activity, it doesn't add to it.` : undefined}
+                        onClick={async () => {
+                          if (downgrade && !window.confirm(`${pm.name} is already this project's ${pm.role}. Adding them here as ${newMemberRole} will override that and reduce their access on this Activity specifically. Continue?`)) return;
+                          try { await activityApi.addMember(activity.activityId, pm.userId, newMemberRole); await fetchMembers(); }
+                          catch (err) { showToast(apiErrorMessage(err, 'Failed to add member.')); }
+                        }}>
+                        {downgrade && '⚠ '}+ {pm.name || pm.email}
+                      </BtnGhost>
+                    );
+                  })
                 }
               </div>
             </div>
@@ -569,17 +597,8 @@ export default function ActivityRow({
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               {tasks.length > 0 && (
-                <>
-                  <SortSelect
-                    value={taskSortKey} onChange={setTaskSortKey} dir={taskSortDir} onToggleDir={toggleTaskSortDir}
-                    options={[
-                      { value: 'name', label: 'Name' }, { value: 'due', label: 'Due Date' },
-                      { value: 'priority', label: 'Priority' }, { value: 'status', label: 'Status' },
-                    ]}
-                  />
-                  <FilterSelect placeholder="All statuses" value={taskFilters.status} onChange={v => setTaskFilter('status', v)} options={taskStatusOptions} />
-                  <FilterSelect placeholder="All priorities" value={taskFilters.priority} onChange={v => setTaskFilter('priority', v)} options={PRIORITY_OPTS.map(p => ({ value: p, label: p }))} />
-                </>
+                <FilterToggle open={panel === 'sortfilter'} onClick={() => togglePanel('sortfilter')}
+                  active={!!(taskFilters.status || taskFilters.priority)} title="Sort & filter tasks" />
               )}
               {canEdit && !isBlocked && !isInactive && (
                 <BtnGhost style={{ padding: '4px 10px', fontSize: 11 }}
@@ -589,6 +608,20 @@ export default function ActivityRow({
               )}
             </div>
           </div>
+
+          {panel === 'sortfilter' && tasks.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 8, padding: '8px 10px', background: theme.colors.greige, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm }}>
+              <SortSelect
+                value={taskSortKey} onChange={setTaskSortKey} dir={taskSortDir} onToggleDir={toggleTaskSortDir}
+                options={[
+                  { value: 'name', label: 'Name' }, { value: 'due', label: 'Due Date' },
+                  { value: 'priority', label: 'Priority' }, { value: 'status', label: 'Status' },
+                ]}
+              />
+              <FilterSelect placeholder="All statuses" value={taskFilters.status} onChange={v => setTaskFilter('status', v)} options={taskStatusOptions} />
+              <FilterSelect placeholder="All priorities" value={taskFilters.priority} onChange={v => setTaskFilter('priority', v)} options={PRIORITY_OPTS.map(p => ({ value: p, label: p }))} />
+            </div>
+          )}
 
           {/* ── Add task form ── */}
           {panel === 'addtask' && canEdit && (

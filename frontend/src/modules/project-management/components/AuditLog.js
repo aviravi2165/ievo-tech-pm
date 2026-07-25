@@ -4,7 +4,7 @@ import { projectApi } from '../api/projectApi';
 import { Audit, AuditRow, AuditTime, AuditWho, AuditText } from '../styles/shared.styles';
 import { useSortFilter } from '../../shared/hooks/useSortFilter';
 import { usePagination } from '../../shared/hooks/usePagination';
-import { SortSelect, FilterSelect, LoadMoreBar } from '../../shared/components/TableControls';
+import { SortSelect, FilterSelect, FilterToggle, LoadMoreBar } from '../../shared/components/TableControls';
 
 const PAGE_SIZE = 25;
 
@@ -16,6 +16,7 @@ export default function AuditLog({ projectId }) {
   const theme = useTheme();
   const [log,     setLog]     = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showFilters, setShowFilters] = useState(false);
 
   useEffect(() => {
     projectApi.getAudit(projectId)
@@ -48,14 +49,20 @@ export default function AuditLog({ projectId }) {
 
   return (
     <div>
-      <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:10, flexWrap:'wrap' }}>
-        <SortSelect
-          value="time" onChange={() => {}} dir={sortDir} onToggleDir={toggleSortDir}
-          options={[{ value:'time', label: sortDir === 'desc' ? 'Newest first' : 'Oldest first' }]}
-        />
-        <FilterSelect placeholder="All actions" value={filters.action} onChange={v => setFilter('action', v)} options={actionOptions} />
-        <FilterSelect placeholder="All entity types" value={filters.entity} onChange={v => setFilter('entity', v)} options={entityOptions} />
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'flex-end', marginBottom: showFilters ? 6 : 10 }}>
+        <FilterToggle open={showFilters} onClick={() => setShowFilters(v => !v)}
+          active={!!(filters.action || filters.entity)} title="Sort & filter" />
       </div>
+      {showFilters && (
+        <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:10, flexWrap:'wrap', padding:'8px 10px', background:theme.colors.greige, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm }}>
+          <SortSelect
+            value="time" onChange={() => {}} dir={sortDir} onToggleDir={toggleSortDir}
+            options={[{ value:'time', label: sortDir === 'desc' ? 'Newest first' : 'Oldest first' }]}
+          />
+          <FilterSelect placeholder="All actions" value={filters.action} onChange={v => setFilter('action', v)} options={actionOptions} />
+          <FilterSelect placeholder="All entity types" value={filters.entity} onChange={v => setFilter('entity', v)} options={entityOptions} />
+        </div>
+      )}
 
       {!filtered.length && <div style={{ color:theme.colors.ash, fontSize:13 }}>No audit entries match the current filters.</div>}
 
