@@ -1,13 +1,12 @@
 import styled from '@emotion/styled';
 
-// 44px — the one fixed height value the rest of the shell (mobile message
-// panel offset, etc.) needs to agree with. Previously threaded through a
-// CSS custom property (--topbar-h) that was never actually SET anywhere,
-// always silently falling back to its default — and inconsistently
-// (44px in one place, 42px in another). Exported so anything else that
-// needs to know the topbar's height imports this instead of repeating a
-// number that could drift out of sync.
-export const TOPBAR_HEIGHT = 44;
+// 56px — bumped up from 44px to fit the SPECULA logo (a square icon+
+// wordmark badge, not the old wide horizontal I.EVO lockup) without it
+// feeling cramped against the top/bottom edges. The one fixed height value
+// the rest of the shell (mobile message panel offset, etc.) needs to agree
+// with — exported so anything else that needs to know the topbar's height
+// imports this instead of repeating a number that could drift out of sync.
+export const TOPBAR_HEIGHT = 56;
 
 export const Topbar = styled.header`
   height: ${TOPBAR_HEIGHT}px;
@@ -28,11 +27,27 @@ export const TopbarBrand = styled.div`
   flex-shrink: 0;
 `;
 
+// Icon-only crop of the SPECULA mark (the source asset's baked-in
+// "SPECULA" wordmark was cropped out — at any height that fits a slim
+// topbar it rendered as an illegible smudge, see TopbarWordmark below for
+// the real, crisp replacement). Sized by height with width:auto so the
+// square icon never stretches.
 export const TopbarLogoImg = styled.img`
-  height: 30px;
+  height: 40px;
   width: auto;
   object-fit: contain;
   display: block;
+`;
+
+// Real CSS text standing in for the source logo's wordmark — legible at
+// any size, unlike a shrunk raster of it. Bold, spaced caps to echo the
+// source logo's own type treatment.
+export const TopbarWordmark = styled.span`
+  font-family: ${p => p.theme.font.display};
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  color: ${p => p.theme.colors.onyx};
 `;
 
 export const TopbarDivider = styled.span`

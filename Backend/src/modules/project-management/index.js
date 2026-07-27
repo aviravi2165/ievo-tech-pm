@@ -12,6 +12,7 @@ const activityRoutes = require('./routes/activityRoutes');
 const taskRoutes     = require('./routes/taskRoutes');
 const templateRoutes = require('./routes/templateRoutes');
 const { initPmSocket, closePmSocket } = require('./socket/socketHandler');
+const { startActivityInsightsCron } = require('./cron/activityInsightsCron');
 
 function register(app) {
   app.use('/api/projects',   projectRoutes);
@@ -29,4 +30,14 @@ function initRealtime() {
   initPmSocket();
 }
 
-module.exports = { register, initRealtime };
+/**
+ * Called once after the server is listening. Posts periodic task-insight
+ * summaries into each PM Activity's group chat — see
+ * services/activityInsightsService.js. No-ops (logs and returns) if
+ * ACTIVITY_INSIGHTS_CRON_SCHEDULE isn't configured.
+ */
+function initCron() {
+  startActivityInsightsCron();
+}
+
+module.exports = { register, initRealtime, initCron };

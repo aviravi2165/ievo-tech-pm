@@ -2,7 +2,7 @@ require('dotenv').config();
 
 const http = require('http');
 const { createApp } = require('./src/app');
-const { initAllRealtime } = require('./src/modules');
+const { initAllRealtime, initAllCronJobs } = require('./src/modules');
 const { closePool } = require('./src/config/db');
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -14,6 +14,7 @@ const { closeSocket } = initAllRealtime(server);
 server.listen(PORT ,() => {
   console.log(`SPECULA listening on port ${PORT}`);
   console.log('Modules: dashboard, project-management, scheduling, messages');
+  initAllCronJobs();
 });
 
 let shuttingDown = false;

@@ -1,7 +1,7 @@
 'use strict';
 
 const router  = require('express').Router();
-const { authenticate }  = require('../../../middleware/auth');
+const { authenticate, requireAdmin }  = require('../../../middleware/auth');
 const { requireRole }   = require('../middleware/projectRole');
 const ctrl = require('../controllers/projectController');
 
@@ -23,6 +23,11 @@ router.get('/:id/audit', setProjectId, requireRole('Manager'), ctrl.getAudit);
 // bucket by dueDate as a proxy since no real timestamp was available.
 // Read-only, same access as /audit's underlying data, no role gate needed.
 router.get('/:id/task-completions', ctrl.getTaskCompletions);
+
+// Manually runs the Activity Insights sweep immediately, for testing the
+// cron job's output without waiting for ACTIVITY_INSIGHTS_CRON_SCHEDULE to
+// fire — posts the exact same messages the scheduled run would. Admin only.
+router.post('/activity-insights/run-now', requireAdmin, ctrl.runActivityInsightsNow);
 
 // Members — flat list and hierarchical breakdown (for Members tab)
 router.get('/:id/members',            ctrl.getMembers);

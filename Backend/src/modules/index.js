@@ -44,4 +44,12 @@ function initAllRealtime(server) {
   };
 }
 
-module.exports = { registerAllModules, initAllRealtime };
+function initAllCronJobs() {
+  for (const mod of MODULES) {
+    if (typeof mod.initCron === 'function') {
+      mod.initCron();
+    }
+  }
+}
+
+module.exports = { registerAllModules, initAllRealtime, initAllCronJobs };

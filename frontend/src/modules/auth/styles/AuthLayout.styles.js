@@ -32,6 +32,40 @@ export const Brand = styled.div`
 
 export const BrandInner = styled.div` display: flex; flex-direction: column; gap: 8px; `;
 
+// Icon beside the wordmark (the original placement) — LOGO_INDENT below
+// keeps UNIFIED PLATFORM / the tagline aligned to where "SPECULA" itself
+// starts (icon width + row gap), rather than either (a) those lines
+// sitting flush left under the icon while the wordmark starts further
+// right, staggered out of alignment with them, or (b) stacking the icon
+// above the wordmark just to dodge that mismatch. The bullet list and
+// footer below stay flush against BrandInner's left edge as before — only
+// the two lines directly under the wordmark follow its indent.
+// Icon is a transparent-background crop (see frontend/src/shell/assets/
+// specula-icon.png) — a solid-bg version would show as a light square on
+// this dark onyx panel.
+const LOGO_ICON_SIZE = 60;
+const LOGO_ROW_GAP = 16;
+// Exported — LoginPage.styles.js's FeatureList (the bullet list) also needs
+// this, so the WHOLE text column (wordmark, subtitle, tagline, bullets)
+// shares one consistent left edge instead of two different ones (bullets
+// flush at the icon's edge, everything else indented past it) that read as
+// visually scattered/misaligned against each other.
+export const LOGO_INDENT = LOGO_ICON_SIZE + LOGO_ROW_GAP;
+
+export const LogoRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: ${LOGO_ROW_GAP}px;
+  margin-bottom: 4px;
+`;
+
+export const LogoIcon = styled.img`
+  height: ${LOGO_ICON_SIZE}px;
+  width: auto;
+  object-fit: contain;
+  display: block;
+`;
+
 export const Logo = styled.div`
   font-family: Georgia, serif;
   font-size: 48px;
@@ -42,6 +76,7 @@ export const Logo = styled.div`
 `;
 
 export const LogoSub = styled.div`
+  margin-left: ${LOGO_INDENT}px;
   font-size: 13px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
@@ -51,6 +86,7 @@ export const LogoSub = styled.div`
 `;
 
 export const Tagline = styled.p`
+  margin-left: ${LOGO_INDENT}px;
   font-size: 14px;
   color: ${p => p.theme.colors.ashLight};
   letter-spacing: 0.08em;

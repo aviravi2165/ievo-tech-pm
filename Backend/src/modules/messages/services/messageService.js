@@ -723,9 +723,25 @@ async function replyToConversation(conversationId, senderUserId, payload) {
     // happen until this callback returns, which is waiting on that read.
     // That's a self-deadlock that wouldn't necessarily surface under
     // Postgres' MVCC, so it's an easy thing to miss in this migration.
+    // ptt/pat: is this conversation a PM Task/Activity thread? Those are
+    // excluded from Inbox/Groups/unread-count everywhere else (see
+    // getInbox/getUnreadCount/listGroupsForUser) — a reply sent into one via
+    // the activity/task chat icon must carry that same exclusion into the
+    // LIVE socket broadcast too, or the recipient's unread badge bumps for a
+    // thread they can't find/clear from any tab (same class of bug as
+    // system messages not carrying isSystem over the wire — see
+    // socketHandler.toNewMessagePayload).
     const metaRes   = await req()
       .input('convId', sql.Int, conversationId)
-      .query(`SELECT subject, group_id AS groupId, conv_type AS convType FROM comm_conversations WHERE conversation_id = @convId`);
+      .query(`
+        SELECT c.subject, c.group_id AS groupId, c.conv_type AS convType,
+               CASE WHEN ptt.conversation_id IS NOT NULL OR pat.conversation_id IS NOT NULL
+                    THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS excludeFromUnread
+        FROM comm_conversations c
+        LEFT JOIN pm_task_threads     ptt ON ptt.conversation_id = c.conversation_id
+        LEFT JOIN pm_activity_threads pat ON pat.conversation_id = c.conversation_id
+        WHERE c.conversation_id = @convId
+      `);
     const senderRes = await req()
       .input('userId', sql.UniqueIdentifier, senderUserId)
       .query(`SELECT first_name, last_name, email FROM auth_users WHERE user_id = @userId`);
@@ -760,6 +776,7 @@ async function replyToConversation(conversationId, senderUserId, payload) {
       convType:  meta.convType  || null,
       bodyHtml:  sanitizedBody,
       createdAt: msgRes.recordset[0]?.createdAt || new Date().toISOString(),
+      excludeFromUnread: Boolean(meta.excludeFromUnread),
     };
   });
 }
@@ -855,12 +872,21 @@ async function getInbox(userId, page = 1, limit = 30) {
       -- person-to-person messages. Still fully reachable — ChatButton.js
       -- opens them directly by conversationId via
       -- activityApi.getChat/taskApi.getChat, which never goes through this
-      -- query at all. Deliberately NOT excluding pm_activity_threads here:
-      -- those already carry a real group_id and get routed to the Groups
-      -- tab client-side (MessagingContext.js) — filtering them out of THIS
-      -- result would remove them from Groups too, not just Inbox.
+      -- query at all.
       LEFT JOIN pm_task_threads ptt ON ptt.conversation_id = c.conversation_id
-      WHERE c.is_deleted = 0 AND gh.user_id IS NULL AND ptt.conversation_id IS NULL
+      -- Excludes PM Activity chat groups too, for the same reason — and this
+      -- result feeds MessagingContext's inbox/group split, which is where
+      -- inboxUnreadCount/groupUnreadCount (the tab badges) are computed. Since
+      -- groupService.listGroupsForUser (the Groups tab's actual list) already
+      -- excludes these, leaving them counted HERE would let an Activity
+      -- Insights post (or any message in that thread) bump the Groups badge
+      -- for a thread that never shows up when the tab is opened — an unread
+      -- count with nothing behind it, un-clearable except via the activity's
+      -- chat icon. Excluding it from the count source too keeps badge and
+      -- list in sync: neither counts nor lists these threads.
+      LEFT JOIN pm_activity_threads pat ON pat.conversation_id = c.conversation_id
+      WHERE c.is_deleted = 0 AND gh.user_id IS NULL
+        AND ptt.conversation_id IS NULL AND pat.conversation_id IS NULL
       ORDER BY c.last_message_at DESC
       OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
     `);
@@ -944,8 +970,16 @@ async function getUnreadCount(userId) {
         AND p.is_deleted = 0   -- only count unread for active participants
       INNER JOIN comm_conversations c
         ON c.conversation_id = m.conversation_id AND c.is_deleted = 0
+      -- Same PM Task/Activity thread exclusion as getInbox/listGroupsForUser
+      -- — this drives the global unread badge shown outside the Messages
+      -- module entirely, so it must stay in sync with what's actually
+      -- reachable in Inbox/Groups, or a message in one of these hidden
+      -- threads bumps a badge the user can never clear by opening a tab.
+      LEFT JOIN pm_task_threads     ptt ON ptt.conversation_id = c.conversation_id
+      LEFT JOIN pm_activity_threads pat ON pat.conversation_id = c.conversation_id
       WHERE m.is_deleted = 0 AND m.sender_id <> @userId
         AND m.sent_at > COALESCE(p.joined_at, '1753-01-01')
+        AND ptt.conversation_id IS NULL AND pat.conversation_id IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM comm_read_receipts rr
           WHERE rr.message_id = m.message_id AND rr.user_id = @userId
@@ -968,8 +1002,12 @@ async function getUnreadConversationIds(userId) {
         AND p.is_deleted = 0   -- only active participants have unread
       INNER JOIN comm_conversations c
         ON c.conversation_id = m.conversation_id AND c.is_deleted = 0
+      -- Same PM Task/Activity thread exclusion as getUnreadCount above.
+      LEFT JOIN pm_task_threads     ptt ON ptt.conversation_id = c.conversation_id
+      LEFT JOIN pm_activity_threads pat ON pat.conversation_id = c.conversation_id
       WHERE m.is_deleted = 0 AND m.sender_id <> @userId
         AND m.sent_at > COALESCE(p.joined_at, '1753-01-01')
+        AND ptt.conversation_id IS NULL AND pat.conversation_id IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM comm_read_receipts rr
           WHERE rr.message_id = m.message_id AND rr.user_id = @userId

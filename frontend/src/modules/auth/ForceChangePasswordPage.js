@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useAuth } from './AuthContext';
+import logoIcon from '../../shell/assets/specula-icon.png';
 import {
-  Root, Brand, BrandInner, Logo, LogoSub, Tagline, BrandFooter,
+  Root, Brand, BrandInner, LogoRow, LogoIcon, Logo, LogoSub, Tagline, BrandFooter,
   FormPanel, FormCard, Heading, Subheading, Field, Label, Input,
   ErrorBox, SuccessBox, SubmitBtn, Hint,
 } from './styles/AuthLayout.styles';
@@ -64,7 +65,10 @@ export default function ForceChangePasswordPage() {
     <Root>
       <Brand>
         <BrandInner>
-          <Logo>I.EVO</Logo>
+          <LogoRow>
+            <LogoIcon src={logoIcon} alt="" />
+            <Logo>SPECULA</Logo>
+          </LogoRow>
           <LogoSub>Unified Platform</LogoSub>
           <Tagline>Design | Demonstrate | Deliver</Tagline>
         </BrandInner>
@@ -74,7 +78,7 @@ export default function ForceChangePasswordPage() {
       <FormPanel>
         <FormCard wide>
           <MobileLogoWrap>
-            <MobileLogo>I.EVO</MobileLogo>
+            <MobileLogo>SPECULA</MobileLogo>
             <MobileLogoSub>ERP</MobileLogoSub>
           </MobileLogoWrap>
 

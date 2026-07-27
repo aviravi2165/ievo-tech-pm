@@ -28,6 +28,19 @@ function toNewMessagePayload(payload) {
     attachments:    payload.attachments   || [],
     parentMessage:  payload.parentMessage || null,
     readReceipts:   [],
+    // Was missing entirely — a system message (group renamed, activity
+    // insights, etc.) broadcast live over the socket rendered as a regular
+    // sender bubble until the thread was reopened/refetched (getThread does
+    // read is_system correctly), because MessageBubble's system-pill
+    // rendering branches on this flag and it never reached the client live.
+    isSystem:       Boolean(payload.isSystem),
+    // PM Task/Activity thread messages (system or human) — excluded from
+    // every unread computation server-side (getInbox/getUnreadCount/
+    // getUnreadConversationIds), so the live socket event must say so too,
+    // or a client's optimistic badge increment disagrees with the very next
+    // server refresh. See replyToConversation/activityInsightsService for
+    // where this gets set.
+    excludeFromUnread: Boolean(payload.excludeFromUnread || payload.isSystem),
   };
 }
 

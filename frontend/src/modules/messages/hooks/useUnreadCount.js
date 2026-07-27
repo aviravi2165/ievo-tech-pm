@@ -40,6 +40,18 @@ export function useUnreadCount() {
     if (!socket) return;
 
     const handler = (payload) => {
+      // System messages AND any message in a PM Task/Activity thread never
+      // count as unread server-side (getUnreadCount/getUnreadConversationIds
+      // exclude both — see messageService.js) — this mirrors that here too.
+      // Without this guard, a live message in one of those hidden threads
+      // still bumped this badge by 1 (a human reply has a real
+      // senderUserId, so it isn't caught by the isMine check below either),
+      // and the next refresh would then silently drop it back down since
+      // the server never counted it — a badge that flickers and disagrees
+      // with itself, for a thread the user has no tab to open and clear it
+      // from anyway.
+      if (payload.excludeFromUnread) return;
+
       // Never increment for own messages
       const isMine =
         payload.senderUserId &&
