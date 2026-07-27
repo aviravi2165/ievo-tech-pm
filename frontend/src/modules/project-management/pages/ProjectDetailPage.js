@@ -7,10 +7,12 @@ import OverdueBadge from '../components/OverdueBadge';
 import DelayBadge from '../components/DelayBadge';
 import PhasePanel from '../components/PhasePanel';
 import MemberManager from '../components/MemberManager';
-import UserSearchInput from '../components/UserSearchInput';
+import ParticipantsPanel from '../components/ParticipantsPanel';
 import AuditLog from '../components/AuditLog';
 import ProjectAnalytics from '../components/ProjectAnalytics';
 import { useProject } from '../hooks/useProject';
+import { useProjectAnalytics } from '../hooks/useProjectAnalytics';
+import { aggregateAssignees } from '../utils/aggregateAssignees';
 import { projectApi, phaseApi } from '../api/projectApi';
 import { showToast, apiErrorMessage } from '../hooks/toastStore';
 import { Table, TableHead, TableHeadCell, GROUP_COL } from '../styles/Table.styles';
@@ -21,10 +23,8 @@ import {
   Wrap, IconBtn, BtnPrimary, BtnGhost, EditPanel, EditPanelTitle, Empty, DepBadge, MemberRow,
 } from '../styles/shared.styles';
 
-const PROJECT_ROLES = ['Manager', 'Member', 'Viewer'];
-
 // Audit tab is visible to ALL members (Managers see full log, others read-only)
-const TABS = ['Phases', 'Analytics', 'Members', 'Audit'];
+const TABS = ['Phases', 'Analytics', 'Participants', 'Audit'];
 
 function parseLocalDate(d) {
   if (!d) return null;
@@ -49,14 +49,9 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
   const [phaseErrors,   setPhaseErrors]   = useState({});
   const [addingPhase,   setAddingPhase]   = useState(false);
 
-  // Inline "add project member" popover off the header badge — same
-  // add-with-role pattern as Phase/Activity member panels, instead of
-  // just jumping to the Members tab.
+  // Inline Participants popover off the header badge — same ParticipantsPanel
+  // used at Phase/Activity level, instead of just jumping to the Members tab.
   const [membersOpen,  setMembersOpen]  = useState(false);
-  const [memberSearch, setMemberSearch] = useState(null);
-  const [newMemberRole, setNewMemberRole] = useState('Member');
-  const [memberError,  setMemberError]  = useState('');
-  const [memberSaving, setMemberSaving] = useState(false);
   const membersRef = useRef(null);
 
   useEffect(() => {
@@ -65,6 +60,11 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [membersOpen]);
+
+  // Project-wide Assignees roll-up — reuses the same fetch-everything hook
+  // the Analytics tab uses, gated on the popover actually being open so it
+  // doesn't fetch every project's full task tree on every page load.
+  const { tasks: allProjectTasks, loading: assigneesLoading } = useProjectAnalytics(phases, membersOpen);
 
   const myRole  = project?.myRole;
   const canEdit = myRole === 'Manager';
@@ -108,28 +108,25 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
     catch (err) { showToast(apiErrorMessage(err, 'Failed to reactivate project.')); }
   };
 
-  const handleAddProjectMember = async () => {
-    if (!memberSearch) return;
-    setMemberError(''); setMemberSaving(true);
-    try {
-      await projectApi.addMember(projectId, { userId: memberSearch.userId, role: newMemberRole });
-      setMemberSearch(null);
-      setNewMemberRole('Member');
-      refetch();
-    } catch (err) {
-      setMemberError(err?.response?.data?.error || 'Failed to add member.');
-    } finally { setMemberSaving(false); }
+  // ── Project Managers (passed to ParticipantsPanel's Managers section) ─────────
+  const handleAddProjectManager = async (userId) => {
+    await projectApi.addMember(projectId, { userId, role: 'Manager' });
+    refetch();
   };
-
-  const handleProjectMemberRoleChange = async (uid, role) => {
-    try { await projectApi.updateMember(projectId, uid, { role }); refetch(); }
-    catch (err) { showToast(apiErrorMessage(err, 'Failed to change role.')); }
-  };
-
-  const handleRemoveProjectMember = async (uid, name) => {
-    if (!window.confirm(`Remove ${name} from this project?`)) return;
+  const handleRemoveProjectManager = async (uid) => {
     try { await projectApi.removeMember(projectId, uid); refetch(); }
     catch (err) { showToast(apiErrorMessage(err, 'Failed to remove member.')); }
+  };
+
+  // ── Project Viewers — the ONLY level Viewer can be added at; shown
+  // read-only at every Phase/Activity panel underneath. ─────────────────────
+  const handleAddProjectViewer = async (userId) => {
+    await projectApi.addMember(projectId, { userId, role: 'Viewer' });
+    refetch();
+  };
+  const handleRemoveProjectViewer = async (uid) => {
+    try { await projectApi.removeMember(projectId, uid); refetch(); }
+    catch (err) { showToast(apiErrorMessage(err, 'Failed to remove viewer.')); }
   };
 
   if (loading) return (
@@ -148,6 +145,26 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
       </div>
     </Wrap>
   );
+
+  // ── Project-level Participants panel data ──────────────────────────────────
+  const projectManagerRows = (project.members || []).filter(m => m.role === 'Manager');
+  const projectViewerRows  = (project.members || []).filter(m => m.role === 'Viewer');
+  // Legacy 'Member' role — no longer an addable tier anywhere; existing rows
+  // (like a project member added before this redesign) merge into Assignees
+  // below instead of just disappearing from view.
+  const legacyMemberRows = (project.members || []).filter(m => m.role !== 'Manager' && m.role !== 'Viewer');
+  const managerQuickAddPool = (project.members || [])
+    .filter(m => m.role !== 'Manager')
+    .map(m => ({ userId: m.userId, name: m.name, email: m.email }));
+  const viewerQuickAddPool = legacyMemberRows.map(m => ({ userId: m.userId, name: m.name, email: m.email }));
+  const mergedProjectAssignees = (() => {
+    const map = new Map(aggregateAssignees(allProjectTasks).map(a => [String(a.userId), a]));
+    legacyMemberRows.forEach(m => {
+      const key = String(m.userId);
+      if (!map.has(key)) map.set(key, { userId: m.userId, name: m.name, taskCount: 0 });
+    });
+    return [...map.values()].sort((a, b) => b.taskCount - a.taskCount);
+  })();
 
   return (
     <Detail>
@@ -211,88 +228,56 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
               Admin access
             </DepBadge>
           )}
-          {/* Clicking this now opens an inline add-member popover right
-              here (same pattern as the Phase/Activity member tags) instead
-              of just jumping to the Members tab — the Members tab is still
-              there for the full hierarchical view/management. */}
+          {/* Clicking this opens the same ParticipantsPanel used at Phase/
+              Activity level (Project Managers / Assignees / Viewers), not
+              a one-off popup — the Members tab is still there for the full
+              hierarchical view. */}
           <div style={{ position: 'relative' }} ref={membersRef}>
             <DepBadge
               as="button"
               type="button"
               onClick={() => setMembersOpen(v => !v)}
-              title="Add / manage project members"
+              title="View / manage project participants"
               style={{ padding:'3px 10px', borderRadius:12, cursor:'pointer', border:'none', fontFamily:'inherit' }}
             >
-              {myRole} · {project.members?.length || 0} member{(project.members?.length || 0) !== 1 ? 's' : ''}
+              Participants · {project.members?.length || 0}
             </DepBadge>
 
             {membersOpen && (
               <div style={{
                 position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 300,
-                width: 340, background: theme.colors.greige, border: `1px solid ${theme.colors.border}`,
+                width: 360, background: theme.colors.greige, border: `1px solid ${theme.colors.border}`,
                 borderTop: `2px solid ${theme.colors.espresso}`, borderRadius: theme.radius.sm,
                 boxShadow: '0 10px 32px rgba(0,0,0,0.18)', padding: '12px 14px',
+                maxHeight: 460, overflowY: 'auto',
               }}>
-                <EditPanelTitle style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                  Project Members
+                <div style={{ display:'flex', justifyContent:'flex-end', marginBottom: 4 }}>
                   <BtnGhost onClick={() => setMembersOpen(false)} style={{ fontSize:11, padding:'2px 8px' }}>✕</BtnGhost>
-                </EditPanelTitle>
-
-                {canEdit && (
-                  <>
-                    <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8 }}>
-                      <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase' }}>Add as</label>
-                      <select value={newMemberRole} onChange={e => setNewMemberRole(e.target.value)}
-                        style={{ background:theme.colors.mid, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm, padding:'4px 8px', color:theme.colors.onyx, fontSize:11, fontFamily:'inherit', outline:'none' }}>
-                        <option value="Manager">Manager — full project access</option>
-                        <option value="Member">Member — can edit assigned tasks</option>
-                        <option value="Viewer">Viewer — read-only</option>
-                      </select>
-                    </div>
-                    <div style={{ display:'flex', gap:8, marginBottom:8 }}>
-                      <UserSearchInput selectedUser={memberSearch} onSelect={setMemberSearch}
-                        excludeUserIds={(project.members || []).map(m => m.userId)}
-                        placeholder="Search users to add…" />
-                      <BtnPrimary style={{ fontSize:11, padding:'6px 12px', flexShrink:0 }}
-                        onClick={handleAddProjectMember} disabled={!memberSearch || memberSaving}>
-                        {memberSaving ? '…' : 'Add'}
-                      </BtnPrimary>
-                    </div>
-                    {memberError && <div style={{ color: theme.colors.danger, fontSize: 11, marginBottom: 8 }}>{memberError}</div>}
-                  </>
-                )}
-
-                <div style={{ maxHeight: 220, overflowY: 'auto' }}>
-                  {(project.members || []).map(m => (
-                    <div key={m.userId} style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 8px', marginBottom:4, border:`1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, background: 'rgba(46, 40, 35, 0.06)' }}>
-                      <span style={{ flex:1, fontSize:12, color:theme.colors.onyx, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{m.name}</span>
-                      {canEdit ? (
-                        <>
-                          <select value={m.role} onChange={e => handleProjectMemberRoleChange(m.userId, e.target.value)}
-                            style={{ background:theme.colors.mid, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm, padding:'3px 6px', color:theme.colors.onyx, fontSize:11, fontFamily:'inherit', outline:'none' }}>
-                            {PROJECT_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
-                          </select>
-                          {/* No self-removal — same guard as MemberManager's
-                              full Members tab (and enforced server-side);
-                              this quick popover was missed when that rule
-                              was added and still offered the button. */}
-                          {String(m.userId) !== String(myUserId) && (
-                            <BtnGhost style={{ fontSize:11, padding:'2px 8px', color: theme.colors.danger, borderColor:'rgba(168,93,77,.35)' }}
-                              onClick={() => handleRemoveProjectMember(m.userId, m.name)}>Remove</BtnGhost>
-                          )}
-                        </>
-                      ) : (
-                        <DepBadge as="span" style={{ padding:'2px 10px' }}>{m.role}</DepBadge>
-                      )}
-                    </div>
-                  ))}
-                  {(project.members || []).length === 0 && (
-                    <div style={{ fontSize:12, color:theme.colors.ash, fontStyle:'italic' }}>No members yet.</div>
-                  )}
                 </div>
-
-                <BtnGhost onClick={() => { setMembersOpen(false); setTab('Members'); }} style={{ fontSize:11, marginTop:8, width:'100%' }}>
-                  Open full Members tab →
+                <ParticipantsPanel
+                  levelLabel="Project"
+                  inheritedGroups={[]}
+                  managers={projectManagerRows}
+                  managersLoading={false}
+                  canEditManagers={canEdit}
+                  onAddManager={handleAddProjectManager}
+                  onRemoveManager={handleRemoveProjectManager}
+                  managerQuickAddPool={managerQuickAddPool}
+                  excludeUserIdsForSearch={(project.members || []).map(m => m.userId)}
+                  myUserId={myUserId}
+                  assigneesLoading={assigneesLoading}
+                  assignees={mergedProjectAssignees}
+                  viewerGroup={{
+                    people: projectViewerRows,
+                    editable: canEdit,
+                    loading: false,
+                    onAdd: handleAddProjectViewer,
+                    onRemove: handleRemoveProjectViewer,
+                    quickAddPool: viewerQuickAddPool,
+                  }}
+                />
+                <BtnGhost onClick={() => { setMembersOpen(false); setTab('Participants'); }} style={{ fontSize:11, marginTop:4, width:'100%' }}>
+                  Open full Participants tab →
                 </BtnGhost>
               </div>
             )}
@@ -306,7 +291,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
           <Tab key={t} active={tab === t} onClick={() => setTab(t)}>
             {t}
             {t === 'Phases'  && <span style={{ marginLeft:5, opacity:.6, fontSize:11 }}>({phases.length})</span>}
-            {t === 'Members' && <span style={{ marginLeft:5, opacity:.6, fontSize:11 }}>({project.members?.length||0})</span>}
+            {t === 'Participants' && <span style={{ marginLeft:5, opacity:.6, fontSize:11 }}>({project.members?.length||0})</span>}
           </Tab>
         ))}
       </DetailTabs>
@@ -380,21 +365,31 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
                     and Task rows get their own matching headers placed
                     right where THEIR rows start (inside PhasePanel.js /
                     ActivityRow.js), not squeezed into this one. */}
-                {/* paddingLeft:28 — a Phase row starts with a 13px chevron
-                    + 5px gap before its name text (10px base padding +
-                    13 + 5 = 28), so "Name" needs the same offset to align
-                    with the actual name text below it, not just the row's
-                    raw padding-left (10). */}
-                <TableHead style={{ paddingLeft:28 }}>
-                  <TableHeadCell>Name</TableHeadCell>
-                  <TableHeadCell w={GROUP_COL.manager}>Manager</TableHeadCell>
-                  <TableHeadCell w={GROUP_COL.dates}>Dates</TableHeadCell>
+                {/* Real same-size invisible spacer (13px chevron + 5px gap,
+                    same flex layout as the row) instead of a hand-tuned
+                    paddingLeft number — see the Participants header below
+                    for why that approach kept drifting off by a few px. */}
+                <TableHead>
+                  <TableHeadCell>
+                    <span style={{ display:'flex', alignItems:'center', gap:5 }}>
+                      <span style={{ width:13, height:13, flexShrink:0 }} />
+                      Name
+                    </span>
+                  </TableHeadCell>
+                  {/* Participants/Dates/Status/Progress are all centered —
+                      header text-align:center + cell justifyContent:center
+                      within the same fixed-width grid column, the one
+                      technique that's actually held up under verification
+                      (Progress). Name/Activity/Task stay left-aligned since
+                      they carry the expand chevron. */}
+                  <TableHeadCell w={GROUP_COL.manager} center>Participants</TableHeadCell>
+                  <TableHeadCell w={GROUP_COL.dates} center>Dates</TableHeadCell>
                   {/* BUG-030: Progress used to be crammed inside the Name
                       cell's cluster with no header of its own — it now gets
                       a dedicated column matching Status and matching
                       ProjectListPage's own Progress column. */}
                   <TableHeadCell w={GROUP_COL.progress} center>Progress</TableHeadCell>
-                  <TableHeadCell w={GROUP_COL.status}>Status</TableHeadCell>
+                  <TableHeadCell w={GROUP_COL.status} center>Status</TableHeadCell>
                   {/* No trailing spacer needed anymore — RowActions is
                       position:absolute now, so it never consumes flex
                       layout space and can't affect where these columns
@@ -428,7 +423,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
         )}
 
         {/* ── Members tab ── */}
-        {tab === 'Members' && (
+        {tab === 'Participants' && (
           canEdit
             ? <MemberManager projectId={projectId} members={project.members || []} myRole={project.myRole} myUserId={myUserId} onRefetch={refetch} />
             : (

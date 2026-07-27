@@ -12,6 +12,7 @@
  *   TASK_STATUS_CHANGED    — task/entity status update (all in room)
  *   ENTITY_UNBLOCKED       — dependency resolved (all in room)
  *   ASSIGNMENT_REQUEST     — task assignment request (user personal room)
+ *   ASSIGNMENT_RESPONDED   — request Accepted/Declined (project room)
  *   PROGRESS_UPDATED       — progress % changed (all in room)
  */
 const { verifyToken } = require('../../../middleware/auth');
@@ -80,6 +81,21 @@ function broadcastAssignmentRequest(targetUserId, payload) {
   pmNamespace.to(`user:${targetUserId}`).emit('ASSIGNMENT_REQUEST', payload);
 }
 
+/**
+ * Sent to the whole project room when an assignee Accepts/Declines a
+ * request — without this, a Manager viewing a task's assignee list (e.g.
+ * TaskItem.js's "assign" popup) only ever saw the response after their own
+ * next manual refetch, not live, since accept/decline previously emitted
+ * nothing at all (only the initial request and status/progress changes did).
+ *
+ * @param {number} projectId
+ * @param {object} payload — { taskId, assigneeId, status: 'Accepted'|'Declined' }
+ */
+function broadcastAssignmentResponded(projectId, payload) {
+  if (!pmNamespace) return;
+  pmNamespace.to(`project:${projectId}`).emit('ASSIGNMENT_RESPONDED', { projectId, ...payload });
+}
+
 function broadcastProgressUpdated(projectId, payload) {
   if (!pmNamespace) return;
   pmNamespace.to(`project:${projectId}`).emit('PROGRESS_UPDATED', { projectId, ...payload });
@@ -89,4 +105,4 @@ function closePmSocket() {
   pmNamespace = null;
 }
 
-module.exports = { initPmSocket, closePmSocket, broadcastStatusChanged, broadcastUnblocked, broadcastAssignmentRequest, broadcastProgressUpdated };
+module.exports = { initPmSocket, closePmSocket, broadcastStatusChanged, broadcastUnblocked, broadcastAssignmentRequest, broadcastAssignmentResponded, broadcastProgressUpdated };

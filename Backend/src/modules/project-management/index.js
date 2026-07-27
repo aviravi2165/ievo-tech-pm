@@ -1,7 +1,7 @@
 /**
  * Project Management Module
  *
- * Routes: /api/projects/* /api/phases/* /api/activities/* /api/tasks/*
+ * Routes: /api/projects/* /api/phases/* /api/activities/* /api/tasks/* /api/templates/*
  *
  * Socket: reuses the existing Socket.io server from the messages module
  * via getIo() — no second Server instance created.
@@ -10,6 +10,7 @@ const projectRoutes  = require('./routes/projectRoutes');
 const phaseRoutes    = require('./routes/phaseRoutes');
 const activityRoutes = require('./routes/activityRoutes');
 const taskRoutes     = require('./routes/taskRoutes');
+const templateRoutes = require('./routes/templateRoutes');
 const { initPmSocket, closePmSocket } = require('./socket/socketHandler');
 
 function register(app) {
@@ -17,6 +18,7 @@ function register(app) {
   app.use('/api/phases',     phaseRoutes);
   app.use('/api/activities', activityRoutes);
   app.use('/api/tasks',      taskRoutes);
+  app.use('/api/templates',  templateRoutes);
 }
 
 /**

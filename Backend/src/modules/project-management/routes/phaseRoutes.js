@@ -29,6 +29,9 @@ router.use(authenticate);
 router.patch('/:id',        resolvePhaseProject, requireEntityRole('phase', 'Manager'), ctrl.update);
 router.delete('/:id',       resolvePhaseProject, requireEntityRole('phase', 'Manager'), ctrl.remove);
 router.patch('/:id/reactivate', resolvePhaseProject, requireEntityRole('phase', 'Manager'), ctrl.reactivate);
+// Permanent delete — only succeeds once the Phase is already deactivated
+// (see phaseService.hardDeletePhase) and empty of live Activities.
+router.delete('/:id/hard', resolvePhaseProject, requireEntityRole('phase', 'Manager'), ctrl.hardDelete);
 router.patch('/:id/reorder', resolvePhaseProject, requireEntityRole('phase', 'Manager'), ctrl.reorder);
 router.post('/:id/dependencies',              resolvePhaseProject, requireEntityRole('phase', 'Manager'), checkCircular('phase'), ctrl.addDep);
 router.delete('/:id/dependencies/:depId',     resolvePhaseProject, requireEntityRole('phase', 'Manager'), ctrl.removeDep);

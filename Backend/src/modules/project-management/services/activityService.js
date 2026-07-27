@@ -418,6 +418,39 @@ async function reactivateActivity(activityId, projectId, userId) {
   await audit.log({ entityType:'activity', entityId:activityId, projectId, userId, action:'reactivated' });
 }
 
+// Permanent removal — only reachable once the Activity is already
+// deactivated AND already empty of live Tasks. Does not cascade
+// is_deleted=1 down to Tasks in one shot — see phaseService.hardDeletePhase's
+// comment for why: that bypasses resolveUnblocked and can leave anything
+// depending on a Task permanently Blocked. Each Task must be individually
+// hard-deleted first (via taskService.hardDeleteTask, which correctly runs
+// resolveUnblocked before flipping is_deleted).
+async function hardDeleteActivity(activityId, projectId, userId) {
+  const pool = await getPool();
+  const activityResult = await pool.request()
+    .input('activityId', sql.Int, activityId)
+    .query(`SELECT is_active AS isActive FROM pm_activities WHERE activity_id=@activityId AND is_deleted=0`);
+  const activity = activityResult.recordset[0];
+  if (!activity) { const e = new Error('Activity not found'); e.statusCode = 404; throw e; }
+  if (activity.isActive) {
+    const e = new Error('Deactivate this Activity before permanently deleting it.');
+    e.statusCode = 409; throw e;
+  }
+
+  const childResult = await pool.request()
+    .input('activityId', sql.Int, activityId)
+    .query(`SELECT COUNT(*) AS cnt FROM pm_tasks WHERE activity_id=@activityId AND is_deleted=0`);
+  if (childResult.recordset[0].cnt > 0) {
+    const e = new Error('Permanently delete every Task under this Activity first.');
+    e.statusCode = 409; throw e;
+  }
+
+  await pool.request()
+    .input('activityId', sql.Int, activityId)
+    .query(`UPDATE pm_activities SET is_deleted=1 WHERE activity_id=@activityId`);
+  await audit.log({ entityType:'activity', entityId:activityId, projectId, userId, action:'hard_deleted' });
+}
+
 // ── Activity dependencies ─────────────────────────────────────────────────────
 
 async function addActivityDep(activityId, dependsOnId, projectId, userId) {
@@ -516,6 +549,7 @@ module.exports = {
   updateActivity,
   deleteActivity,
   reactivateActivity,
+  hardDeleteActivity,
   addActivityDep,
   removeActivityDep,
   getActivityStatusHistory,

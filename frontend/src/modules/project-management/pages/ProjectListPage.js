@@ -27,7 +27,7 @@ function fmtDate(d) {
   return dt.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-export default function ProjectListPage({ onSelectProject }) {
+export default function ProjectListPage({ onSelectProject, onOpenTemplates }) {
   const theme = useTheme();
   const {
     projects, total, search, setSearch, hasMore,
@@ -125,6 +125,7 @@ export default function ProjectListPage({ onSelectProject }) {
         <FilterToggle open={showFilters} onClick={() => setShowFilters(v => !v)}
           active={!!(filters.status || filters.active || filters.overdue)} title="Sort & filter projects" />
         <TopbarActions>
+          <BtnGhost onClick={onOpenTemplates}>Templates</BtnGhost>
           <BtnPrimary onClick={() => setShowCreate(true)}>
             + New Project
           </BtnPrimary>

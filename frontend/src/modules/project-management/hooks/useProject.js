@@ -66,6 +66,12 @@ export function useProject(projectId) {
     // Live status change — re-fetch whole project to recompute progress
     socket.on('TASK_STATUS_CHANGED', () => fetchProject());
     socket.on('ENTITY_UNBLOCKED',    () => fetchProject());
+    // A task assignment request was Accepted/Declined by its target user —
+    // same "just refetch" treatment as TASK_STATUS_CHANGED. Previously the
+    // backend emitted nothing here at all, so a Manager with an Activity
+    // expanded (and its Assign popup showing pending requests) only saw the
+    // response after their own next manual action triggered a refetch.
+    socket.on('ASSIGNMENT_RESPONDED', () => fetchProject());
 
     // Granular progress broadcast — update in-place without full refetch
     socket.on('PROGRESS_UPDATED', (data) => {

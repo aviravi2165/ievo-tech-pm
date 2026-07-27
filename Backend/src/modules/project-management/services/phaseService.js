@@ -231,6 +231,45 @@ async function reactivatePhase(phaseId, projectId, userId) {
   await audit.log({ entityType:'phase', entityId:phaseId, projectId, userId, action:'reactivated' });
 }
 
+// Permanent removal — only reachable once the Phase is already deactivated
+// (same two-step convention as the messages module's thread hard-delete:
+// disable first, delete second) AND already empty of live Activities.
+// Deliberately does NOT cascade is_deleted=1 down through children in one
+// shot the way an earlier draft of this function did — that raw approach
+// bypasses resolveUnblocked (dependencyService.js), which is exactly the
+// bug deleteTask's own comment above warns about: an entity's row going to
+// is_deleted=1 without resolveUnblocked running first leaves anything that
+// depended on it permanently stuck Blocked, since resolveUnblocked's own
+// query requires is_deleted=0 to even see the dependency. Requiring the
+// Phase to already be empty means each descendant went through its OWN
+// hardDeleteActivity/hardDeleteTask call first, which already ran the
+// correct unblock sequence at that level — nothing here needs to redo it.
+async function hardDeletePhase(phaseId, projectId, userId) {
+  const pool = await getPool();
+  const phaseResult = await pool.request()
+    .input('phaseId', sql.Int, phaseId)
+    .query(`SELECT is_active AS isActive FROM pm_phases WHERE phase_id=@phaseId AND is_deleted=0`);
+  const phase = phaseResult.recordset[0];
+  if (!phase) { const e = new Error('Phase not found'); e.statusCode = 404; throw e; }
+  if (phase.isActive) {
+    const e = new Error('Deactivate this Phase before permanently deleting it.');
+    e.statusCode = 409; throw e;
+  }
+
+  const childResult = await pool.request()
+    .input('phaseId', sql.Int, phaseId)
+    .query(`SELECT COUNT(*) AS cnt FROM pm_activities WHERE phase_id=@phaseId AND is_deleted=0`);
+  if (childResult.recordset[0].cnt > 0) {
+    const e = new Error('Permanently delete every Activity under this Phase first.');
+    e.statusCode = 409; throw e;
+  }
+
+  await pool.request()
+    .input('phaseId', sql.Int, phaseId)
+    .query(`UPDATE pm_phases SET is_deleted=1 WHERE phase_id=@phaseId`);
+  await audit.log({ entityType:'phase', entityId:phaseId, projectId, userId, action:'hard_deleted' });
+}
+
 async function addPhaseDep(phaseId, dependsOnId, projectId, userId) {
   // Dependencies are same-level only: a phase may only depend on another
   // phase within its own Project (mirrors what the UI's dropdown already
@@ -317,4 +356,4 @@ async function getPhaseStatusHistory(phaseId) {
   return audit.getStatusHistory('phase', phaseId);
 }
 
-module.exports = { getPhasesForProject, createPhase, updatePhase, deletePhase, reactivatePhase, addPhaseDep, removePhaseDep, reorderPhase, getPhaseStatusHistory };
+module.exports = { getPhasesForProject, createPhase, updatePhase, deletePhase, reactivatePhase, hardDeletePhase, addPhaseDep, removePhaseDep, reorderPhase, getPhaseStatusHistory };

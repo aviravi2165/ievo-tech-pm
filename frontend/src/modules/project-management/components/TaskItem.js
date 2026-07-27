@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTheme } from '@emotion/react';
 import { ArrowRight, FileText, RotateCcw, Trash2 } from 'lucide-react';
 import StatusBadge, { InactiveBadge } from './StatusBadge';
@@ -13,6 +13,7 @@ import {
   DepBadge, IconBtn, IconBtnDanger, BtnPrimary, BtnGhost, SubPanel, SubPanelTitle, SubPanelHint,
   MemberRow, LateTag, DueSoonTag,
 } from '../styles/shared.styles';
+import FloatingPopover from '../../shared/components/FloatingPopover';
 
 // Statuses: To Do / Ongoing / Complete / Blocked (renamed from In Progress / Done)
 // Blocked is system-managed (set/cleared automatically by the dependency
@@ -117,7 +118,7 @@ function Avatars({ assignees = [], pending = [] }) {
 // assignee-or-Activity-Manager-or-above). Previously this was the flat
 // project-level myRole, so an Activity Manager who was only a project
 // Member never got management controls on tasks in their own activity.
-export default function TaskItem({ task, activityRole, myUserId, allTasks = [], activityMembers = [], onRefetch, onRefetchProject }) {
+export default function TaskItem({ task, activityRole, myUserId, allTasks = [], activityMembers = [], suggestedAssignees, onRefetch, onRefetchProject }) {
   const theme = useTheme();
   // Check if current user has an accepted request for this task
   const isAssigned = (task.assignees || []).some(a => String(a.userId) === String(myUserId));
@@ -138,6 +139,18 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
   const [depError,     setDepError]     = useState('');
   const [assignSearch, setAssignSearch] = useState(null);
   const [assignError,  setAssignError]  = useState('');
+  // Floating-popup anchors — same treatment as PhasePanel/ActivityRow's
+  // Participants/Dependencies popups, EXCEPT the description panel ('desc'),
+  // which stays as an inline-expanding block: a popup's fixed width/height
+  // constraints don't suit a free-text notes field the way they suit a
+  // short list of dates or names. 'deps' has two possible triggers (the
+  // dep-count badge in the Name cell, and the "Prerequisites" icon in the
+  // actions column), so it uses a captured-element state like PhasePanel's
+  // depsAnchorEl; 'date' and 'assign'/'viewAssignees' each have exactly one
+  // trigger, so a plain ref works.
+  const [depsAnchorEl, setDepsAnchorEl] = useState(null);
+  const dateRef = useRef(null);
+  const assignRef = useRef(null);
 
   useEffect(() => { setLocalStatus(task.status); }, [task.status]);
   useEffect(() => { setEditDue(toInput(task.dueDate)); }, [task.dueDate]);
@@ -189,9 +202,11 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
 
   // ── Delete ─────────────────────────────────────────────────────────────────
   const handleDelete = async () => {
-    // Tasks are never hard-deleted — always deactivated, so its history and
-    // any dependency edges stay intact (and other tasks depending on it get
-    // auto-unblocked, same as if it had been completed). Reactivate to undo.
+    // This action always just deactivates (never removes the row outright)
+    // — history and any dependency edges stay intact, and other tasks
+    // depending on it get auto-unblocked, same as if it had been
+    // completed. Reactivate to undo, or use "Delete permanently" (only
+    // available once already deactivated) for a real, unrecoverable delete.
     if (!window.confirm(`Deactivate task "${task.name}"? It will be hidden from active work but can be reactivated later.`)) return;
     try {
       await taskApi.delete(task.taskId);
@@ -202,6 +217,17 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
   const handleReactivate = async () => {
     try { await taskApi.reactivate(task.taskId); onRefetch?.(); onRefetchProject?.(); }
     catch (err) { showToast(apiErrorMessage(err, 'Failed to reactivate task.')); }
+  };
+
+  // Only reachable while already deactivated — this is the one action that
+  // makes the row genuinely, permanently gone (see taskService.hardDeleteTask
+  // for why that couldn't just happen automatically on ordinary delete:
+  // anything still depending on this task needs to be unblocked BEFORE the
+  // row disappears, not after).
+  const handleHardDelete = async () => {
+    if (!window.confirm(`Permanently delete task "${task.name}"? This cannot be undone.`)) return;
+    try { await taskApi.hardDelete(task.taskId); onRefetch?.(); onRefetchProject?.(); }
+    catch (err) { showToast(apiErrorMessage(err, 'Failed to permanently delete task.')); }
   };
 
   // ── Assignment requests ────────────────────────────────────────────────────
@@ -230,6 +256,11 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
   // ── Dependencies ───────────────────────────────────────────────────────────
   const currentDeps = new Set((task.dependsOn || []).map(Number));
   const otherTasks  = allTasks.filter(t => t.taskId !== task.taskId);
+  // Same reasoning as PhasePanel.js's addablePhases / ActivityRow.js's
+  // addableActivities — an inactive (deactivated) task never reaches
+  // Complete, so it can't legitimately be a prerequisite without
+  // deadlocking this task forever.
+  const addableTasks = otherTasks.filter(t => t.isActive !== false);
 
   const handleAddDep = async (depId) => {
     setDepError('');
@@ -273,7 +304,7 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
             </TaskName>
             {isInactive && <InactiveBadge />}
             {task.dependsOn?.length > 0 && (
-              <DepBadge onClick={e => { e.stopPropagation(); togglePanel('deps'); }}
+              <DepBadge onClick={e => { e.stopPropagation(); setDepsAnchorEl(e.currentTarget); togglePanel('deps'); }}
                 title="This task has prerequisites" style={{ cursor: 'pointer', flexShrink: 0 }}>
                 <ArrowRight size={10} strokeWidth={2.5} />
                 {task.dependsOn.length}
@@ -288,7 +319,7 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
             assignees" panel the old dedicated "Assign" icon opened. One
             click target instead of a stack of avatars PLUS a separate
             icon that does the same thing. */}
-        <Cell w={COL.assignee}
+        <Cell w={COL.assignee} center ref={assignRef}
           // Previously only a Manager could click this cell at all — a
           // plain assignee with more assignees than the "+N" chip could
           // show had no way to see the rest of the list except a
@@ -303,20 +334,23 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
         </Cell>
 
         {/* Due date column — clicking the date/badge opens the same edit
-            panel the old dedicated "Due date" icon opened. */}
-        <Cell w={COL.due}
-          onClick={(canEdit && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('date'); } : undefined}
-          style={{ cursor: (canEdit && !isInactive) ? 'pointer' : 'default' }}
-          title={(canEdit && !isInactive) ? 'Click to edit due date' : undefined}
+            panel the old dedicated "Due date" icon opened. Manager-only —
+            an assigned Member's own scope on their task is chat + status
+            updates, not rescheduling it; canEdit (which also covers
+            Members) is deliberately NOT used here. */}
+        <Cell w={COL.due} center ref={dateRef}
+          onClick={(canManager && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('date'); } : undefined}
+          style={{ cursor: (canManager && !isInactive) ? 'pointer' : 'default' }}
+          title={(canManager && !isInactive) ? 'Click to edit due date' : undefined}
         >
           <DueDateBadge dueDate={task.dueDate} status={localStatus} />
         </Cell>
 
         {/* Priority column */}
-        <Cell w={COL.priority}><PriorityBadge priority={task.priority} /></Cell>
+        <Cell w={COL.priority} center><PriorityBadge priority={task.priority} /></Cell>
 
         {/* Status column */}
-        <Cell w={COL.status} onClick={e => e.stopPropagation()}>
+        <Cell w={COL.status} center onClick={e => e.stopPropagation()}>
           {canStatus && !isInactive && localStatus !== 'Blocked' ? (
             <select value={localStatus} onChange={handleStatusChange}
               style={{ width: '100%', background:theme.colors.mid, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm, color:theme.colors.onyx, fontSize:11, padding:'3px 6px', fontFamily:'inherit', outline:'none' }}>
@@ -356,14 +390,19 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
               <div style={{ width:1, height:16, background:theme.colors.border, margin:'0 1px', flexShrink:0 }} />
               {!isInactive && otherTasks.length > 0 && (
                 <IconBtn active={panel === 'deps'} title="Prerequisites"
-                  onClick={() => togglePanel('deps')} style={{ width:20, height:20 }}>
+                  onClick={e => { setDepsAnchorEl(e.currentTarget); togglePanel('deps'); }} style={{ width:20, height:20 }}>
                   <ArrowRight size={14} strokeWidth={2} />
                 </IconBtn>
               )}
               {isInactive ? (
-                <IconBtn title="Reactivate" onClick={handleReactivate} style={{ width:20, height:20 }}>
-                  <RotateCcw size={14} strokeWidth={2} />
-                </IconBtn>
+                <>
+                  <IconBtn title="Reactivate" onClick={handleReactivate} style={{ width:20, height:20 }}>
+                    <RotateCcw size={14} strokeWidth={2} />
+                  </IconBtn>
+                  <IconBtnDanger title="Delete permanently" onClick={handleHardDelete} style={{ width:20, height:20 }}>
+                    <Trash2 size={14} strokeWidth={2} />
+                  </IconBtnDanger>
+                </>
               ) : (
                 <IconBtnDanger title="Deactivate" onClick={handleDelete} style={{ width:20, height:20 }}>
                   <Trash2 size={14} strokeWidth={2} />
@@ -398,10 +437,20 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
         </SubPanel>
       )}
 
-      {/* ── Start / Due date panel ── */}
-      {panel === 'date' && canEdit && (
-        <SubPanel style={{ margin: 0 }}>
-          <SubPanelTitle>Dates</SubPanelTitle>
+      {/* ── Start / Due date popup — floating popover, same treatment as
+          Phase/Activity Dependencies. Manager-only (see the Due date cell
+          above). ── */}
+      <FloatingPopover anchorRef={dateRef} open={panel === 'date' && canManager} onClose={() => { setPanel(null); setDateError(''); }} width={320}>
+        <div onClick={e => e.stopPropagation()} style={{
+          background: theme.colors.greige, border: `1px solid ${theme.colors.border}`,
+          borderTop: `2px solid ${theme.colors.espresso}`, borderRadius: theme.radius.sm,
+          boxShadow: '0 10px 32px rgba(0,0,0,0.18)', padding: '12px 14px',
+          overflowY: 'visible',
+        }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 8 }}>
+            <SubPanelTitle style={{ marginBottom: 0 }}>Dates</SubPanelTitle>
+            <BtnGhost onClick={() => { setPanel(null); setDateError(''); }} style={{ fontSize:11, padding:'2px 8px' }}>✕</BtnGhost>
+          </div>
           <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <div>
               <div style={{ fontSize: 10.5, color: theme.colors.ash, marginBottom: 3 }}>Start date</div>
@@ -418,21 +467,35 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
           </div>
           {!editDue && <div style={{ color: theme.colors.danger, fontSize: 11, marginTop: 4 }}>Due date is required.</div>}
           {dateError && <div style={{ color: theme.colors.danger, fontSize: 11, marginTop: 4 }}>{dateError}</div>}
-        </SubPanel>
-      )}
+        </div>
+      </FloatingPopover>
 
-      {/* ── Assignee / request panel ── */}
+      {/* ── Assignee / request popup + read-only view popup — both anchored
+          to the same assignee-avatars cell, mutually exclusive by
+          canManager, so one FloatingPopover covers both. ── */}
+      <FloatingPopover anchorRef={assignRef} open={panel === 'assign' || panel === 'viewAssignees'} onClose={() => setPanel(null)} width={360}>
       {panel === 'assign' && canManager && (
-        <SubPanel style={{ margin: 0 }}>
-          <SubPanelTitle>Task Assignees</SubPanelTitle>
+        <div onClick={e => e.stopPropagation()} style={{
+          background: theme.colors.greige, border: `1px solid ${theme.colors.border}`,
+          borderTop: `2px solid ${theme.colors.espresso}`, borderRadius: theme.radius.sm,
+          boxShadow: '0 10px 32px rgba(0,0,0,0.18)', padding: '12px 14px',
+          overflowY: 'visible',
+        }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 4 }}>
+            <SubPanelTitle style={{ marginBottom: 0 }}>Task Assignees</SubPanelTitle>
+            <BtnGhost onClick={() => setPanel(null)} style={{ fontSize:11, padding:'2px 8px' }}>✕</BtnGhost>
+          </div>
           <SubPanelHint>
-            Select from activity members below, or search any user — they'll be added to the activity automatically when they accept.
+            Select from people with access below (activity members and Project/Phase/Activity Managers), or search any user — they'll be added to the activity automatically when they accept.
           </SubPanelHint>
 
-          {/* Quick-pick from activity members */}
-          {activityMembers.length > 0 && (
+          {/* Quick-pick — activity members plus anyone with Manager access
+              above this activity (Project/Phase), so a Manager who never
+              got an explicit Activity row still shows up as a one-click
+              option instead of only being reachable via search. */}
+          {(suggestedAssignees || activityMembers).length > 0 && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-              {activityMembers
+              {(suggestedAssignees || activityMembers)
                 .filter(m => !requestedIds.has(String(m.userId)))
                 .map(m => (
                   <BtnGhost key={m.userId} style={{ fontSize: 11, padding: '3px 10px', display: 'flex', alignItems: 'center', gap: 5 }}
@@ -487,15 +550,23 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
               </MemberRow>
             );
           })}
-        </SubPanel>
+        </div>
       )}
 
       {/* ── Read-only assignee list — for anyone who isn't a Manager (so
           can't open the full manage panel above). Same info the manage
           panel shows, minus the edit controls. */}
       {panel === 'viewAssignees' && !canManager && (
-        <SubPanel style={{ margin: 0 }}>
-          <SubPanelTitle>Task Assignees</SubPanelTitle>
+        <div onClick={e => e.stopPropagation()} style={{
+          background: theme.colors.greige, border: `1px solid ${theme.colors.border}`,
+          borderTop: `2px solid ${theme.colors.espresso}`, borderRadius: theme.radius.sm,
+          boxShadow: '0 10px 32px rgba(0,0,0,0.18)', padding: '12px 14px',
+          overflowY: 'visible',
+        }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 4 }}>
+            <SubPanelTitle style={{ marginBottom: 0 }}>Task Assignees</SubPanelTitle>
+            <BtnGhost onClick={() => setPanel(null)} style={{ fontSize:11, padding:'2px 8px' }}>✕</BtnGhost>
+          </div>
           {allRequests.length === 0 ? (
             <div style={{ fontSize: 12, color: theme.colors.ash, fontStyle: 'italic' }}>No one assigned yet.</div>
           ) : (
@@ -512,14 +583,25 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
               );
             })
           )}
-          <BtnGhost style={{ fontSize: 11, padding: '5px 10px', marginTop: 8 }} onClick={() => setPanel(null)}>Close</BtnGhost>
-        </SubPanel>
+        </div>
       )}
+      </FloatingPopover>
 
-      {/* ── Dependency panel — viewable by anyone, editable by Manager only ── */}
-      {panel === 'deps' && (
-        <SubPanel style={{ margin: 0 }}>
-          <SubPanelTitle>Prerequisites — Tasks that must complete first</SubPanelTitle>
+      {/* ── Dependency popup — floating popover, same treatment as
+          Phase/Activity Dependencies. Two possible triggers (the dep-count
+          badge in the Name cell, and the "Prerequisites" icon in the
+          actions column) — see depsAnchorEl above. ── */}
+      <FloatingPopover anchorEl={depsAnchorEl} open={panel === 'deps'} onClose={() => setPanel(null)} width={340}>
+        <div onClick={e => e.stopPropagation()} style={{
+          background: theme.colors.greige, border: `1px solid ${theme.colors.border}`,
+          borderTop: `2px solid ${theme.colors.espresso}`, borderRadius: theme.radius.sm,
+          boxShadow: '0 10px 32px rgba(0,0,0,0.18)', padding: '12px 14px',
+          overflowY: 'visible',
+        }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 6 }}>
+            <SubPanelTitle style={{ marginBottom: 0 }}>Prerequisites</SubPanelTitle>
+            <BtnGhost onClick={() => setPanel(null)} style={{ fontSize:11, padding:'2px 8px' }}>✕</BtnGhost>
+          </div>
           <SubPanelHint>
             {canManager
               ? <>Selecting a predecessor auto-<strong>blocks</strong> this task until it reaches Complete, then auto-unblocks. Cycles are prevented.</>
@@ -547,24 +629,26 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
             <div style={{ fontSize: 12, color: theme.colors.ash, marginBottom: canManager ? 8 : 0 }}>No prerequisites set.</div>
           )}
 
-          {/* Add via dropdown — Manager only */}
+          {/* Add via dropdown — Manager only. Inactive tasks excluded (see
+              addableTasks above) — same deadlock reasoning as Phase/Activity
+              prerequisites: an inactive task never reaches Complete. */}
           {canManager && (
-            otherTasks.filter(t => !currentDeps.has(t.taskId)).length > 0 ? (
+            addableTasks.filter(t => !currentDeps.has(t.taskId)).length > 0 ? (
               <select defaultValue="" onChange={e => { if (e.target.value) { handleAddDep(Number(e.target.value)); e.target.value = ''; } }}
                 style={{ width: '100%', background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '6px 10px', color: theme.colors.onyx, fontSize: 12, fontFamily: 'inherit', outline: 'none' }}>
                 <option value="">+ Add a predecessor task…</option>
-                {otherTasks.filter(t => !currentDeps.has(t.taskId)).map(t => (
+                {addableTasks.filter(t => !currentDeps.has(t.taskId)).map(t => (
                   <option key={t.taskId} value={t.taskId}>{t.name} ({t.status})</option>
                 ))}
               </select>
             ) : (
-              <div style={{ fontSize: 12, color: theme.colors.ash }}>All tasks already added as prerequisites.</div>
+              <div style={{ fontSize: 12, color: theme.colors.ash }}>All eligible tasks already added as prerequisites.</div>
             )
           )}
 
           {depError && <div style={{ color: theme.colors.danger, fontSize: 11, marginTop: 6 }}>{depError}</div>}
-        </SubPanel>
-      )}
+        </div>
+      </FloatingPopover>
     </>
   );
 }

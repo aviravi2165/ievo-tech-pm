@@ -5,8 +5,9 @@ import StatusBadge, { InactiveBadge } from './StatusBadge';
 import ProgressBar from './ProgressBar';
 import DelayBadge from './DelayBadge';
 import ActivityRow from './ActivityRow';
-import UserSearchInput from './UserSearchInput';
-import { phaseApi } from '../api/projectApi';
+import ParticipantsPanel from './ParticipantsPanel';
+import { aggregateAssignees } from '../utils/aggregateAssignees';
+import { phaseApi, activityApi } from '../api/projectApi';
 import { showToast, apiErrorMessage } from '../hooks/toastStore';
 import { GroupRow, RowActions, GROUP_COL, TableHead, TableHeadCell } from '../styles/Table.styles';
 import { PhaseName, PhaseBody } from '../styles/PhasePanel.styles';
@@ -15,6 +16,7 @@ import {
 } from '../styles/shared.styles';
 import { useSortFilter } from '../../shared/hooks/useSortFilter';
 import { SortSelect, FilterSelect, FilterToggle } from '../../shared/components/TableControls';
+import FloatingPopover from '../../shared/components/FloatingPopover';
 
 function toInput(d) { return d ? String(d).split('T')[0] : ''; }
 function parseLocalDate(d) {
@@ -30,20 +32,6 @@ function fmtRange(start, end) {
 }
 function initials(name = '') { return (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(); }
 
-// Mirrors MemberManager.js's isDowngrade/RANK exactly — that panel already
-// warns when an explicit Phase/Activity role override is LOWER than
-// someone's project role, but this "Add from project members" quick-add
-// row is a separate surface that had no such check: clicking "+ Name" here
-// with "Add as" left on its default (Employee) for someone who's already
-// an inherited project Manager silently created an explicit Employee row
-// that OVERRIDES their Manager status on this one Phase — same class of
-// bug as the accept-assignment-request auto-demote, just via a manual
-// click instead of an automatic side-effect.
-const RANK = { Viewer: 1, Employee: 2, Member: 2, Manager: 3 };
-function isDowngrade(newRole, currentRole) {
-  return (RANK[newRole] ?? 0) < (RANK[currentRole] ?? 0);
-}
-
 
 export default function PhasePanel({ phase, projectId, allPhases = [], projectMembers = [], myUserId, onReorder, onRefetchProject }) {
   const theme = useTheme();
@@ -58,7 +46,19 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
   // action, reading as the list "rolling back" even though the data was
   // always correct underneath. Only the true first load shows loading.
   const hasLoadedActivitiesRef = useRef(false);
-  const [panel,       setPanel]       = useState(null); // 'dates'|'deps'|'addact'
+  const [panel,       setPanel]       = useState(null); // 'dates'|'deps'|'addact'|'members'
+  // Participants panel is a floating popup (matches the Project-level
+  // popup's exact pattern in ProjectDetailPage.js) rather than an
+  // inline-expanding block — click-outside closes it the same way.
+  const participantsRef = useRef(null);
+  // Dependency popup — same floating-popup treatment as Participants,
+  // instead of an inline block that pushed every row below it down. Two
+  // different elements can open it (the dep-count badge next to the name,
+  // and the "manage prerequisites" icon in the actions column), so the
+  // anchor is whichever one was actually clicked rather than a fixed ref.
+  const [depsAnchorEl, setDepsAnchorEl] = useState(null);
+  // Dates edit popup — single trigger (the Dates cell), so a plain ref works.
+  const datesRef = useRef(null);
 
   // Date edit
   const [editStart,   setEditStart]   = useState(toInput(phase.plannedStart));
@@ -76,17 +76,22 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
   // Deps
   const [depError,    setDepError]    = useState('');
 
-  // Phase members — this panel didn't exist at all before: the backend
-  // endpoints (phaseApi.getMembers/addMember/updateMemberRole/removeMember)
-  // were fully implemented but nothing in the frontend ever called them,
-  // so a Phase Manager could only be added indirectly via the project
-  // Members tab's expandable per-phase role editor, with no way to see or
-  // manage a phase's roster from the phase row itself.
+  // Phase managers — "Phase Members" as a generic assignable tier doesn't
+  // exist anymore; this list is specifically who's an explicit MANAGER of
+  // this phase. Regular team members get access by being assigned to a
+  // task somewhere under this phase (see phaseAssignees below, rolled up
+  // from every activity's tasks), not by being pre-added here.
   const [phaseMembers,  setPhaseMembers]  = useState([]);
   const [memberLoading, setMemberLoading] = useState(false);
-  const [memberSearch,  setMemberSearch]  = useState(null);
-  const [memberError,   setMemberError]   = useState('');
-  const [newMemberRole, setNewMemberRole] = useState('Employee');
+
+  // Phase-wide assignee roll-up — every task assignee across every
+  // Activity under this Phase, deduplicated by user. Fetched only when the
+  // Participants panel is opened (not on every Phase expand), since it
+  // means pulling every Activity's task list, not just the Activities
+  // themselves.
+  const [phaseAssignees,        setPhaseAssignees]        = useState([]);
+  const [assigneesLoading,      setAssigneesLoading]      = useState(false);
+  const hasLoadedAssigneesRef = useRef(false);
 
   // phase.myRole is the user's EFFECTIVE role on THIS phase (explicit
   // phase-level row, else inherited from their project role — computed
@@ -131,7 +136,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
     },
   });
 
-  // ── Phase member management ──────────────────────────────────────────────────
+  // ── Phase manager management (passed to ParticipantsPanel) ────────────────────
   const fetchPhaseMembers = useCallback(async () => {
     setMemberLoading(true);
     try { setPhaseMembers(await phaseApi.getMembers(phase.phaseId)); }
@@ -139,28 +144,49 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
     finally { setMemberLoading(false); }
   }, [phase.phaseId]);
 
-  const handleAddPhaseMember = async () => {
-    if (!memberSearch) return;
-    setMemberError('');
-    try {
-      await phaseApi.addMember(phase.phaseId, memberSearch.userId, newMemberRole);
-      setMemberSearch(null);
-      setNewMemberRole('Employee');
-      await fetchPhaseMembers();
-    } catch (err) {
-      setMemberError(err?.response?.data?.error || 'Failed to add member.');
-    }
-  };
+  // Fetched as soon as the Phase expands (not lazily on Participants-panel
+  // click) — each child ActivityRow needs this list right away for its own
+  // "Phase Managers" inherited section, and a Phase has to be expanded to
+  // see its Activities in the first place, so there's no case where this
+  // fetch would be wasted. Must be declared AFTER fetchPhaseMembers itself
+  // (const/useCallback — referencing it earlier in the file throws a
+  // temporal-dead-zone ReferenceError, which is exactly what happened here
+  // the first time).
+  useEffect(() => { if (open) fetchPhaseMembers(); }, [open, fetchPhaseMembers]);
 
-  const handlePhaseMemberRoleChange = async (uid, role) => {
-    try { await phaseApi.updateMemberRole(phase.phaseId, uid, role); await fetchPhaseMembers(); }
-    catch (err) { showToast(apiErrorMessage(err, 'Failed to change role.')); }
-  };
+  useEffect(() => {
+    if (panel !== 'members') return;
+    const handler = (e) => { if (participantsRef.current && !participantsRef.current.contains(e.target)) setPanel(null); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [panel]);
 
-  const handleRemovePhaseMember = async (uid) => {
+  // Always adds as 'Manager' — Viewer is project-only now (see
+  // ParticipantsPanel.js), there's no role choice left to make at Phase level.
+  const handleAddManager = async (userId) => {
+    await phaseApi.addMember(phase.phaseId, userId, 'Manager');
+    await fetchPhaseMembers();
+  };
+  const handleRemoveManager = async (uid) => {
     try { await phaseApi.removeMember(phase.phaseId, uid); await fetchPhaseMembers(); }
     catch (err) { showToast(apiErrorMessage(err, 'Failed to remove member.')); }
   };
+
+  // Fetches every Activity under this Phase (reusing fetchActivities'
+  // cache if already loaded) then every one of THEIR tasks in parallel, and
+  // aggregates the assignees. Guarded so opening the panel twice doesn't
+  // re-fetch.
+  const fetchPhaseAssignees = useCallback(async () => {
+    if (hasLoadedAssigneesRef.current) return;
+    setAssigneesLoading(true);
+    try {
+      const acts = hasLoadedActivitiesRef.current ? activities : await phaseApi.getActivities(phase.phaseId);
+      const taskLists = await Promise.all(acts.map(a => activityApi.getTasks(a.activityId).catch(() => [])));
+      setPhaseAssignees(aggregateAssignees(taskLists.flat()));
+      hasLoadedAssigneesRef.current = true;
+    } catch { }
+    finally { setAssigneesLoading(false); }
+  }, [phase.phaseId, activities]);
 
   const handleDateSave = async () => {
     const errs = {};
@@ -201,6 +227,13 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
 
   // Deps
   const otherPhases = allPhases.filter(p => p.phaseId !== phase.phaseId);
+  // An inactive phase is archived, not progressing toward "Completed" — it
+  // would never satisfy the "auto-blocks until it completes" contract, so
+  // picking one as a prerequisite would deadlock this phase permanently.
+  // Only offer active phases as NEW candidates; an already-selected
+  // inactive dep (set before it went inactive) still shows as a removable
+  // chip so it isn't silently hidden.
+  const addablePhases = otherPhases.filter(p => p.isActive !== false);
   const currentDeps = new Set((phase.dependsOn || []).map(Number));
 
   const handleAddDep = async (depId) => {
@@ -216,6 +249,50 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
   const dateRange = fmtRange(phase.plannedStart, phase.plannedEnd);
   const isInactive = phase.isActive === false;
 
+  // ── Participants panel data ────────────────────────────────────────────────
+  const projectManagerPeople = projectMembers.filter(m => m.role === 'Manager').map(m => ({ userId: m.userId, name: m.name }));
+  const projectManagerIds = new Set(projectManagerPeople.map(p => String(p.userId)));
+  const projectViewerPeople = projectMembers.filter(m => m.role === 'Viewer').map(m => ({ userId: m.userId, name: m.name }));
+  const inheritedGroups = [{ label: 'Project Managers', people: projectManagerPeople }];
+  // Only 'Manager' rows are "this Phase's managers" now — Viewer is
+  // project-only (see ParticipantsPanel.js), so any Employee/Member/Viewer
+  // row here is legacy (pre-dates this redesign, or was auto-added via
+  // task-accept) and gets merged into Assignees below instead. Also
+  // excludes anyone already an inherited Project Manager — a real explicit
+  // Phase-Manager row can still exist for them in the DB (harmless, same
+  // rank), but showing it here too is exactly the "why is Yash listed
+  // twice" confusion; the DB row isn't touched, just not re-displayed.
+  const panelManagers = phaseMembers.filter(m => m.role === 'Manager' && !projectManagerIds.has(String(m.userId)));
+  const explicitManagerIds = new Set(panelManagers.map(m => String(m.userId)));
+  // Add-candidates exclude anyone who ALREADY has Manager access here via
+  // inheritance — offering them is pointless, they already have full scope
+  // ("if someone has project level access he should not be included to add
+  // as phase manager"). Project Managers and this Phase's own existing
+  // Managers are both excluded; a project Viewer or plain Member is still
+  // a valid promote-to-Phase-Manager candidate.
+  const quickAddPool = projectMembers
+    .filter(m => m.role !== 'Manager')
+    .map(m => ({ userId: m.userId, name: m.name, email: m.email }))
+    .filter(p => !explicitManagerIds.has(String(p.userId)));
+
+  // Legacy/auto-added non-Manager rows merged into the Assignees display
+  // even if they have zero current tasks — these predate "members" being
+  // removed as an addable tier (or Viewer moving to project-only), or come
+  // from the task-accept auto-add; either way they're real access someone
+  // granted, and hiding them entirely (Assignees is otherwise purely
+  // task-derived) would silently make them disappear from every view.
+  const legacyAssigneeStubs = phaseMembers
+    .filter(m => m.role !== 'Manager')
+    .map(m => ({ userId: m.userId, name: m.name }));
+  const mergedPhaseAssignees = (() => {
+    const map = new Map(phaseAssignees.map(a => [String(a.userId), a]));
+    legacyAssigneeStubs.forEach(m => {
+      const key = String(m.userId);
+      if (!map.has(key)) map.set(key, { userId: m.userId, name: m.name, taskCount: 0 });
+    });
+    return [...map.values()].sort((a, b) => b.taskCount - a.taskCount);
+  })();
+
   const handleDelete = async () => {
     if (!window.confirm(`Delete phase "${phase.name}"?`)) return;
     try {
@@ -228,6 +305,19 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
   const handleReactivate = async () => {
     try { await phaseApi.reactivate(phase.phaseId); onRefetchProject?.(); }
     catch (err) { showToast(apiErrorMessage(err, 'Failed to reactivate phase.')); }
+  };
+
+  // Only reachable while the phase is already deactivated (the button
+  // itself only renders in that state) — permanently removes it. The
+  // backend additionally requires every Activity under it to already be
+  // permanently deleted first (working from the leaf up avoids the
+  // dependency-resolution bug a cascading delete would risk — see
+  // phaseService.hardDeletePhase's comment), so a 409 here means there's
+  // still live work underneath that needs clearing first.
+  const handleHardDelete = async () => {
+    if (!window.confirm(`Permanently delete phase "${phase.name}"? This cannot be undone.`)) return;
+    try { await phaseApi.hardDelete(phase.phaseId); onRefetchProject?.(); }
+    catch (err) { showToast(apiErrorMessage(err, 'Failed to permanently delete phase.')); }
   };
 
   return (
@@ -258,7 +348,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
               do with dependencies. */}
           {phase.dependsOn?.length > 0 && (
             <DepBadge title={`Depends on ${phase.dependsOn.length} phase(s)`}
-              onClick={e => { e.stopPropagation(); togglePanel('deps'); }} style={{ cursor:'pointer', flexShrink:0 }}>
+              onClick={e => { e.stopPropagation(); setDepsAnchorEl(e.currentTarget); togglePanel('deps'); }} style={{ cursor:'pointer', flexShrink:0 }}>
               <ArrowRight size={10} strokeWidth={2.5} />
               {phase.dependsOn.length}
             </DepBadge>
@@ -275,45 +365,62 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
           {isInactive && <InactiveBadge />}
         </div>
 
-        {/* Grid column 2: Manager — a Phase has a Manager/roster, not a
-            single task-style assignee, hence "Manager" not "Assignee".
-            Shows the Phase's own Manager(s) when explicitly set; falls
-            back to the project Manager(s) when nothing's been explicitly
-            added at the phase level yet — which is the common case —
-            since a project Manager already has full authority over every
-            phase per roleService's inheritance rule, so they genuinely
-            ARE the effective manager here. Clicking it opens a Phase
-            Members panel — this didn't exist anywhere in the UI before
-            despite the backend fully supporting it. */}
-        <div style={{ overflow:'hidden', cursor: canEdit && !isInactive ? 'pointer' : 'default' }}
-          onClick={(canEdit && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('members'); if (panel !== 'members') fetchPhaseMembers(); } : undefined}
-          title={(canEdit && !isInactive) ? 'Click to manage phase members' : undefined}
-        >
-          {(() => {
-            const projectManagerNames = projectMembers.filter(m => m.role === 'Manager').map(m => m.name).join(', ');
-            const label = phase.managerNames || projectManagerNames;
-            if (!label) return phase.memberCount > 0
-              ? <span style={{ fontSize:10, color:theme.colors.ash }}>{phase.memberCount} member{phase.memberCount !== 1 ? 's' : ''}</span>
-              : null;
-            // italic when inherited — same reasoning as ActivityRow.js's
-            // Manager cell: color/weight alone wasn't a strong enough
-            // signal that this name is shown because they're the
-            // project's Manager, not because anyone explicitly added them
-            // to this Phase.
-            return (
-              <span style={{ fontSize:10, color: phase.managerNames ? theme.colors.onyx : theme.colors.ash, fontWeight: phase.managerNames ? 600 : 400, fontStyle: phase.managerNames ? 'normal' : 'italic', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', display:'block' }}
-                title={phase.managerNames ? label : `${label} — inherited from the project's Manager role, not explicitly set on this Phase. Click to pin explicitly.`}>
-                {label}
-              </span>
-            );
-          })()}
+        {/* Grid column 2: Participants — used to show manager names
+            in-cell directly (truncated, italic-vs-bold to distinguish
+            inherited from explicit); replaced with a plain icon + label
+            that opens ParticipantsPanel as a floating popup (matching the
+            Project-level popup's exact style), which does that
+            distinguishing with real section headers instead of font-style.
+            Viewable by anyone, editable (Managers section) by a Manager
+            only. position:relative wrapper + participantsRef is what the
+            click-outside-to-close effect above targets. */}
+        <div style={{ position: 'relative', display:'flex', justifyContent:'center' }} ref={participantsRef}>
+          {/* Icon only, centered — same centering technique as the Progress
+              column (already confirmed working: header text-align:center +
+              cell justifyContent:center within the same fixed-width grid
+              column, no offset math needed either side). */}
+          <div style={{ cursor: !isInactive ? 'pointer' : 'default', display:'flex', alignItems:'center', justifyContent:'center' }}
+            onClick={!isInactive ? (e) => { e.stopPropagation(); togglePanel('members'); if (panel !== 'members') { fetchPhaseMembers(); fetchPhaseAssignees(); } } : undefined}
+            title={!isInactive ? 'View / manage participants' : undefined}
+          >
+            <Users size={14} strokeWidth={2} style={{ color: theme.colors.ash }} />
+          </div>
+
+          <FloatingPopover anchorRef={participantsRef} open={panel === 'members'} width={360}>
+            <div onClick={e => e.stopPropagation()} style={{
+              background: theme.colors.greige, border: `1px solid ${theme.colors.border}`,
+              borderTop: `2px solid ${theme.colors.espresso}`, borderRadius: theme.radius.sm,
+              boxShadow: '0 10px 32px rgba(0,0,0,0.18)', padding: '12px 14px',
+              overflowY: 'visible',
+            }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 4 }}>
+                <span />
+                <BtnGhost onClick={() => setPanel(null)} style={{ fontSize:11, padding:'2px 8px' }}>✕</BtnGhost>
+              </div>
+              <ParticipantsPanel
+                levelLabel="Phase"
+                inheritedGroups={inheritedGroups}
+                managers={panelManagers}
+                managersLoading={memberLoading}
+                canEditManagers={canEdit}
+                onAddManager={handleAddManager}
+                onRemoveManager={handleRemoveManager}
+                managerQuickAddPool={quickAddPool}
+                excludeUserIdsForSearch={[...panelManagers.map(m => m.userId), ...projectManagerIds]}
+                myUserId={myUserId}
+                assigneesLoading={assigneesLoading}
+                assignees={mergedPhaseAssignees}
+                viewerGroup={{ people: projectViewerPeople, editable: false }}
+              />
+            </div>
+          </FloatingPopover>
         </div>
 
         {/* Grid column 3: Dates — the actual planned date range AND the
             delay warning together, not one replacing the other. Clicking
             it opens the same edit panel the old dedicated "Edit dates"
             icon opened. */}
-        <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-start', gap:2, overflow:'hidden', cursor: canEdit && !isInactive ? 'pointer' : 'default' }}
+        <div ref={datesRef} style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:2, overflow:'hidden', cursor: canEdit && !isInactive ? 'pointer' : 'default' }}
           onClick={(canEdit && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('dates'); } : undefined}
           title={(canEdit && !isInactive) ? 'Click to edit dates' : undefined}
         >
@@ -325,12 +432,12 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
             the Name cluster (column 1); Status already had its own column,
             Progress now matches it and ProjectListPage's own dedicated
             Progress column. */}
-        <div style={{ overflow:'hidden' }} onClick={e => e.stopPropagation()}>
+        <div style={{ overflow:'hidden', display:'flex', justifyContent:'center' }} onClick={e => e.stopPropagation()}>
           <ProgressBar value={phase.progress || 0} />
         </div>
 
         {/* Grid column 5: Status */}
-        <div style={{ overflow:'hidden' }}>
+        <div style={{ overflow:'hidden', display:'flex', justifyContent:'center' }}>
           <StatusBadge status={phase.status} />
         </div>
 
@@ -345,23 +452,27 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
         <RowActions data-row-actions onClick={e => e.stopPropagation()}>
           {canEdit && (
             <>
-              {!isInactive && (
-                <IconBtn active={panel==='members'} title="Add Manager / Viewer / member"
-                  onClick={() => { togglePanel('members'); if (panel !== 'members') fetchPhaseMembers(); }} style={{width:20,height:20}}>
-                  <Users size={14} strokeWidth={2} />
-                </IconBtn>
-              )}
+              {/* Members icon removed — redundant now that the Participants
+                  cell (grid column 2) opens the same panel, viewable by
+                  anyone and not just Managers. */}
               {!isInactive && otherPhases.length > 0 && (
                 <IconBtn active={panel==='deps'} title="Manage prerequisites"
-                  onClick={() => togglePanel('deps')} style={{width:20,height:20}}>
+                  onClick={e => { setDepsAnchorEl(e.currentTarget); togglePanel('deps'); }} style={{width:20,height:20}}>
                   <ArrowRight size={14} strokeWidth={2} />
                 </IconBtn>
               )}
               <div style={{ width:1, height:16, background:theme.colors.border, margin:'0 1px', flexShrink:0 }} />
               {isInactive ? (
-                <IconBtn title="Reactivate" onClick={handleReactivate} style={{width:20,height:20}}>
-                  <RotateCcw size={14} strokeWidth={2} />
-                </IconBtn>
+                <>
+                  <IconBtn title="Reactivate" onClick={handleReactivate} style={{width:20,height:20}}>
+                    <RotateCcw size={14} strokeWidth={2} />
+                  </IconBtn>
+                  {/* Only reachable once already deactivated — matches the
+                      chat module's disable-then-delete convention. */}
+                  <IconBtnDanger title="Delete permanently" onClick={handleHardDelete} style={{width:20,height:20}}>
+                    <Trash2 size={14} strokeWidth={2} />
+                  </IconBtnDanger>
+                </>
               ) : (
                 <IconBtnDanger title="Delete" onClick={handleDelete} style={{width:20,height:20}}>
                   <Trash2 size={14} strokeWidth={2} />
@@ -372,10 +483,19 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
         </RowActions>
       </GroupRow>
 
-      {/* ── Date edit panel ── */}
-      {panel === 'dates' && canEdit && (
-        <div style={{ padding:'12px 18px 14px', borderTop:`1px solid ${theme.colors.border}`, background:theme.colors.greige }}>
-          <EditPanelTitle style={{ marginBottom:10 }}>Phase Dates</EditPanelTitle>
+      {/* ── Date edit popup — floating popover, same treatment as
+          Participants/Dependencies. ── */}
+      <FloatingPopover anchorRef={datesRef} open={panel === 'dates' && canEdit} onClose={() => { setPanel(null); setDateErrors({}); }} width={340}>
+        <div onClick={e => e.stopPropagation()} style={{
+          background: theme.colors.greige, border: `1px solid ${theme.colors.border}`,
+          borderTop: `2px solid ${theme.colors.espresso}`, borderRadius: theme.radius.sm,
+          boxShadow: '0 10px 32px rgba(0,0,0,0.18)', padding: '12px 14px',
+          overflowY: 'visible',
+        }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 10 }}>
+            <EditPanelTitle style={{ marginBottom:0 }}>Phase Dates</EditPanelTitle>
+            <BtnGhost onClick={() => { setPanel(null); setDateErrors({}); }} style={{ fontSize:11, padding:'2px 8px' }}>✕</BtnGhost>
+          </div>
           <div style={{ display:'flex', gap:12, flexWrap:'wrap', alignItems:'flex-end' }}>
             <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
               <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase' }}>Start Date <span style={{ color:theme.colors.espresso }}>*</span></label>
@@ -395,100 +515,22 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
           </div>
           <div style={{ fontSize:11, color:theme.colors.ash, marginTop:6 }}>Dates appear on the Timeline once saved.</div>
         </div>
-      )}
+      </FloatingPopover>
 
-      {/* ── Phase Members panel — new; didn't exist before. Same
-          add-with-role / promote-demote / remove pattern as Activity's
-          Members panel. ── */}
-      {panel === 'members' && canEdit && (
-        <div style={{ padding: '12px 18px 14px', borderTop: `1px solid ${theme.colors.border}`, background: theme.colors.greige }}>
-          <EditPanelTitle>Phase Members</EditPanelTitle>
-          <div style={{ fontSize: 11, color: theme.colors.ash, marginBottom: 10 }}>
-            A Phase Manager has full management of this phase and everything under it. Employees can be added to activities within it; Viewers get read-only access.
+      {/* ── Dependency popup — floating popover, same treatment as
+          Participants (was an inline block that pushed every row below it
+          down the page). Viewable by anyone, editable by Manager only. ── */}
+      <FloatingPopover anchorEl={depsAnchorEl} open={panel === 'deps'} onClose={() => setPanel(null)} width={340}>
+        <div onClick={e => e.stopPropagation()} style={{
+          background: theme.colors.greige, border: `1px solid ${theme.colors.border}`,
+          borderTop: `2px solid ${theme.colors.espresso}`, borderRadius: theme.radius.sm,
+          boxShadow: '0 10px 32px rgba(0,0,0,0.18)', padding: '12px 14px',
+          overflowY: 'visible',
+        }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 6 }}>
+            <EditPanelTitle>Phase Prerequisites</EditPanelTitle>
+            <BtnGhost onClick={() => setPanel(null)} style={{ fontSize:11, padding:'2px 8px' }}>✕</BtnGhost>
           </div>
-
-          <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:10 }}>
-            <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase' }}>Add as</label>
-            <select value={newMemberRole} onChange={e => setNewMemberRole(e.target.value)}
-              style={{ background:theme.colors.mid, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm, padding:'4px 8px', color:theme.colors.onyx, fontSize:11, fontFamily:'inherit', outline:'none' }}>
-              <option value="Manager">Manager — full management of this phase</option>
-              <option value="Employee">Employee — can be assigned within this phase</option>
-              <option value="Viewer">Viewer — read-only access to this phase</option>
-            </select>
-          </div>
-
-          {projectMembers.length > 0 && (
-            <div style={{ marginBottom: 10 }}>
-              <div style={{ fontSize: 10, color: theme.colors.ash, fontWeight: 600, textTransform: 'uppercase', marginBottom: 5 }}>Add from project members</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                {projectMembers
-                  .filter(pm => !phaseMembers.find(fm => String(fm.userId) === String(pm.userId)))
-                  .map(pm => {
-                    const downgrade = isDowngrade(newMemberRole, pm.role);
-                    return (
-                      <BtnGhost key={pm.userId}
-                        style={{
-                          fontSize: 11, padding: '3px 10px',
-                          ...(downgrade ? { color: theme.colors.danger, borderColor: theme.colors.danger } : null),
-                        }}
-                        title={downgrade ? `${pm.name} is already this project's ${pm.role} — adding them here as ${newMemberRole} REPLACES that on this Phase, it doesn't add to it.` : undefined}
-                        onClick={async () => {
-                          if (downgrade && !window.confirm(`${pm.name} is already this project's ${pm.role}. Adding them here as ${newMemberRole} will override that and reduce their access on this Phase specifically. Continue?`)) return;
-                          try { await phaseApi.addMember(phase.phaseId, pm.userId, newMemberRole); await fetchPhaseMembers(); }
-                          catch (err) { showToast(apiErrorMessage(err, 'Failed to add member.')); }
-                        }}>
-                        {downgrade && '⚠ '}+ {pm.name || pm.email}
-                      </BtnGhost>
-                    );
-                  })
-                }
-              </div>
-            </div>
-          )}
-
-          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-            <UserSearchInput selectedUser={memberSearch} onSelect={setMemberSearch}
-              excludeUserIds={phaseMembers.map(m => m.userId)}
-              placeholder="Search users to add…" />
-            <BtnPrimary style={{ fontSize: 11, padding: '6px 12px', flexShrink: 0 }}
-              onClick={handleAddPhaseMember} disabled={!memberSearch}>
-              Add
-            </BtnPrimary>
-          </div>
-          {memberError && <div style={{ color: theme.colors.danger, fontSize: 11, marginBottom: 8 }}>{memberError}</div>}
-
-          {memberLoading && <div style={{ fontSize: 12, color: theme.colors.ash }}>Loading…</div>}
-          {!memberLoading && phaseMembers.map(m => (
-            <div key={m.userId} style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 10px', marginBottom: 4, border:`1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, background: 'rgba(46, 40, 35, 0.06)' }}>
-              <div style={{ width:22, height:22, borderRadius:'50%', background: theme.colors.mid, display:'flex', alignItems:'center', justifyContent:'center', fontSize:9, fontWeight:700, color: theme.colors.onyx, flexShrink: 0 }}>{initials(m.name)}</div>
-              {/* name/email both truncate — an email is one unbreakable
-                  token, so without a shrink+ellipsis guard a long one
-                  forces this whole flex row wider than the panel and
-                  pushes the role select + Remove button out of view. */}
-              <span style={{ flex: 1, minWidth: 60, fontSize: 12, color: theme.colors.onyx, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.name}>{m.name}</span>
-              <span style={{ fontSize: 11, color: theme.colors.ash, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.email}>{m.email}</span>
-              <select value={m.role} onChange={e => handlePhaseMemberRoleChange(m.userId, e.target.value)}
-                style={{ background:theme.colors.mid, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm, padding:'3px 6px', color:theme.colors.onyx, fontSize:11, fontFamily:'inherit', outline:'none' }}>
-                <option value="Manager">Manager</option>
-                <option value="Employee">Employee</option>
-                <option value="Viewer">Viewer</option>
-              </select>
-              {String(m.userId) !== String(myUserId) && (
-                <BtnGhost style={{ fontSize: 11, padding: '2px 8px', color: theme.colors.danger, borderColor: 'rgba(168,93,77,.35)' }}
-                  onClick={() => handleRemovePhaseMember(m.userId)}>Remove</BtnGhost>
-              )}
-            </div>
-          ))}
-          {!memberLoading && phaseMembers.length === 0 && (
-            <div style={{ fontSize: 12, color: theme.colors.ash, fontStyle: 'italic' }}>No phase-specific members yet — the project's Manager(s) have full authority here by default.</div>
-          )}
-        </div>
-      )}
-
-      {/* ── Dependency panel — viewable by anyone, editable by Manager only ── */}
-      {panel === 'deps' && (
-        <div style={{ padding:'12px 18px 14px', borderTop:`1px solid ${theme.colors.border}`, background:theme.colors.greige }}>
-          <EditPanelTitle style={{ marginBottom:6 }}>Phase Prerequisites</EditPanelTitle>
           <div style={{ fontSize:11, color:theme.colors.ash, marginBottom:10 }}>
             {canEdit
               ? <>Selecting a predecessor auto-<strong>blocks</strong> this phase until it completes, then auto-unblocks.</>
@@ -516,24 +558,26 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
             <div style={{ fontSize:12, color:theme.colors.ash, marginBottom: canEdit ? 8 : 0 }}>No prerequisites set.</div>
           )}
 
-          {/* Add via dropdown — Manager only */}
+          {/* Add via dropdown — Manager only. Inactive phases are excluded
+              (see addablePhases above) — they'd never complete, so
+              selecting one would deadlock this phase forever. */}
           {canEdit && (
-            otherPhases.filter(p => !currentDeps.has(p.phaseId)).length > 0 ? (
+            addablePhases.filter(p => !currentDeps.has(p.phaseId)).length > 0 ? (
               <select defaultValue="" onChange={e => { if (e.target.value) { handleAddDep(Number(e.target.value)); e.target.value = ""; } }}
                 style={{ width:'100%', background:theme.colors.mid, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm, padding:'6px 10px', color:theme.colors.onyx, fontSize:12, fontFamily:'inherit', outline:'none' }}>
                 <option value="">+ Add a predecessor phase…</option>
-                {otherPhases.filter(p => !currentDeps.has(p.phaseId)).map(p => (
+                {addablePhases.filter(p => !currentDeps.has(p.phaseId)).map(p => (
                   <option key={p.phaseId} value={p.phaseId}>{p.name} ({p.status})</option>
                 ))}
               </select>
             ) : (
-              <div style={{ fontSize:12, color:theme.colors.ash }}>All phases already added as prerequisites.</div>
+              <div style={{ fontSize:12, color:theme.colors.ash }}>All eligible phases already added as prerequisites.</div>
             )
           )}
 
           {depError && <div style={{ color:theme.colors.danger, fontSize:11, marginTop:6 }}>{depError}</div>}
         </div>
-      )}
+      </FloatingPopover>
 
       {/* ── Body ── */}
       {open && (
@@ -615,23 +659,33 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
               either, so it gets the same Manager/Dates/Status set, shown
               right where its rows actually start instead of being implied
               by a header three levels away at the top of the page. */}
-          {/* paddingLeft:41 — Activity's GroupRow (level=1) has padding-
-              left 25 (10 + 1*15), THEN an 11px chevron + 5px gap before
-              its name text (25+11+5=41). The previous fix used 25 (the
-              row's raw padding-left) without accounting for the chevron —
-              that's what was still visibly misaligned: it matched where
-              the CHEVRON starts, not where the actual name text starts. */}
+          {/* paddingLeft:25 — Activity's GroupRow (level=1) has real
+              structural padding-left 25 (10 + 1*15); that part IS a fact
+              about the row's own layout, not a guess, so it's kept as a
+              number. The chevron-sized offset ON TOP of that uses the same
+              invisible-spacer trick as the Participants header (see
+              ProjectDetailPage.js's Phase header) instead of also being a
+              hand-tuned number — that's what kept this drifting by a few
+              px in earlier passes: it matched where the CHEVRON starts,
+              not where the actual name text starts. */}
           {/* Navy gradient below — Activity's own color family, distinct
               from Phase's copper (the default TableHead gradient, used
               unchanged by the top-level Phase header above), so each
               level's header visibly matches its own row/body tint. */}
           {!loading && activities.length > 0 && (
-            <TableHead style={{ marginBottom:2, borderRadius:6, paddingLeft:41, background:`linear-gradient(90deg, ${theme.colors.white} 0%, ${theme.colors.navyTint}40 100%)` }}>
-              <TableHeadCell>Activity</TableHeadCell>
-              <TableHeadCell w={GROUP_COL.manager}>Manager</TableHeadCell>
-              <TableHeadCell w={GROUP_COL.dates}>Dates</TableHeadCell>
+            <TableHead style={{ marginBottom:2, borderRadius:6, paddingLeft:25, background:`linear-gradient(90deg, ${theme.colors.white} 0%, ${theme.colors.navyTint}40 100%)` }}>
+              <TableHeadCell>
+                <span style={{ display:'flex', alignItems:'center', gap:5 }}>
+                  <span style={{ width:11, height:11, flexShrink:0 }} />
+                  Activity
+                </span>
+              </TableHeadCell>
+              {/* Centered — see the Phase header in ProjectDetailPage.js
+                  for the reasoning. */}
+              <TableHeadCell w={GROUP_COL.manager} center>Participants</TableHeadCell>
+              <TableHeadCell w={GROUP_COL.dates} center>Dates</TableHeadCell>
               <TableHeadCell w={GROUP_COL.progress} center>Progress</TableHeadCell>
-              <TableHeadCell w={GROUP_COL.status}>Status</TableHeadCell>
+              <TableHeadCell w={GROUP_COL.status} center>Status</TableHeadCell>
             </TableHead>
           )}
           {!loading && visibleActivities.map(act => (
@@ -640,6 +694,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
               activity={act}
               allActivities={activities}
               projectMembers={projectMembers}
+              phaseManagers={panelManagers}
               myUserId={myUserId}
               onRefetchPhase={fetchActivities}
               onRefetchProject={onRefetchProject}

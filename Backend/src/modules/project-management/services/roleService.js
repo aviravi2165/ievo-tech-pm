@@ -118,12 +118,16 @@ async function resolveActivityManagerIds(activityId) {
   return ownerId ? [String(ownerId)] : [];
 }
 
-/** All users currently in pm_activity_members for this activity, any role. */
-async function getAllActivityMemberIds(activityId) {
+/** Union of accepted assignees across every (non-deleted) task in this activity. */
+async function getActivityTaskAssigneeIds(activityId) {
   const pool = await getPool();
   const result = await pool.request()
     .input('activityId', sql.Int, activityId)
-    .query(`SELECT user_id AS userId FROM pm_activity_members WHERE activity_id=@activityId`);
+    .query(`
+      SELECT DISTINCT ta.user_id AS userId
+      FROM pm_task_assignees ta
+      INNER JOIN pm_tasks t ON t.task_id = ta.task_id AND t.activity_id = @activityId AND t.is_deleted = 0
+    `);
   return result.recordset.map(r => String(r.userId));
 }
 
@@ -176,10 +180,13 @@ async function resolveTaskManagerIds(activityId) {
 }
 
 /**
- * The full set of people who currently belong in this activity's chat:
- * every explicit activity member (any role). This is deliberately broader
- * than resolveActivityManagerIds — a thread should reflect the whole
- * roster, not just its Manager(s).
+ * The full set of people who currently belong in this activity's chat: its
+ * Managers at every level (Activity, Phase, Project — cumulative, matching
+ * resolveTaskManagerIds' reasoning) plus every accepted assignee of every
+ * task under this activity. Members are no longer manually added at the
+ * Activity level (they only get access by being assigned to a Task), so the
+ * old "full pm_activity_members roster" set would have missed real
+ * participants entirely — task assignees are the actual roster now.
  *
  * Falls back to Activity Manager(s)/owner, then to the project's
  * Manager(s), so a thread can ALWAYS be seeded with at least one person —
@@ -198,12 +205,13 @@ async function resolveActivityThreadSeedIds(activityId) {
   // assertConversationParticipant and see "Failed to load" when opening any
   // activity chat they weren't explicitly listed in. Phase Managers had the
   // exact same gap and were never included at all until now.
-  const [members, phaseManagers, projectManagers] = await Promise.all([
-    getAllActivityMemberIds(activityId),
+  const [activityManagers, phaseManagers, projectManagers, taskAssignees] = await Promise.all([
+    getActivityManagerIds(activityId),
     getPhaseManagerIdsForActivity(activityId),
     getProjectManagerIdsForActivity(activityId),
+    getActivityTaskAssigneeIds(activityId),
   ]);
-  const seed = new Set([...members, ...phaseManagers, ...projectManagers]);
+  const seed = new Set([...activityManagers, ...phaseManagers, ...projectManagers, ...taskAssignees]);
   if (seed.size) return [...seed];
   // Final fallback only when literally nobody qualifies yet (edge case
   // during initial setup, before the project even has a Manager): use the
@@ -217,7 +225,7 @@ module.exports = {
   getEffectivePhaseRole,
   getActivityManagerIds,
   resolveActivityManagerIds,
-  getAllActivityMemberIds,
+  getActivityTaskAssigneeIds,
   getProjectManagerIdsForActivity,
   getPhaseManagerIdsForActivity,
   resolveTaskManagerIds,

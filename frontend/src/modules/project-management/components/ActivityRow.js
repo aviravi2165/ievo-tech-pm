@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useTheme } from '@emotion/react';
 import { ChevronRight, ArrowRight, RotateCcw, Trash2, Lock, Users } from 'lucide-react';
 import StatusBadge, { InactiveBadge } from './StatusBadge';
@@ -7,6 +7,8 @@ import DelayBadge from './DelayBadge';
 import TaskItem from './TaskItem';
 import UserSearchInput from './UserSearchInput';
 import ChatButton from './ChatButton';
+import ParticipantsPanel from './ParticipantsPanel';
+import { aggregateAssignees } from '../utils/aggregateAssignees';
 import { activityApi } from '../api/projectApi';
 import { showToast, apiErrorMessage } from '../hooks/toastStore';
 import { GroupRow, RowActions, COL, TASK_GRID_COLS, TableHead, TableHeadCell } from '../styles/Table.styles';
@@ -16,6 +18,7 @@ import {
 } from '../styles/shared.styles';
 import { useSortFilter } from '../../shared/hooks/useSortFilter';
 import { SortSelect, FilterSelect, FilterToggle } from '../../shared/components/TableControls';
+import FloatingPopover from '../../shared/components/FloatingPopover';
 
 const PRIORITY_OPTS = ['Low', 'Medium', 'High', 'Critical'];
 
@@ -26,15 +29,6 @@ function parseLocalDate(d) {
   return new Date(y, m - 1, day);
 }
 function initials(name = '') { return (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(); }
-
-// Mirrors PhasePanel.js's isDowngrade/RANK (which mirrors MemberManager.js's) —
-// same fix, same reasoning: "Add from project members" here had no check
-// against silently overriding someone's inherited project Manager role
-// with a lower explicit Activity role.
-const RANK = { Viewer: 1, Employee: 2, Member: 2, Manager: 3 };
-function isDowngrade(newRole, currentRole) {
-  return (RANK[newRole] ?? 0) < (RANK[currentRole] ?? 0);
-}
 function fmtRange(start, end) {
   const s = parseLocalDate(start), e = parseLocalDate(end);
   if (!s && !e) return null;
@@ -44,7 +38,7 @@ function fmtRange(start, end) {
 
 
 export default function ActivityRow({
-  activity, allActivities = [], projectMembers = [], myUserId, onRefetchPhase, onRefetchProject
+  activity, allActivities = [], projectMembers = [], phaseManagers = [], myUserId, onRefetchPhase, onRefetchProject
 }) {
   const theme = useTheme();
   const [open,             setOpen]             = useState(false);
@@ -61,25 +55,32 @@ export default function ActivityRow({
   // loading state; later background refetches update tasks in place.
   const hasLoadedTasksRef = useRef(false);
   const [panel,            setPanel]            = useState(null); // 'edit'|'deps'|'addtask'|'members'
+  // Participants panel is a floating popup (matches the Project-level
+  // popup's exact pattern) rather than an inline-expanding block.
+  const participantsRef = useRef(null);
+  // Dependency popup — same floating-popup treatment, same two-triggers
+  // reasoning as PhasePanel.js's own depsAnchorEl.
+  const [depsAnchorEl, setDepsAnchorEl] = useState(null);
 
-  // Activity members state
+  // Activity managers state — "Activity Members" (a generic assignable
+  // tier) doesn't exist as something you manually add anymore; this list
+  // is now specifically who's an explicit MANAGER of this activity. Regular
+  // team members get access by being assigned to a task (see the Assignees
+  // roll-up ParticipantsPanel computes from `tasks` below), not by being
+  // pre-added here.
   const [actMembers,       setActMembers]       = useState([]);
   const [memberLoading,    setMemberLoading]    = useState(false);
-  const [memberSearch,     setMemberSearch]     = useState(null);
-  const [memberError,      setMemberError]      = useState('');
-  // Role to add a new member at — was always hardcoded to 'Employee' with
-  // no way to add someone as Manager or Viewer directly, and no way to
-  // change an existing member's role after adding them (no promote/demote
-  // UI existed at all despite the backend already supporting it).
-  const [newMemberRole,    setNewMemberRole]    = useState('Employee');
 
   // Edit form
   const [editStart,  setEditStart]  = useState(toInput(activity.plannedStart));
   const [editEnd,    setEditEnd]    = useState(toInput(activity.plannedEnd));
   const [editDesc,   setEditDesc]   = useState(activity.description || '');
-  const [editOwner,  setEditOwner]  = useState(null);
   const [editSaving, setEditSaving] = useState(false);
   const [editErrors, setEditErrors] = useState({});
+  // Edit-activity popup — same floating-popup treatment as Participants/
+  // Dependencies, one trigger (the Dates cell), so a plain ref works here
+  // (unlike depsAnchorEl, which has two possible triggers).
+  const editRef = useRef(null);
 
   // Add task form
   const [newTaskName,  setNewTaskName]  = useState('');
@@ -139,6 +140,13 @@ export default function ActivityRow({
     if (open) { fetchTasks(); fetchMembers(); }
   }, [open, fetchTasks, fetchMembers]);
 
+  useEffect(() => {
+    if (panel !== 'members') return;
+    const handler = (e) => { if (participantsRef.current && !participantsRef.current.contains(e.target)) setPanel(null); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [panel]);
+
   const togglePanel = (p) => setPanel(v => v === p ? null : p);
 
   // UI-only sort/filter over this activity's already-loaded tasks list.
@@ -174,7 +182,12 @@ export default function ActivityRow({
         plannedStart: editStart || null,
         plannedEnd:   editEnd   || null,
         description:  editDesc  || null,
-        ownerId:      editOwner?.userId || activity.ownerId || null,
+        // ownerId is no longer user-editable — Activity Managers are set
+        // via the Participants tab now. Passed through unchanged so the
+        // backend's owner_id fallback (used only when an activity has no
+        // explicit Manager at all — see roleService.resolveActivityManagerIds)
+        // keeps whatever it already had.
+        ownerId:      activity.ownerId || null,
       });
       onRefetchPhase?.(); onRefetchProject?.();
       setPanel(null); setEditErrors({});
@@ -182,29 +195,84 @@ export default function ActivityRow({
     finally { setEditSaving(false); }
   };
 
-  // ── Activity member management ───────────────────────────────────────────────
-  const handleAddMember = async () => {
-    if (!memberSearch) return;
-    setMemberError('');
-    try {
-      await activityApi.addMember(activity.activityId, memberSearch.userId, newMemberRole);
-      setMemberSearch(null);
-      setNewMemberRole('Employee');
-      await fetchMembers();
-    } catch (err) {
-      setMemberError(err?.response?.data?.error || 'Failed to add member.');
-    }
+  // ── Activity manager management (passed to ParticipantsPanel) ─────────────────
+  // Always adds as 'Manager' — Viewer is project-only now, no role choice
+  // left to make at Activity level either.
+  const handleAddManager = async (userId) => {
+    await activityApi.addMember(activity.activityId, userId, 'Manager');
+    await fetchMembers();
   };
-
-  const handleMemberRoleChange = async (uid, role) => {
-    try { await activityApi.updateMemberRole(activity.activityId, uid, role); await fetchMembers(); }
-    catch (err) { showToast(apiErrorMessage(err, 'Failed to change role.')); }
-  };
-
-  const handleRemoveMember = async (uid) => {
+  const handleRemoveManager = async (uid) => {
     try { await activityApi.removeMember(activity.activityId, uid); await fetchMembers(); }
     catch (err) { showToast(apiErrorMessage(err, 'Failed to remove member.')); }
   };
+
+  // ── Participants panel data (Managers deduped against inherited groups,
+  // Assignees rolled up from this activity's own tasks) ─────────────────────
+  const projectManagerPeople = projectMembers.filter(m => m.role === 'Manager').map(m => ({ userId: m.userId, name: m.name }));
+  const projectManagerIds = new Set(projectManagerPeople.map(p => String(p.userId)));
+  const projectViewerPeople = projectMembers.filter(m => m.role === 'Viewer').map(m => ({ userId: m.userId, name: m.name }));
+  const phaseManagerPeople = phaseManagers
+    .filter(m => !projectManagerIds.has(String(m.userId)))
+    .map(m => ({ userId: m.userId, name: m.name }));
+  const inheritedGroups = [
+    { label: 'Project Managers', people: projectManagerPeople },
+    { label: 'Phase Managers', people: phaseManagerPeople },
+  ];
+  // Only 'Manager' rows are "this Activity's managers" now — Viewer is
+  // project-only (see ParticipantsPanel.js). An Employee/Member/Viewer row
+  // can still exist here (auto-added when someone with no other access
+  // accepted a task assignment, or pre-dating this redesign), but that's
+  // an assignee fact, not a manager fact, so it's excluded from this list
+  // and merged into the Assignees roll-up instead. Also excludes anyone
+  // already an inherited Project or Phase Manager — same "don't show Yash
+  // twice" dedup as PhasePanel.js; the DB row (if any) is untouched, just
+  // not re-displayed.
+  const inheritedManagerIds = new Set([...projectManagerIds, ...phaseManagerPeople.map(p => String(p.userId))]);
+  const panelManagers = actMembers.filter(m => m.role === 'Manager' && !inheritedManagerIds.has(String(m.userId)));
+  const explicitManagerIds = new Set(panelManagers.map(m => String(m.userId)));
+  // Add-candidates exclude anyone who already has Manager access here via
+  // inheritance (Project OR Phase Manager) — "if someone has project/phase
+  // level access he should not be included to add as activity manager,"
+  // same rule one level down too. A project Member/Viewer with no Phase
+  // access yet is still a valid promote-to-Activity-Manager candidate.
+  const quickAddPool = projectMembers
+    .filter(m => m.role !== 'Manager')
+    .map(m => ({ userId: m.userId, name: m.name, email: m.email }))
+    .filter(p => !explicitManagerIds.has(String(p.userId)) && !inheritedManagerIds.has(String(p.userId)));
+
+  // Legacy/auto-added non-Manager rows merged into Assignees even with zero
+  // current tasks — same reasoning as PhasePanel.js's mergedPhaseAssignees.
+  const legacyAssigneeStubs = actMembers
+    .filter(m => m.role !== 'Manager')
+    .map(m => ({ userId: m.userId, name: m.name }));
+  const activityAssignees = useMemo(() => {
+    const map = new Map(aggregateAssignees(tasks).map(a => [String(a.userId), a]));
+    legacyAssigneeStubs.forEach(m => {
+      const key = String(m.userId);
+      if (!map.has(key)) map.set(key, { userId: m.userId, name: m.name, taskCount: 0 });
+    });
+    return [...map.values()].sort((a, b) => b.taskCount - a.taskCount);
+  }, [tasks, actMembers]);
+
+  // Task assignment's quick-pick used to only suggest actMembers (this
+  // activity's own explicit rows) — someone with real access here via
+  // inheritance (a Project or Phase Manager who never got an explicit
+  // Activity row) had no quick-pick shortcut, only the "search any user"
+  // fallback, even though they're exactly the kind of person likely to be
+  // assigned something. Merged + deduped by userId; actMembers wins on
+  // conflicts since it has the richer (email included) record.
+  const suggestedAssignees = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    [...actMembers, ...panelManagers, ...phaseManagers, ...projectManagerPeople].forEach(m => {
+      const key = String(m.userId);
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(m);
+    });
+    return out;
+  }, [actMembers, panelManagers, phaseManagers, projectManagerPeople]);
 
   // ── Add task ─────────────────────────────────────────────────────────────────
   const handleAddTask = async () => {
@@ -233,6 +301,11 @@ export default function ActivityRow({
 
   // ── Activity dependencies ────────────────────────────────────────────────────
   const otherActivities = allActivities.filter(a => a.activityId !== activity.activityId);
+  // Same reasoning as PhasePanel.js's addablePhases — an inactive activity
+  // never reaches "Completed", so it can't legitimately be a prerequisite
+  // without deadlocking this activity forever. Already-selected inactive
+  // deps still render as removable chips, just not offered as new picks.
+  const addableActivities = otherActivities.filter(a => a.isActive !== false);
   const currentDeps = new Set((activity.dependsOn || []).map(Number));
 
   const handleAddDep = async (depId) => {
@@ -262,6 +335,15 @@ export default function ActivityRow({
     catch (err) { showToast(apiErrorMessage(err, 'Failed to reactivate activity.')); }
   };
 
+  // Only reachable while already deactivated — see phaseService's
+  // hardDeletePhase comment (same convention here) for why this requires
+  // every Task under it to already be permanently deleted first.
+  const handleHardDelete = async () => {
+    if (!window.confirm(`Permanently delete activity "${activity.name}"? This cannot be undone.`)) return;
+    try { await activityApi.hardDelete(activity.activityId); onRefetchPhase?.(); onRefetchProject?.(); }
+    catch (err) { showToast(apiErrorMessage(err, 'Failed to permanently delete activity.')); }
+  };
+
   return (
     <>
       {/* ── Group-header row (table row, level 1 — indented one step deeper
@@ -281,7 +363,7 @@ export default function ActivityRow({
           {activity.dependsOn?.length > 0 && (
             <DepBadge
               title={`Depends on ${activity.dependsOn.length} activity`}
-              onClick={e => { e.stopPropagation(); togglePanel('deps'); }} style={{ flexShrink:0 }}>
+              onClick={e => { e.stopPropagation(); setDepsAnchorEl(e.currentTarget); togglePanel('deps'); }} style={{ flexShrink:0 }}>
               <ArrowRight size={10} strokeWidth={2.5} />
               {activity.dependsOn.length}
             </DepBadge>
@@ -290,51 +372,65 @@ export default function ActivityRow({
           {isInactive && <InactiveBadge />}
         </div>
 
-        {/* Grid column 2: Manager — shows the Activity's own Manager(s)
-            when explicitly set; falls back to the project Manager(s) when
-            nothing's been added at the activity level yet (a project
-            Manager already has full authority over every activity per
-            roleService's inheritance rule, so they genuinely are the
-            effective manager here). Clicking it opens the same "manage
-            members" panel the old dedicated Members icon opened. */}
-        <div style={{ overflow:'hidden', cursor: canEdit && !isInactive ? 'pointer' : 'default' }}
-          onClick={(canEdit && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('members'); if (panel !== 'members') fetchMembers(); } : undefined}
-          title={(canEdit && !isInactive) ? 'Click to manage members' : undefined}
-        >
-          {(() => {
-            const projectManagerNames = projectMembers.filter(m => m.role === 'Manager').map(m => m.name).join(', ');
-            const label = activity.managerNames || projectManagerNames;
-            if (!label) return activity.memberCount > 0
-              ? <span style={{ fontSize:10, color:theme.colors.ash }}>{activity.memberCount} member{activity.memberCount !== 1 ? 's' : ''}</span>
-              : null;
-            // italic (not just color+weight) when inherited — color/weight
-            // alone wasn't a strong enough signal without hovering for the
-            // tooltip: this name is shown here because they're the
-            // project's Manager, NOT because anyone explicitly added them
-            // to this activity. Clicking "+ Name" for someone already
-            // listed here (in the Members panel below) still makes sense —
-            // it PINS them as this activity's own explicit Manager, which
-            // is a real, different thing from inheriting it — but without
-            // this visual distinction it read as "why does it let me
-            // re-add someone already added."
-            return (
-              <span style={{ fontSize:10, color: activity.managerNames ? theme.colors.onyx : theme.colors.ash, fontWeight: activity.managerNames ? 600 : 400, fontStyle: activity.managerNames ? 'normal' : 'italic', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', display:'block' }}
-                title={activity.managerNames ? label : `${label} — inherited from the project's Manager role, not explicitly set on this Activity. Click to pin explicitly.`}>
-                {label}
-              </span>
-            );
-          })()}
+        {/* Grid column 2: Participants — used to show the inherited/explicit
+            manager names directly in-cell (truncated, italic-vs-bold to
+            distinguish inherited from explicit) — replaced entirely with a
+            plain icon + label that opens ParticipantsPanel as a floating
+            popup (matching the Project-level popup's style), which does
+            all of that distinguishing explicitly with real section headers
+            instead of font-style alone. Viewable by anyone (not just
+            canEdit) — the panel itself gates editing per role. */}
+        <div style={{ position: 'relative', display:'flex', justifyContent:'center' }} ref={participantsRef}>
+          {/* Icon only, centered — matches Progress's already-working
+              centering technique. */}
+          <div style={{ cursor: !isInactive ? 'pointer' : 'default', display:'flex', alignItems:'center', justifyContent:'center' }}
+            onClick={!isInactive ? (e) => { e.stopPropagation(); togglePanel('members'); if (panel !== 'members') { fetchMembers(); if (!hasLoadedTasksRef.current) fetchTasks(); } } : undefined}
+            title={!isInactive ? 'View / manage participants' : undefined}
+          >
+            <Users size={14} strokeWidth={2} style={{ color: theme.colors.ash }} />
+          </div>
+
+          <FloatingPopover anchorRef={participantsRef} open={panel === 'members'} width={360}>
+            <div onClick={e => e.stopPropagation()} style={{
+              background: theme.colors.greige, border: `1px solid ${theme.colors.border}`,
+              borderTop: `2px solid ${theme.colors.espresso}`, borderRadius: theme.radius.sm,
+              boxShadow: '0 10px 32px rgba(0,0,0,0.18)', padding: '12px 14px',
+              overflowY: 'visible',
+            }}>
+              <div style={{ display:'flex', justifyContent:'flex-end', marginBottom: 4 }}>
+                <BtnGhost onClick={() => setPanel(null)} style={{ fontSize:11, padding:'2px 8px' }}>✕</BtnGhost>
+              </div>
+              <ParticipantsPanel
+                levelLabel="Activity"
+                inheritedGroups={inheritedGroups}
+                managers={panelManagers}
+                managersLoading={memberLoading}
+                canEditManagers={canEdit}
+                onAddManager={handleAddManager}
+                onRemoveManager={handleRemoveManager}
+                managerQuickAddPool={quickAddPool}
+                excludeUserIdsForSearch={[...panelManagers.map(m => m.userId), ...inheritedManagerIds]}
+                myUserId={myUserId}
+                assigneesLoading={loadingTasks}
+                assignees={activityAssignees}
+                viewerGroup={{ people: projectViewerPeople, editable: false }}
+              />
+            </div>
+          </FloatingPopover>
         </div>
 
         {/* Grid column 3: Dates — the actual planned date range AND the
             delay warning together, not one replacing the other. Clicking
-            it opens the same edit panel (dates + description + owner) the
-            old dedicated "Edit" pencil icon opened — Activity has no
-            separate rename capability, so this IS the activity's one real
-            edit surface. */}
-        <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-start', gap:2, overflow:'hidden', cursor: canEdit && !isInactive ? 'pointer' : 'default' }}
+            it opens the same edit panel (dates + description) the old
+            dedicated "Edit" pencil icon opened — Activity has no separate
+            rename capability, so this IS the activity's one real edit
+            surface. No Owner field here anymore — Activity Managers are
+            set via the Participants tab; owner_id is a legacy column the
+            backend only falls back to when an activity has no explicit
+            Manager at all, not something meant to be hand-edited. */}
+        <div ref={editRef} style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:2, overflow:'hidden', cursor: canEdit && !isInactive ? 'pointer' : 'default' }}
           onClick={(canEdit && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('edit'); } : undefined}
-          title={(canEdit && !isInactive) ? 'Click to edit dates / description / owner' : undefined}
+          title={(canEdit && !isInactive) ? 'Click to edit dates / description' : undefined}
         >
           <span style={{ fontSize:10, color:theme.colors.ash, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'100%' }}>{fmtRange(activity.plannedStart, activity.plannedEnd)}</span>
           {activity.delayDays > 0 && <DelayBadge days={activity.delayDays} label="Late by" />}
@@ -342,12 +438,12 @@ export default function ActivityRow({
 
         {/* Grid column 4: Progress — BUG-030, same fix as PhasePanel.js's
             Phase rows: this used to be crammed into the Name cluster. */}
-        <div style={{ overflow:'hidden' }} onClick={e => e.stopPropagation()}>
+        <div style={{ overflow:'hidden', display:'flex', justifyContent:'center' }} onClick={e => e.stopPropagation()}>
           <ProgressBar value={activity.progress || 0} />
         </div>
 
         {/* Grid column 5: Status */}
-        <div style={{ overflow:'hidden' }}>
+        <div style={{ overflow:'hidden', display:'flex', justifyContent:'center' }}>
           <StatusBadge status={activity.status} />
         </div>
 
@@ -359,12 +455,9 @@ export default function ActivityRow({
             alongside that click, not instead of it. */}
         {canEdit && (
           <RowActions data-row-actions onClick={e => e.stopPropagation()}>
-            {!isInactive && (
-              <IconBtn active={panel === 'members'} title="Add Manager / Viewer / member"
-                onClick={() => { togglePanel('members'); if (panel !== 'members') fetchMembers(); }} style={{ width:20, height:20 }}>
-                <Users size={14} strokeWidth={2} />
-              </IconBtn>
-            )}
+            {/* Members icon removed — redundant now that the Participants
+                cell (grid column 2) itself opens the same panel, viewable
+                by anyone and not just Managers. */}
             {showChatButton && (
               <span onClick={e => e.stopPropagation()}>
                 <ChatButton kind="activity" id={activity.activityId} compact />
@@ -372,15 +465,20 @@ export default function ActivityRow({
             )}
             {!isInactive && otherActivities.length > 0 && (
               <IconBtn active={panel === 'deps'} title="Prerequisites"
-                onClick={() => togglePanel('deps')} style={{ width:20, height:20 }}>
+                onClick={e => { setDepsAnchorEl(e.currentTarget); togglePanel('deps'); }} style={{ width:20, height:20 }}>
                 <ArrowRight size={14} strokeWidth={2} />
               </IconBtn>
             )}
             <div style={{ width:1, height:16, background:theme.colors.border, margin:'0 1px', flexShrink:0 }} />
             {isInactive ? (
-              <IconBtn title="Reactivate" onClick={handleReactivate} style={{ width:20, height:20 }}>
-                <RotateCcw size={14} strokeWidth={2} />
-              </IconBtn>
+              <>
+                <IconBtn title="Reactivate" onClick={handleReactivate} style={{ width:20, height:20 }}>
+                  <RotateCcw size={14} strokeWidth={2} />
+                </IconBtn>
+                <IconBtnDanger title="Delete permanently" onClick={handleHardDelete} style={{ width:20, height:20 }}>
+                  <Trash2 size={14} strokeWidth={2} />
+                </IconBtnDanger>
+              </>
             ) : (
               <IconBtnDanger title="Delete" onClick={handleDelete} style={{ width:20, height:20 }}>
                 <Trash2 size={14} strokeWidth={2} />
@@ -390,10 +488,21 @@ export default function ActivityRow({
         )}
       </GroupRow>
 
-      {/* ── Edit activity panel ── */}
-      {panel === 'edit' && canEdit && (
-        <div style={{ padding: '12px 14px', borderTop: `1px solid ${theme.colors.border}`, background: theme.colors.greige }}>
-          <EditPanelTitle>Edit Activity</EditPanelTitle>
+      {/* ── Edit activity popup — floating popover, same treatment as
+          Participants/Dependencies (was an inline block that pushed every
+          row below it down the page). No Owner field — see the comment on
+          the Dates cell above for why. ── */}
+      <FloatingPopover anchorRef={editRef} open={panel === 'edit' && canEdit} onClose={() => { setPanel(null); setEditErrors({}); }} width={340}>
+        <div onClick={e => e.stopPropagation()} style={{
+          background: theme.colors.greige, border: `1px solid ${theme.colors.border}`,
+          borderTop: `2px solid ${theme.colors.espresso}`, borderRadius: theme.radius.sm,
+          boxShadow: '0 10px 32px rgba(0,0,0,0.18)', padding: '12px 14px',
+          overflowY: 'visible',
+        }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 8 }}>
+            <EditPanelTitle>Edit Activity</EditPanelTitle>
+            <BtnGhost onClick={() => { setPanel(null); setEditErrors({}); }} style={{ fontSize:11, padding:'2px 8px' }}>✕</BtnGhost>
+          </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-start', marginBottom: 10 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
               <label style={{ fontSize: 10, color: theme.colors.ash, fontWeight: 600, textTransform: 'uppercase' }}>Start Date *</label>
@@ -407,11 +516,6 @@ export default function ActivityRow({
                 style={{ background: theme.colors.mid, border: `1px solid ${editErrors.end ? theme.colors.danger : theme.colors.border}`, borderRadius: theme.radius.sm, padding: '6px 10px', color: theme.colors.onyx, fontSize: 12, fontFamily: 'inherit', outline: 'none' }} />
               {editErrors.end && <span style={{ fontSize: 10, color: theme.colors.danger }}>{editErrors.end}</span>}
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1, minWidth: 160 }}>
-              <label style={{ fontSize: 10, color: theme.colors.ash, fontWeight: 600, textTransform: 'uppercase' }}>Owner (search users)</label>
-              <UserSearchInput selectedUser={editOwner} onSelect={setEditOwner}
-                placeholder={activity.ownerName ? `Current: ${activity.ownerName}` : 'Search to assign owner…'} />
-            </div>
           </div>
           <div style={{ marginBottom: 10 }}>
             <label style={{ fontSize: 10, color: theme.colors.ash, fontWeight: 600, textTransform: 'uppercase', display: 'block', marginBottom: 3 }}>Description</label>
@@ -424,104 +528,22 @@ export default function ActivityRow({
             <BtnGhost style={{ fontSize: 11, padding: '6px 12px' }} onClick={() => { setPanel(null); setEditErrors({}); }}>Cancel</BtnGhost>
           </div>
         </div>
-      )}
+      </FloatingPopover>
 
-      {/* ── Activity Members panel ── */}
-      {panel === 'members' && canEdit && (
-        <div style={{ padding: '12px 14px', borderTop: `1px solid ${theme.colors.border}`, background: theme.colors.greige }}>
-          <EditPanelTitle>Activity Members</EditPanelTitle>
-          <div style={{ fontSize: 11, color: theme.colors.ash, marginBottom: 10 }}>
-            These users can be assigned to tasks within this activity. Task assignees are automatically added here on acceptance.
+      {/* ── Dependency popup — floating popover, same treatment as
+          Participants (was an inline block that pushed every row below it
+          down the page). Viewable by anyone, editable by Manager only. ── */}
+      <FloatingPopover anchorEl={depsAnchorEl} open={panel === 'deps'} onClose={() => setPanel(null)} width={340}>
+        <div onClick={e => e.stopPropagation()} style={{
+          background: theme.colors.greige, border: `1px solid ${theme.colors.border}`,
+          borderTop: `2px solid ${theme.colors.espresso}`, borderRadius: theme.radius.sm,
+          boxShadow: '0 10px 32px rgba(0,0,0,0.18)', padding: '12px 14px',
+          overflowY: 'visible',
+        }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 6 }}>
+            <EditPanelTitle>Activity Prerequisites</EditPanelTitle>
+            <BtnGhost onClick={() => setPanel(null)} style={{ fontSize:11, padding:'2px 8px' }}>✕</BtnGhost>
           </div>
-
-          {/* Role to add at — was hardcoded to 'Employee' with no way to add
-              someone as Manager or Viewer directly. Applies to both the
-              quick-add chips below and the search-based Add. */}
-          <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:10 }}>
-            <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase' }}>Add as</label>
-            <select value={newMemberRole} onChange={e => setNewMemberRole(e.target.value)}
-              style={{ background:theme.colors.mid, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm, padding:'4px 8px', color:theme.colors.onyx, fontSize:11, fontFamily:'inherit', outline:'none' }}>
-              <option value="Manager">Manager — full management of this activity</option>
-              <option value="Employee">Employee — can be assigned to tasks</option>
-              <option value="Viewer">Viewer — read-only access to this activity</option>
-            </select>
-          </div>
-
-          {projectMembers.length > 0 && (
-            <div style={{ marginBottom: 10 }}>
-              <div style={{ fontSize: 10, color: theme.colors.ash, fontWeight: 600, textTransform: 'uppercase', marginBottom: 5 }}>Add from project members</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                {projectMembers
-                  .filter(pm => !actMembers.find(am => String(am.userId) === String(pm.userId)))
-                  .map(pm => {
-                    const downgrade = isDowngrade(newMemberRole, pm.role);
-                    return (
-                      <BtnGhost key={pm.userId}
-                        style={{
-                          fontSize: 11, padding: '3px 10px',
-                          ...(downgrade ? { color: theme.colors.danger, borderColor: theme.colors.danger } : null),
-                        }}
-                        title={downgrade ? `${pm.name} is already this project's ${pm.role} — adding them here as ${newMemberRole} REPLACES that on this Activity, it doesn't add to it.` : undefined}
-                        onClick={async () => {
-                          if (downgrade && !window.confirm(`${pm.name} is already this project's ${pm.role}. Adding them here as ${newMemberRole} will override that and reduce their access on this Activity specifically. Continue?`)) return;
-                          try { await activityApi.addMember(activity.activityId, pm.userId, newMemberRole); await fetchMembers(); }
-                          catch (err) { showToast(apiErrorMessage(err, 'Failed to add member.')); }
-                        }}>
-                        {downgrade && '⚠ '}+ {pm.name || pm.email}
-                      </BtnGhost>
-                    );
-                  })
-                }
-              </div>
-            </div>
-          )}
-
-          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-            <UserSearchInput selectedUser={memberSearch} onSelect={setMemberSearch}
-              excludeUserIds={actMembers.map(m => m.userId)}
-              placeholder="Search users to add…" />
-            <BtnPrimary style={{ fontSize: 11, padding: '6px 12px', flexShrink: 0 }}
-              onClick={handleAddMember} disabled={!memberSearch}>
-              Add
-            </BtnPrimary>
-          </div>
-          {memberError && <div style={{ color: theme.colors.danger, fontSize: 11, marginBottom: 8 }}>{memberError}</div>}
-
-          {memberLoading && <div style={{ fontSize: 12, color: theme.colors.ash }}>Loading…</div>}
-          {/* Existing members now show a role dropdown (promote/demote)
-              instead of a fixed role — this action never existed in the UI
-              before even though the backend already supported it. */}
-          {!memberLoading && actMembers.map(m => (
-            <div key={m.userId} style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 10px', marginBottom: 4, border:`1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, background: 'rgba(46, 40, 35, 0.06)' }}>
-              <div style={{ width:22, height:22, borderRadius:'50%', background: theme.colors.mid, display:'flex', alignItems:'center', justifyContent:'center', fontSize:9, fontWeight:700, color: theme.colors.onyx, flexShrink: 0 }}>{initials(m.name)}</div>
-              {/* name/email both truncate — an email is one unbreakable
-                  token, so without a shrink+ellipsis guard a long one
-                  forces this whole flex row wider than the panel and
-                  pushes the role select + Remove button out of view. */}
-              <span style={{ flex: 1, minWidth: 60, fontSize: 12, color: theme.colors.onyx, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.name}>{m.name}</span>
-              <span style={{ fontSize: 11, color: theme.colors.ash, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.email}>{m.email}</span>
-              <select value={m.role} onChange={e => handleMemberRoleChange(m.userId, e.target.value)}
-                style={{ background:theme.colors.mid, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm, padding:'3px 6px', color:theme.colors.onyx, fontSize:11, fontFamily:'inherit', outline:'none' }}>
-                <option value="Manager">Manager</option>
-                <option value="Employee">Employee</option>
-                <option value="Viewer">Viewer</option>
-              </select>
-              {String(m.userId) !== String(myUserId) && (
-                <BtnGhost style={{ fontSize: 11, padding: '2px 8px', color: theme.colors.danger, borderColor: 'rgba(168,93,77,.35)' }}
-                  onClick={() => handleRemoveMember(m.userId)}>Remove</BtnGhost>
-              )}
-            </div>
-          ))}
-          {!memberLoading && actMembers.length === 0 && (
-            <div style={{ fontSize: 12, color: theme.colors.ash, fontStyle: 'italic' }}>No members yet.</div>
-          )}
-        </div>
-      )}
-
-      {/* ── Dependency panel — viewable by anyone, editable by Manager only ── */}
-      {panel === 'deps' && (
-        <div style={{ padding: '10px 14px 12px', borderTop: `1px solid ${theme.colors.border}`, background: theme.colors.greige }}>
-          <EditPanelTitle style={{ marginBottom: 6 }}>Activity Prerequisites</EditPanelTitle>
           <div style={{ fontSize: 11, color: theme.colors.ash, marginBottom: 10 }}>
             {canEdit
               ? <>Selecting a predecessor auto-<strong>blocks</strong> this activity until it completes, then auto-unblocks. Cycles are prevented.</>
@@ -549,24 +571,27 @@ export default function ActivityRow({
             <div style={{ fontSize: 12, color: theme.colors.ash, marginBottom: canEdit ? 8 : 0 }}>No prerequisites set.</div>
           )}
 
-          {/* Add via dropdown — Manager only */}
+          {/* Add via dropdown — Manager only. Inactive activities are
+              excluded (see addableActivities above) — they'd never
+              complete, so selecting one would deadlock this activity
+              forever. */}
           {canEdit && (
-            otherActivities.filter(a => !currentDeps.has(a.activityId)).length > 0 ? (
+            addableActivities.filter(a => !currentDeps.has(a.activityId)).length > 0 ? (
               <select defaultValue="" onChange={e => { if (e.target.value) { handleAddDep(Number(e.target.value)); e.target.value = ''; } }}
                 style={{ width: '100%', background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '6px 10px', color: theme.colors.onyx, fontSize: 12, fontFamily: 'inherit', outline: 'none' }}>
                 <option value="">+ Add a predecessor activity…</option>
-                {otherActivities.filter(a => !currentDeps.has(a.activityId)).map(a => (
+                {addableActivities.filter(a => !currentDeps.has(a.activityId)).map(a => (
                   <option key={a.activityId} value={a.activityId}>{a.name} ({a.status})</option>
                 ))}
               </select>
             ) : (
-              <div style={{ fontSize: 12, color: theme.colors.ash }}>All activities already added as prerequisites.</div>
+              <div style={{ fontSize: 12, color: theme.colors.ash }}>All eligible activities already added as prerequisites.</div>
             )
           )}
 
           {depError && <div style={{ color: theme.colors.danger, fontSize: 11, marginTop: 6 }}>{depError}</div>}
         </div>
-      )}
+      </FloatingPopover>
 
       {/* ── Body: tasks + add task ── */}
       {open && (
@@ -740,10 +765,10 @@ export default function ActivityRow({
             {!loadingTasks && tasks.length > 0 && (
               <TableHead cols={TASK_GRID_COLS} style={{ marginBottom:2, borderRadius:6, paddingLeft:40, background:`linear-gradient(90deg, ${theme.colors.white} 0%, ${theme.colors.ash}30 100%)` }}>
                 <TableHeadCell>Task</TableHeadCell>
-                <TableHeadCell w={COL.assignee}>Assignee</TableHeadCell>
-                <TableHeadCell w={COL.due}>Due Date</TableHeadCell>
-                <TableHeadCell w={COL.priority}>Priority</TableHeadCell>
-                <TableHeadCell w={COL.status}>Status</TableHeadCell>
+                <TableHeadCell w={COL.assignee} center>Assignee</TableHeadCell>
+                <TableHeadCell w={COL.due} center>Due Date</TableHeadCell>
+                <TableHeadCell w={COL.priority} center>Priority</TableHeadCell>
+                <TableHeadCell w={COL.status} center>Status</TableHeadCell>
               </TableHead>
             )}
             {!loadingTasks && visibleTasks.map(t => (
@@ -754,6 +779,7 @@ export default function ActivityRow({
                 myUserId={myUserId}
                 allTasks={tasks}
                 activityMembers={actMembers}
+                suggestedAssignees={suggestedAssignees}
                 onRefetch={async () => { await fetchTasks(); onRefetchPhase?.(); }}
                 onRefetchProject={onRefetchProject}
               />
