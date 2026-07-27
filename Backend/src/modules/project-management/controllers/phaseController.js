@@ -9,6 +9,7 @@ const create       = async (req,res,next) => { try { res.status(201).json(await 
 const update       = async (req,res,next) => { try { res.json(await svc.updatePhase(req.params.id, req.pmProjectId, req.user.userId, req.body)); } catch(e){next(e);} };
 const remove       = async (req,res,next) => { try { res.json(await svc.deletePhase(req.params.id, req.pmProjectId, req.user.userId)); } catch(e){next(e);} };
 const reactivate   = async (req,res,next) => { try { await svc.reactivatePhase(req.params.id, req.pmProjectId, req.user.userId); res.json({ok:true}); } catch(e){next(e);} };
+const hardDelete   = async (req,res,next) => { try { await svc.hardDeletePhase(req.params.id, req.pmProjectId, req.user.userId); res.json({ok:true}); } catch(e){next(e);} };
 const addDep       = async (req,res,next) => { try { await svc.addPhaseDep(req.params.id, req.body.dependsOnId, req.pmProjectId, req.user.userId); res.json({ok:true}); } catch(e){next(e);} };
 const removeDep    = async (req,res,next) => { try { await svc.removePhaseDep(req.params.id, req.params.depId, req.pmProjectId, req.user.userId); res.json({ok:true}); } catch(e){next(e);} };
 
@@ -21,6 +22,6 @@ const removeMember     = async (req,res,next) => { try { await memberSvc.removeP
 const getStatusHistory = async (req,res,next) => { try { res.json(await svc.getPhaseStatusHistory(req.params.id)); } catch(e){next(e);} };
 
 module.exports = {
-  list, create, update, remove, reactivate, addDep, removeDep, reorder,
+  list, create, update, remove, reactivate, hardDelete, addDep, removeDep, reorder,
   listMembers, addMember, updateMemberRole, removeMember, getStatusHistory,
 };

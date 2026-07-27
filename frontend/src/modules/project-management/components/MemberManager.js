@@ -5,14 +5,26 @@ import { projectApi, phaseApi, activityApi } from '../api/projectApi';
 import UserSearchInput from './UserSearchInput';
 import { IconBtnDanger, BtnPrimary } from '../styles/shared.styles';
 
-const ROLES = ['Manager', 'Member', 'Viewer'];
-const ENTITY_ROLES = ['Manager', 'Employee', 'Viewer']; // Phase / Activity vocabulary (API value)
-// The backend calls the mid-tier Phase/Activity role "Employee" while the
-// Project-level equivalent is "Member" — same meaning ("can work on things
-// here"), different word, which read as two different concepts to a user
-// scanning both levels side by side. Displaying both as "Member" (only
-// at the label layer, API values are untouched) removes that confusion.
-const ENTITY_ROLE_LABEL = { Manager: 'Manager', Employee: 'Member', Viewer: 'Viewer' };
+// 'Member' is no longer an addable project-level role and 'Employee' is no
+// longer an addable Phase/Activity role — regular team members get access
+// by being assigned to a Task (see ParticipantsPanel.js's Assignees
+// section), not by being pre-added as a generic "member" anywhere. Viewer
+// is project-only now (never settable at Phase/Activity — read-only access
+// is project-wide by design, not scoped per level). These lists are what's
+// OFFERABLE going forward; a legacy 'Member'/'Employee' row from before
+// this redesign can still exist in the data and is handled by
+// rolesForCurrentValue() below so it displays correctly without being a
+// choice you can newly pick.
+const PROJECT_ADD_ROLES = ['Manager', 'Viewer'];
+const ENTITY_ADD_ROLES  = ['Manager']; // Phase / Activity — Manager only now
+// rolesForCurrentValue — the select's option list needs to include
+// whatever the row's CURRENT value already is, even if it's a legacy value
+// no longer offered for NEW selections, or the browser shows nothing
+// selected while the real value silently stays the old one.
+function rolesForCurrentValue(allowed, current) {
+  return current && !allowed.includes(current) ? [...allowed, current] : allowed;
+}
+const ENTITY_ROLE_LABEL = { Manager: 'Manager', Employee: 'Member (legacy)', Viewer: 'Viewer (legacy — now project-only)' };
 
 // Mirrors roleService.js's RANK exactly — used only to detect when an
 // explicit Phase/Activity override is a DOWNGRADE from someone's project
@@ -72,7 +84,7 @@ function EntityRolePill({ role, isManager, onChange, downgrade }) {
       style={{ fontSize: 9, fontWeight: 700, color: pill.color, background: pill.bg, border: downgrade ? `1px solid ${theme.colors.danger}` : 'none', borderRadius: 8, padding: '1px 5px', fontFamily: 'inherit', outline: 'none' }}
     >
       <option value="">Inherited</option>
-      {ENTITY_ROLES.map(r => <option key={r} value={r}>{ENTITY_ROLE_LABEL[r]}</option>)}
+      {rolesForCurrentValue(ENTITY_ADD_ROLES, role).map(r => <option key={r} value={r}>{ENTITY_ROLE_LABEL[r]}</option>)}
     </select>
   );
 }
@@ -154,7 +166,7 @@ function MemberCard({ m, onRoleChange, onRemove, roleError, isManager, isSelf, o
           <div style={{ display: 'flex', gap: 6, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
             <select value={m.projectRole} onChange={e => onRoleChange(m.userId, e.target.value)}
               style={{ background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, color: theme.colors.onyx, fontSize: 11, padding: '3px 7px', fontFamily: 'inherit', outline: 'none' }}>
-              {ROLES.map(r => <option key={r}>{r}</option>)}
+              {rolesForCurrentValue(PROJECT_ADD_ROLES, m.projectRole).map(r => <option key={r}>{r === 'Member' ? 'Member (legacy)' : r}</option>)}
             </select>
             {/* Removing yourself would strip your own access with no way
                 back in (short of another Manager re-adding you) — only an
@@ -232,7 +244,7 @@ export default function MemberManager({ projectId, members: flatMembers = [], my
   const [hierarchy,  setHierarchy]  = useState(null);
   const [loading,    setLoading]    = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
-  const [addRole,    setAddRole]    = useState('Member');
+  const [addRole,    setAddRole]    = useState('Manager');
   const [saving,     setSaving]     = useState(false);
   const [addError,   setAddError]   = useState('');
   const [roleErrors, setRoleErrors] = useState({});
@@ -313,19 +325,26 @@ export default function MemberManager({ projectId, members: flatMembers = [], my
   return (
     <div>
       {/* ── How access works — always visible, not buried inside the
-          manager-only Add panel, since read-only members (Employees/
-          Viewers) need to understand their own access just as much. ── */}
+          manager-only Add panel, since Viewers need to understand their own
+          access just as much. ── */}
       <div style={{
         background: 'rgba(46, 40, 35, 0.05)', border: `1px solid ${theme.colors.border}`,
         borderRadius: theme.radius.lg, padding: '12px 16px', marginBottom: 16, fontSize: 11.5, color: theme.colors.ash, lineHeight: 1.6,
       }}>
-        <strong style={{ color: theme.colors.onyx }}>How project access works:</strong> everyone below has a <strong>project-wide role</strong> (Manager, Member, or Viewer) that applies everywhere in this project by default.
-        A member can additionally be given a <strong>different role at a specific Phase or Activity</strong> (expand their card below to set one) — that override applies only there, everything else stays at their project-wide role ("Inherited").
+        <strong style={{ color: theme.colors.onyx }}>How project access works:</strong> there are only three ways to have access to a project — no generic
+        "member" list to manage.
         <br/>
-        <span style={{ display: 'inline-flex', gap: 12, marginTop: 6, flexWrap: 'wrap' }}>
-          <span><strong>Manager</strong> — full management (add/remove members, edit, delete)</span>
-          <span><strong>Member</strong> — can work on tasks assigned to them</span>
-          <span><strong>Viewer</strong> — read-only</span>
+        <span style={{ display: 'block', marginTop: 6 }}>
+          <strong>1. Managers</strong> — added below, or directly on any Phase/Activity card. A Project Manager has full authority everywhere under
+          this project by default; a Phase or Activity can be given its own separate Manager instead (someone who doesn't need to manage the whole project).
+        </span>
+        <span style={{ display: 'block', marginTop: 4 }}>
+          <strong>2. Assignees</strong> — anyone assigned to a Task shows up automatically as an Assignee on that Task's Activity, and rolls up to its
+          Phase and this project too. This is how regular team members get access — there's nothing to add here for them, assign them a task instead.
+        </span>
+        <span style={{ display: 'block', marginTop: 4 }}>
+          <strong>3. Viewers</strong> — read-only, added only here at the project level (not per Phase/Activity), and visible everywhere under this
+          project once added.
         </span>
       </div>
 
@@ -336,17 +355,20 @@ export default function MemberManager({ projectId, members: flatMembers = [], my
           borderRadius: theme.radius.lg, padding: '16px 18px', marginBottom: 20,
         }}>
           <div style={{ fontSize: 11, color: theme.colors.ash, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 3, fontWeight: 600 }}>
-            Add a project-wide member
+            Add a Manager or Viewer
           </div>
           <div style={{ fontSize: 11, color: theme.colors.ash, marginBottom: 10 }}>
-            Gives them access to this entire project at the role you pick. To scope someone to just one Phase or Activity instead, add them here as a Viewer (or skip this) and set their role directly on that Phase/Activity card below.
+            <strong>Manager</strong> gets full management of this project (and, by default, everything under it — every Phase and Activity, unless a
+            different explicit Manager is set there). <strong>Viewer</strong> gets read-only access everywhere in this project. To scope someone to just
+            one Phase or Activity as a Manager instead, don't add them here — use that Phase/Activity's own "+ Participants" panel. Regular team members
+            don't get added here at all — they get access by being assigned to a Task, which shows up automatically as an Assignee wherever that task lives.
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
             <UserSearchInput selectedUser={selectedUser} onSelect={setSelectedUser}
               excludeUserIds={existingIds} placeholder="Search all users by name or email…" />
             <select value={addRole} onChange={e => setAddRole(e.target.value)}
               style={{ background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, color: theme.colors.onyx, fontSize: 12, padding: '7px 10px', flexShrink: 0, fontFamily: 'inherit', outline: 'none' }}>
-              {ROLES.map(r => <option key={r}>{r}</option>)}
+              {PROJECT_ADD_ROLES.map(r => <option key={r}>{r}</option>)}
             </select>
             <BtnPrimary onClick={handleAdd} disabled={saving || !selectedUser} style={{ flexShrink: 0 }}>
               {saving ? '…' : '+ Add'}

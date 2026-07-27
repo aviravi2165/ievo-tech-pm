@@ -35,6 +35,9 @@ router.use(authenticate);
 router.patch('/:id',        resolveActivityProject, requireRole('Member'),  ctrl.update);
 router.delete('/:id',       resolveActivityProject, requireEntityRole('activity', 'Manager'), ctrl.remove);
 router.patch('/:id/reactivate', resolveActivityProject, requireEntityRole('activity', 'Manager'), ctrl.reactivate);
+// Permanent delete — only succeeds once the Activity is already deactivated
+// and empty of live Tasks (see activityService.hardDeleteActivity).
+router.delete('/:id/hard', resolveActivityProject, requireEntityRole('activity', 'Manager'), ctrl.hardDelete);
 
 // ── Activity members ──────────────────────────────────────────────────────────
 // Read: anyone with at least Viewer-level effective access to the activity.

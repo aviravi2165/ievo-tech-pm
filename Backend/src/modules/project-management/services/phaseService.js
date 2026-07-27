@@ -94,17 +94,24 @@ async function createPhase(projectId, userId, body) {
 
   const pool = await getPool();
 
-  // A Phase can't be planned to start before its own Project — mirrors the
-  // same rule enforced for Task→Activity (see taskService.createTask) and
-  // the Timeline's visual clamp-to-parent, but at the write boundary so the
-  // underlying data can't drift out of sync with what the UI shows.
-  if (plannedStart) {
+  // A Phase can't be planned to start before, or end after, its own
+  // Project — mirrors the same rule enforced for Task→Activity (see
+  // taskService.createTask) and the Timeline's visual clamp-to-parent, but
+  // at the write boundary so the underlying data can't drift out of sync
+  // with what the UI shows. BUG-028: the end-date half of this didn't
+  // exist — same gap as Activity→Phase one level down.
+  if (plannedStart || plannedEnd) {
     const projResult = await pool.request()
       .input('projectId', sql.Int, projectId)
-      .query(`SELECT planned_start AS plannedStart FROM pm_projects WHERE project_id=@projectId`);
+      .query(`SELECT planned_start AS plannedStart, planned_end AS plannedEnd FROM pm_projects WHERE project_id=@projectId`);
     const projectStart = projResult.recordset[0]?.plannedStart;
-    if (projectStart && new Date(plannedStart) < new Date(projectStart)) {
+    const projectEnd   = projResult.recordset[0]?.plannedEnd;
+    if (plannedStart && projectStart && new Date(plannedStart) < new Date(projectStart)) {
       const e = new Error("Phase start date can't be before its Project's planned start date.");
+      e.statusCode = 400; throw e;
+    }
+    if (plannedEnd && projectEnd && new Date(plannedEnd) > new Date(projectEnd)) {
+      const e = new Error("Phase end date can't be after its Project's planned end date.");
       e.statusCode = 400; throw e;
     }
   }
@@ -224,6 +231,45 @@ async function reactivatePhase(phaseId, projectId, userId) {
   await audit.log({ entityType:'phase', entityId:phaseId, projectId, userId, action:'reactivated' });
 }
 
+// Permanent removal — only reachable once the Phase is already deactivated
+// (same two-step convention as the messages module's thread hard-delete:
+// disable first, delete second) AND already empty of live Activities.
+// Deliberately does NOT cascade is_deleted=1 down through children in one
+// shot the way an earlier draft of this function did — that raw approach
+// bypasses resolveUnblocked (dependencyService.js), which is exactly the
+// bug deleteTask's own comment above warns about: an entity's row going to
+// is_deleted=1 without resolveUnblocked running first leaves anything that
+// depended on it permanently stuck Blocked, since resolveUnblocked's own
+// query requires is_deleted=0 to even see the dependency. Requiring the
+// Phase to already be empty means each descendant went through its OWN
+// hardDeleteActivity/hardDeleteTask call first, which already ran the
+// correct unblock sequence at that level — nothing here needs to redo it.
+async function hardDeletePhase(phaseId, projectId, userId) {
+  const pool = await getPool();
+  const phaseResult = await pool.request()
+    .input('phaseId', sql.Int, phaseId)
+    .query(`SELECT is_active AS isActive FROM pm_phases WHERE phase_id=@phaseId AND is_deleted=0`);
+  const phase = phaseResult.recordset[0];
+  if (!phase) { const e = new Error('Phase not found'); e.statusCode = 404; throw e; }
+  if (phase.isActive) {
+    const e = new Error('Deactivate this Phase before permanently deleting it.');
+    e.statusCode = 409; throw e;
+  }
+
+  const childResult = await pool.request()
+    .input('phaseId', sql.Int, phaseId)
+    .query(`SELECT COUNT(*) AS cnt FROM pm_activities WHERE phase_id=@phaseId AND is_deleted=0`);
+  if (childResult.recordset[0].cnt > 0) {
+    const e = new Error('Permanently delete every Activity under this Phase first.');
+    e.statusCode = 409; throw e;
+  }
+
+  await pool.request()
+    .input('phaseId', sql.Int, phaseId)
+    .query(`UPDATE pm_phases SET is_deleted=1 WHERE phase_id=@phaseId`);
+  await audit.log({ entityType:'phase', entityId:phaseId, projectId, userId, action:'hard_deleted' });
+}
+
 async function addPhaseDep(phaseId, dependsOnId, projectId, userId) {
   // Dependencies are same-level only: a phase may only depend on another
   // phase within its own Project (mirrors what the UI's dropdown already
@@ -310,4 +356,4 @@ async function getPhaseStatusHistory(phaseId) {
   return audit.getStatusHistory('phase', phaseId);
 }
 
-module.exports = { getPhasesForProject, createPhase, updatePhase, deletePhase, reactivatePhase, addPhaseDep, removePhaseDep, reorderPhase, getPhaseStatusHistory };
+module.exports = { getPhasesForProject, createPhase, updatePhase, deletePhase, reactivatePhase, hardDeletePhase, addPhaseDep, removePhaseDep, reorderPhase, getPhaseStatusHistory };

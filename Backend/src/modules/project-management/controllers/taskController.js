@@ -9,6 +9,7 @@ const update         = async (req,res,next) => { try { res.json(await svc.update
 const updateStatus   = async (req,res,next) => { try { res.json(await svc.updateTaskStatus(req.params.id, req.pmProjectId, req.user.userId, req.body.status, req.projectRole, req.user.userType === 'admin')); } catch(e){next(e);} };
 const remove         = async (req,res,next) => { try { res.json(await svc.deleteTask(req.params.id, req.pmProjectId, req.user.userId)); } catch(e){next(e);} };
 const reactivate      = async (req,res,next) => { try { await svc.reactivateTask(req.params.id, req.pmProjectId, req.user.userId); res.json({ok:true}); } catch(e){next(e);} };
+const hardDelete      = async (req,res,next) => { try { await svc.hardDeleteTask(req.params.id, req.pmProjectId, req.user.userId); res.json({ok:true}); } catch(e){next(e);} };
 
 // Assignment requests — post-creation assign
 const sendRequest    = async (req,res,next) => { try { await svc.sendAssignmentRequest(req.params.id, req.body.userId, req.pmProjectId, req.user.userId); res.json({ok:true}); } catch(e){next(e);} };
@@ -36,4 +37,4 @@ const removeDep      = async (req,res,next) => { try { await svc.removeTaskDep(r
 
 const getStatusHistory = async (req,res,next) => { try { res.json(await svc.getTaskStatusHistory(req.params.id)); } catch(e){next(e);} };
 
-module.exports = { list, create, update, updateStatus, remove, reactivate, sendRequest, removeRequest, acceptRequest, declineRequest, getMyRequests, getMyActiveTasks, getMyRecentAudit, getChat, addDep, removeDep, getAdminRecentAudit, getAdminOverdueBlocked, getMyProjectsOverdueBlocked, getStatusHistory };
+module.exports = { list, create, update, updateStatus, remove, reactivate, hardDelete, sendRequest, removeRequest, acceptRequest, declineRequest, getMyRequests, getMyActiveTasks, getMyRecentAudit, getChat, addDep, removeDep, getAdminRecentAudit, getAdminOverdueBlocked, getMyProjectsOverdueBlocked, getStatusHistory };

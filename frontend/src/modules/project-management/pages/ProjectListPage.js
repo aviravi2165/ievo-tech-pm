@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useTheme } from '@emotion/react';
 import { FolderKanban, RotateCcw, Trash2 } from 'lucide-react';
 import StatusBadge, { InactiveBadge } from '../components/StatusBadge';
@@ -10,6 +10,8 @@ import { projectApi } from '../api/projectApi';
 import { Table, TableHead, TableHeadCell, ListRow, Cell } from '../styles/Table.styles';
 import { Topbar, TopbarH1, TopbarActions, List } from '../styles/ProjectListPage.styles';
 import { Wrap, Empty, BtnPrimary, BtnGhost, DepBadge, IconBtn, IconBtnDanger } from '../styles/shared.styles';
+import { useSortFilter } from '../../shared/hooks/useSortFilter';
+import { SortSelect, FilterSelect, FilterToggle } from '../../shared/components/TableControls';
 
 const COL = { owner: 105, dates: 140, progress: 100, status: 96, role: 74, actions: 28 };
 
@@ -25,13 +27,14 @@ function fmtDate(d) {
   return dt.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-export default function ProjectListPage({ onSelectProject }) {
+export default function ProjectListPage({ onSelectProject, onOpenTemplates }) {
   const theme = useTheme();
   const {
     projects, total, search, setSearch, hasMore,
     loading, loadingMore, error, loadMore, refetch,
   } = useProjectList();
   const [showCreate, setShowCreate] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
 
   // Debounced search box — types locally into its own state, only pushes
   // to the hook (which fires a new server request) after a short pause.
@@ -45,6 +48,43 @@ export default function ProjectListPage({ onSelectProject }) {
   }, [searchInput, setSearch]);
 
   const isAdminView = projects.some(p => p.isSuperAdmin);
+
+  // UI-only sort/filter over the currently-loaded page of projects — the
+  // server-side "Load more" pagination above is unaffected; sorting/
+  // filtering just reorders/narrows whatever's already been fetched.
+  const statusOptions = useMemo(() => (
+    [...new Set(projects.map(p => p.status).filter(Boolean))].map(s => ({ value: s, label: s }))
+  ), [projects]);
+
+  const { items: visibleProjects, sortKey, setSortKey, sortDir, toggleSortDir, filters, setFilter } = useSortFilter(projects, {
+    sorters: {
+      name:     (a, b) => (a.name || '').localeCompare(b.name || ''),
+      start:    (a, b) => (parseLocalDate(a.plannedStart)?.getTime() ?? 0) - (parseLocalDate(b.plannedStart)?.getTime() ?? 0),
+      end:      (a, b) => (parseLocalDate(a.plannedEnd)?.getTime() ?? 0) - (parseLocalDate(b.plannedEnd)?.getTime() ?? 0),
+      progress: (a, b) => (a.progress || 0) - (b.progress || 0),
+    },
+    defaultSortKey: 'name',
+    filters: {
+      status:  { predicate: (p, v) => p.status === v },
+      active:  { predicate: (p, v) => (v === 'active' ? p.isActive !== false : p.isActive === false) },
+      overdue: { predicate: (p) => !!p.isOverdue },
+    },
+  });
+
+  // Lets a dashboard tile ("Overdue Projects") land here PRE-filtered
+  // instead of dumping the user on the unfiltered list and making them
+  // re-apply it — dispatched by AdminDashboard.js's navigateToProjectsFiltered,
+  // same 'CustomEvent + small delay' pattern as onSelectProject/open-project.
+  useEffect(() => {
+    const handler = (e) => {
+      const detail = e.detail || {};
+      if (detail.overdue) setFilter('overdue', true);
+      if (detail.status)  setFilter('status', detail.status);
+      if (detail.active)  setFilter('active', detail.active);
+    };
+    window.addEventListener('pm-project-list-filter', handler);
+    return () => window.removeEventListener('pm-project-list-filter', handler);
+  }, [setFilter]);
 
   const handleDelete = async (e, project) => {
     e.stopPropagation();
@@ -82,25 +122,54 @@ export default function ProjectListPage({ onSelectProject }) {
             fontSize: 12, width: 200, outline: 'none',
           }}
         />
+        <FilterToggle open={showFilters} onClick={() => setShowFilters(v => !v)}
+          active={!!(filters.status || filters.active || filters.overdue)} title="Sort & filter projects" />
         <TopbarActions>
+          <BtnGhost onClick={onOpenTemplates}>Templates</BtnGhost>
           <BtnPrimary onClick={() => setShowCreate(true)}>
             + New Project
           </BtnPrimary>
         </TopbarActions>
       </Topbar>
 
+      {showFilters && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 20px', background: theme.colors.greige, borderBottom: `1px solid ${theme.colors.border}` }}>
+          <SortSelect
+            value={sortKey} onChange={setSortKey} dir={sortDir} onToggleDir={toggleSortDir}
+            options={[
+              { value: 'name', label: 'Name' },
+              { value: 'start', label: 'Start Date' },
+              { value: 'end', label: 'End Date' },
+              { value: 'progress', label: 'Progress' },
+            ]}
+          />
+          <FilterSelect
+            placeholder="All statuses" value={filters.status} onChange={v => setFilter('status', v)}
+            options={statusOptions}
+          />
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: theme.colors.ash, cursor: 'pointer' }}>
+            <input type="checkbox" checked={filters.active === 'active'} onChange={e => setFilter('active', e.target.checked ? 'active' : null)} />
+            Active only
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: theme.colors.ash, cursor: 'pointer' }}>
+            <input type="checkbox" checked={!!filters.overdue} onChange={e => setFilter('overdue', e.target.checked || null)} />
+            Overdue only
+          </label>
+        </div>
+      )}
+
       <List>
         {loading && <div style={{ color: theme.colors.ash, fontSize: 13 }}>Loading projects…</div>}
         {error   && <div style={{ color: theme.colors.danger, fontSize: 13 }}>{error}</div>}
 
-        {!loading && !projects.length && (
+        {!loading && !visibleProjects.length && (
           <Empty>
             <FolderKanban size={44} strokeWidth={1.2} />
-            <p>{search ? 'No projects match your search.' : 'No projects yet. Create one to get started.'}</p>
+            <p>{search ? 'No projects match your search.' : projects.length ? 'No projects match the current filters.' : 'No projects yet. Create one to get started.'}</p>
           </Empty>
         )}
 
-        {projects.length > 0 && (
+        {visibleProjects.length > 0 && (
           <Table>
             {/* cols is required now that TableHead is CSS Grid — without
                 it, this defaulted silently to the Phase/Activity table's
@@ -122,7 +191,7 @@ export default function ProjectListPage({ onSelectProject }) {
               <TableHeadCell />
             </TableHead>
 
-            {projects.map(p => (
+            {visibleProjects.map(p => (
               <ListRow key={p.projectId} onClick={() => onSelectProject(p.projectId)} style={{ minHeight: 36, padding: '5px 10px' }}>
                 {/* Explicit 2-line stack (title row, meta row) rather than
                     packing name+badges+meta all inline on one line — an

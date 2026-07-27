@@ -7,6 +7,7 @@ const create        = async (req,res,next) => { try { res.status(201).json(await
 const update        = async (req,res,next) => { try { res.json(await svc.updateActivity(req.params.id, req.pmProjectId, req.user.userId, req.body)); } catch(e){next(e);} };
 const remove        = async (req,res,next) => { try { res.json(await svc.deleteActivity(req.params.id, req.pmProjectId, req.user.userId)); } catch(e){next(e);} };
 const reactivate     = async (req,res,next) => { try { await svc.reactivateActivity(req.params.id, req.pmProjectId, req.user.userId); res.json({ok:true}); } catch(e){next(e);} };
+const hardDelete     = async (req,res,next) => { try { await svc.hardDeleteActivity(req.params.id, req.pmProjectId, req.user.userId); res.json({ok:true}); } catch(e){next(e);} };
 
 // Members — role can be 'Manager' | 'Employee' | 'Viewer' (default 'Employee')
 const listMembers      = async (req,res,next) => { try { res.json(await svc.getActivityMembers(req.params.id)); } catch(e){next(e);} };
@@ -30,4 +31,4 @@ const removeDep     = async (req,res,next) => { try { await svc.removeActivityDe
 
 const getStatusHistory = async (req,res,next) => { try { res.json(await svc.getActivityStatusHistory(req.params.id)); } catch(e){next(e);} };
 
-module.exports = { list, create, update, remove, reactivate, listMembers, addMember, updateMemberRole, removeMember, getChat, addDep, removeDep, getStatusHistory };
+module.exports = { list, create, update, remove, reactivate, hardDelete, listMembers, addMember, updateMemberRole, removeMember, getChat, addDep, removeDep, getStatusHistory };

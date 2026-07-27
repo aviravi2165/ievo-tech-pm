@@ -1068,4 +1068,82 @@ CREATE TABLE dbo.org_group_members (
     CONSTRAINT FK_org_group_members_group FOREIGN KEY (org_group_id) REFERENCES dbo.org_groups(org_group_id) ON DELETE CASCADE,
     CONSTRAINT FK_org_group_members_user  FOREIGN KEY (user_id)      REFERENCES dbo.auth_users(user_id) ON DELETE CASCADE
 );
+
+-- ────────────────────────────────────────────────────────────
+-- pm_project_templates / pm_template_phases / pm_template_activities /
+-- pm_template_tasks — admin-curated reusable project skeletons (Phase →
+-- Activity → Task), instantiated into a real project on demand.
+--
+-- No absolute dates exist yet at the template level — every phase/activity
+-- stores its start as an OFFSET (in days) from its own parent's computed
+-- start, plus a duration (or, for tasks, a due-offset from the activity's
+-- start). templateService.instantiateTemplate resolves these to real
+-- planned_start/planned_end values once a real project (with a real
+-- planned_start) exists, then creates each row through the SAME
+-- phaseService.createPhase / activityService.createActivity /
+-- taskService.createTask functions every other code path uses — so all
+-- existing validation/audit/status logic runs unchanged; these four tables
+-- only ever describe the blueprint, never touch pm_phases/pm_activities/
+-- pm_tasks directly.
+--
+-- No dependency junction tables here (unlike pm_phase_deps/pm_activity_deps/
+-- pm_task_deps) — template dependencies are a plain sequential chain
+-- encoded entirely by display_order (each item auto-depends on the
+-- previous one in the same parent, wired via the real addPhaseDep/
+-- addActivityDep functions at instantiation time). A project created from
+-- a template is a completely ordinary, fully-editable project afterward —
+-- arbitrary dependency graphs are edited there, same as any project today.
+-- ────────────────────────────────────────────────────────────
+IF OBJECT_ID('dbo.pm_project_templates', 'U') IS NULL
+CREATE TABLE dbo.pm_project_templates (
+    template_id  int IDENTITY(1,1) NOT NULL,
+    name         nvarchar(200) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    description  nvarchar(max) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+    category     nvarchar(50)  COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+    is_active    bit DEFAULT 1 NOT NULL,
+    created_by   uniqueidentifier NOT NULL,
+    created_at   datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    modified_at  datetimeoffset NULL,
+    CONSTRAINT PK_pm_project_templates PRIMARY KEY (template_id),
+    CONSTRAINT FK_pm_project_templates_createdby FOREIGN KEY (created_by) REFERENCES dbo.auth_users(user_id)
+);
+
+IF OBJECT_ID('dbo.pm_template_phases', 'U') IS NULL
+CREATE TABLE dbo.pm_template_phases (
+    template_phase_id int IDENTITY(1,1) NOT NULL,
+    template_id       int NOT NULL,
+    name              nvarchar(200) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    description       nvarchar(max) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+    display_order     int NOT NULL DEFAULT 0,
+    start_offset_days int NOT NULL DEFAULT 0,
+    duration_days     int NOT NULL,
+    CONSTRAINT PK_pm_template_phases PRIMARY KEY (template_phase_id),
+    CONSTRAINT FK_pm_template_phases_template FOREIGN KEY (template_id) REFERENCES dbo.pm_project_templates(template_id) ON DELETE CASCADE
+);
+
+IF OBJECT_ID('dbo.pm_template_activities', 'U') IS NULL
+CREATE TABLE dbo.pm_template_activities (
+    template_activity_id int IDENTITY(1,1) NOT NULL,
+    template_phase_id    int NOT NULL,
+    name                  nvarchar(200) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    description           nvarchar(max) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+    display_order         int NOT NULL DEFAULT 0,
+    start_offset_days     int NOT NULL DEFAULT 0,
+    duration_days         int NOT NULL,
+    CONSTRAINT PK_pm_template_activities PRIMARY KEY (template_activity_id),
+    CONSTRAINT FK_pm_template_activities_phase FOREIGN KEY (template_phase_id) REFERENCES dbo.pm_template_phases(template_phase_id) ON DELETE CASCADE
+);
+
+IF OBJECT_ID('dbo.pm_template_tasks', 'U') IS NULL
+CREATE TABLE dbo.pm_template_tasks (
+    template_task_id     int IDENTITY(1,1) NOT NULL,
+    template_activity_id int NOT NULL,
+    name                  nvarchar(200) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    description           nvarchar(max) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+    display_order         int NOT NULL DEFAULT 0,
+    priority              varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT 'Medium' NOT NULL,
+    due_offset_days       int NOT NULL,
+    CONSTRAINT PK_pm_template_tasks PRIMARY KEY (template_task_id),
+    CONSTRAINT FK_pm_template_tasks_activity FOREIGN KEY (template_activity_id) REFERENCES dbo.pm_template_activities(template_activity_id) ON DELETE CASCADE
+);
  

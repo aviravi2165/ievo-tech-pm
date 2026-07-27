@@ -227,17 +227,25 @@ async function createActivity(phaseId, projectId, userId, body) {
 
   const pool = await getPool();
 
-  // An Activity can't be planned to start before its own Phase — same rule
-  // as Phase→Project (phaseService.createPhase) and Task→Activity
-  // (taskService.createTask), enforced here too so the chain holds at
-  // every level, not just the ends.
-  if (plannedStart) {
+  // An Activity can't be planned to start before its own Phase, or end
+  // after it — same containment rule as Phase→Project
+  // (phaseService.createPhase) and Task→Activity (taskService.createTask),
+  // enforced here too so the chain holds at every level, not just the
+  // starts. BUG-028: the end-date half of this check didn't exist at all
+  // — an activity dated entirely after its phase ended was silently
+  // accepted (201) with no validation error.
+  if (plannedStart || plannedEnd) {
     const phaseResult = await pool.request()
       .input('phaseId', sql.Int, phaseId)
-      .query(`SELECT planned_start AS plannedStart FROM pm_phases WHERE phase_id=@phaseId`);
+      .query(`SELECT planned_start AS plannedStart, planned_end AS plannedEnd FROM pm_phases WHERE phase_id=@phaseId`);
     const phaseStart = phaseResult.recordset[0]?.plannedStart;
-    if (phaseStart && new Date(plannedStart) < new Date(phaseStart)) {
+    const phaseEnd   = phaseResult.recordset[0]?.plannedEnd;
+    if (plannedStart && phaseStart && new Date(plannedStart) < new Date(phaseStart)) {
       const e = new Error("Activity start date can't be before its Phase's planned start date.");
+      e.statusCode = 400; throw e;
+    }
+    if (plannedEnd && phaseEnd && new Date(plannedEnd) > new Date(phaseEnd)) {
+      const e = new Error("Activity end date can't be after its Phase's planned end date.");
       e.statusCode = 400; throw e;
     }
   }
@@ -410,6 +418,39 @@ async function reactivateActivity(activityId, projectId, userId) {
   await audit.log({ entityType:'activity', entityId:activityId, projectId, userId, action:'reactivated' });
 }
 
+// Permanent removal — only reachable once the Activity is already
+// deactivated AND already empty of live Tasks. Does not cascade
+// is_deleted=1 down to Tasks in one shot — see phaseService.hardDeletePhase's
+// comment for why: that bypasses resolveUnblocked and can leave anything
+// depending on a Task permanently Blocked. Each Task must be individually
+// hard-deleted first (via taskService.hardDeleteTask, which correctly runs
+// resolveUnblocked before flipping is_deleted).
+async function hardDeleteActivity(activityId, projectId, userId) {
+  const pool = await getPool();
+  const activityResult = await pool.request()
+    .input('activityId', sql.Int, activityId)
+    .query(`SELECT is_active AS isActive FROM pm_activities WHERE activity_id=@activityId AND is_deleted=0`);
+  const activity = activityResult.recordset[0];
+  if (!activity) { const e = new Error('Activity not found'); e.statusCode = 404; throw e; }
+  if (activity.isActive) {
+    const e = new Error('Deactivate this Activity before permanently deleting it.');
+    e.statusCode = 409; throw e;
+  }
+
+  const childResult = await pool.request()
+    .input('activityId', sql.Int, activityId)
+    .query(`SELECT COUNT(*) AS cnt FROM pm_tasks WHERE activity_id=@activityId AND is_deleted=0`);
+  if (childResult.recordset[0].cnt > 0) {
+    const e = new Error('Permanently delete every Task under this Activity first.');
+    e.statusCode = 409; throw e;
+  }
+
+  await pool.request()
+    .input('activityId', sql.Int, activityId)
+    .query(`UPDATE pm_activities SET is_deleted=1 WHERE activity_id=@activityId`);
+  await audit.log({ entityType:'activity', entityId:activityId, projectId, userId, action:'hard_deleted' });
+}
+
 // ── Activity dependencies ─────────────────────────────────────────────────────
 
 async function addActivityDep(activityId, dependsOnId, projectId, userId) {
@@ -508,6 +549,7 @@ module.exports = {
   updateActivity,
   deleteActivity,
   reactivateActivity,
+  hardDeleteActivity,
   addActivityDep,
   removeActivityDep,
   getActivityStatusHistory,

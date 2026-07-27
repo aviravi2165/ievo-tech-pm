@@ -11,9 +11,16 @@ export const Root = styled.div`
   font-family: 'DM Sans', 'Segoe UI', system-ui, sans-serif;
 `;
 
+// BUG-016: width was a bare 42% with no ceiling, so it kept growing with
+// the viewport — on a wide desktop screen the sign-in card (centered
+// within the remaining 58%-wide FormPanel) ended up sitting well right of
+// the actual screen center instead of looking centered. max-width caps how
+// far Brand can grow; past that point FormPanel absorbs the extra space
+// (flex:1), pulling the card back toward the true center of the page.
 export const Brand = styled.div`
   width: 42%;
   min-width: 320px;
+  max-width: 560px;
   background: ${p => p.theme.colors.onyx};
   border-right: 3px solid ${p => p.theme.colors.copper};
   display: flex;

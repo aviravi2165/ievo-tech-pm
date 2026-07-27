@@ -32,6 +32,9 @@ export const phaseApi = {
   update:         (id, body)        => axiosInstance.patch(`/api/phases/${id}`, body).then(r => r.data),
   delete:         (id)              => axiosInstance.delete(`/api/phases/${id}`).then(r => r.data),
   reactivate:     (id)              => axiosInstance.patch(`/api/phases/${id}/reactivate`).then(r => r.data),
+  // Permanent delete — only succeeds once already deactivated and empty of
+  // live Activities (see phaseService.hardDeletePhase).
+  hardDelete:     (id)              => axiosInstance.delete(`/api/phases/${id}/hard`).then(r => r.data),
   addDep:         (id, dependsOnId) => axiosInstance.post(`/api/phases/${id}/dependencies`, { dependsOnId }).then(r => r.data),
   removeDep:      (id, depId)       => axiosInstance.delete(`/api/phases/${id}/dependencies/${depId}`).then(r => r.data),
   reorder:        (id, direction)   => axiosInstance.patch(`/api/phases/${id}/reorder`, { direction }).then(r => r.data),
@@ -52,6 +55,9 @@ export const activityApi = {
   update:         (id, body)        => axiosInstance.patch(`/api/activities/${id}`, body).then(r => r.data),
   delete:         (id)              => axiosInstance.delete(`/api/activities/${id}`).then(r => r.data),
   reactivate:     (id)              => axiosInstance.patch(`/api/activities/${id}/reactivate`).then(r => r.data),
+  // Permanent delete — only succeeds once already deactivated and empty of
+  // live Tasks (see activityService.hardDeleteActivity).
+  hardDelete:     (id)              => axiosInstance.delete(`/api/activities/${id}/hard`).then(r => r.data),
   addDep:         (id, dependsOnId) => axiosInstance.post(`/api/activities/${id}/dependencies`, { dependsOnId }).then(r => r.data),
   removeDep:      (id, depId)       => axiosInstance.delete(`/api/activities/${id}/dependencies/${depId}`).then(r => r.data),
   // Activity members — role: 'Manager' | 'Employee' | 'Viewer'
@@ -70,6 +76,9 @@ export const taskApi = {
   updateStatus: (id, status)    => axiosInstance.patch(`/api/tasks/${id}/status`, { status }).then(r => r.data),
   delete:       (id)            => axiosInstance.delete(`/api/tasks/${id}`).then(r => r.data),
   reactivate:   (id)            => axiosInstance.patch(`/api/tasks/${id}/reactivate`).then(r => r.data),
+  // Permanent delete — only succeeds once already deactivated (see
+  // taskService.hardDeleteTask).
+  hardDelete:   (id)            => axiosInstance.delete(`/api/tasks/${id}/hard`).then(r => r.data),
   addDep:       (id, dependsOnId) => axiosInstance.post(`/api/tasks/${id}/dependencies`, { dependsOnId }).then(r => r.data),
   removeDep:    (id, depId)     => axiosInstance.delete(`/api/tasks/${id}/dependencies/${depId}`).then(r => r.data),
   // Assignment requests (replaces old direct addAssignee)
@@ -97,6 +106,31 @@ export const requestApi = {
   // Respond to a specific request
   accept:          (requestId)   => axiosInstance.post(`/api/tasks/requests/${requestId}/accept`).then(r => r.data),
   decline:         (requestId)   => axiosInstance.post(`/api/tasks/requests/${requestId}/decline`).then(r => r.data),
+};
+
+// Project templates — admin-curated skeleton structures (Phase → Activity →
+// Task) users can instantiate into a real project. Read routes are open to
+// any logged-in user; write routes (create/update/delete template or its
+// phases/activities/tasks) are admin-only server-side.
+export const templateApi = {
+  list:               ()                => axiosInstance.get('/api/templates').then(r => r.data),
+  get:                (id)               => axiosInstance.get(`/api/templates/${id}`).then(r => r.data),
+  create:             (body)             => axiosInstance.post('/api/templates', body).then(r => r.data),
+  update:             (id, body)         => axiosInstance.patch(`/api/templates/${id}`, body).then(r => r.data),
+  delete:             (id)               => axiosInstance.delete(`/api/templates/${id}`).then(r => r.data),
+  // Creates a real project from a template — body is the same
+  // {name, description, plannedStart, plannedEnd, deptId} projectApi.create
+  // takes; the caller becomes the new project's Manager.
+  instantiate:        (id, body)         => axiosInstance.post(`/api/templates/${id}/instantiate`, body).then(r => r.data),
+  addPhase:           (templateId, body) => axiosInstance.post(`/api/templates/${templateId}/phases`, body).then(r => r.data),
+  updatePhase:        (phaseId, body)    => axiosInstance.patch(`/api/templates/phases/${phaseId}`, body).then(r => r.data),
+  removePhase:        (phaseId)          => axiosInstance.delete(`/api/templates/phases/${phaseId}`).then(r => r.data),
+  addActivity:        (phaseId, body)    => axiosInstance.post(`/api/templates/phases/${phaseId}/activities`, body).then(r => r.data),
+  updateActivity:     (activityId, body) => axiosInstance.patch(`/api/templates/activities/${activityId}`, body).then(r => r.data),
+  removeActivity:     (activityId)       => axiosInstance.delete(`/api/templates/activities/${activityId}`).then(r => r.data),
+  addTask:            (activityId, body) => axiosInstance.post(`/api/templates/activities/${activityId}/tasks`, body).then(r => r.data),
+  updateTask:         (taskId, body)     => axiosInstance.patch(`/api/templates/tasks/${taskId}`, body).then(r => r.data),
+  removeTask:         (taskId)           => axiosInstance.delete(`/api/templates/tasks/${taskId}`).then(r => r.data),
 };
 
 // User search — used by MemberManager and assignee picker

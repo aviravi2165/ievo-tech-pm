@@ -30,6 +30,32 @@ function ModuleIconSvg({ id }) {
           <path d="M16 2v4M8 2v4M3 10h18" />
         </svg>
       );
+    // BUG-020: inventory/hr/reports all fell through to the same generic
+    // "?" circle below — indistinguishable from one another. Each now gets
+    // its own recognizable icon instead.
+    case 'inventory':
+      return (
+        <svg {...common}>
+          <path d="M21 8l-9-5-9 5 9 5 9-5z" />
+          <path d="M3 8v8l9 5 9-5V8" />
+          <path d="M12 13v8" />
+        </svg>
+      );
+    case 'hr':
+      return (
+        <svg {...common}>
+          <circle cx="9" cy="7" r="4" />
+          <path d="M2 21v-2a4 4 0 014-4h6a4 4 0 014 4v2" />
+          <path d="M17 3.5a4 4 0 010 7.6M22 21v-2a4 4 0 00-3-3.9" />
+        </svg>
+      );
+    case 'reports':
+      return (
+        <svg {...common}>
+          <path d="M4 20V10M11 20V4M18 20v-7" />
+          <path d="M2 20h20" />
+        </svg>
+      );
     default:
       return (
         <svg {...common}>

@@ -72,11 +72,17 @@ export const ModuleName = styled.span`
   white-space: nowrap;
 `;
 
-// font-size:0 hides the text visually while keeping it in the DOM for a11y.
+// BUG-020: this used to be font-size:0 — a 5px dot with "Soon" only in the
+// DOM for a11y, never visible on screen. Now an actual visible pill, same
+// as every other badge in the app.
 export const ModuleBadge = styled.span`
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: ${p => p.theme.colors.espresso};
-  font-size: 0;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: ${p => p.theme.colors.espresso}1f;
+  color: ${p => p.theme.colors.espresso};
+  font-size: 7.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  line-height: 1.5;
 `;

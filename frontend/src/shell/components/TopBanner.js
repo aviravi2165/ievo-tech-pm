@@ -17,15 +17,20 @@ export default function TopBanner({ currentUser, activeModule }) {
 
   // User management (admin only)
   const [userMgmtOpen, setUserMgmtOpen] = useState(false);
+  const [userMgmtTab,  setUserMgmtTab]  = useState('register');
 
   const isAdmin = currentUser?.userType === 'admin';
 
-  // Opened programmatically by the admin dashboard's "Manage Users" shortcut
-  // (this modal's open state is otherwise only reachable via the topbar
-  // icon button below) — mirrors the existing 'open-messages-panel' pattern.
+  // Opened programmatically by the admin dashboard's "Manage Users"/"Active
+  // Users" shortcuts (this modal's open state is otherwise only reachable
+  // via the topbar icon button below) — mirrors the existing
+  // 'open-messages-panel' pattern. detail.tab lets the caller land on the
+  // Edit Users tab directly instead of always defaulting to Register —
+  // previously every dashboard shortcut opened Register regardless of what
+  // it was actually labeled ("Active Users", "Manage Users →").
   useEffect(() => {
     if (!isAdmin) return;
-    const open = () => setUserMgmtOpen(true);
+    const open = (e) => { setUserMgmtTab(e.detail?.tab || 'register'); setUserMgmtOpen(true); };
     window.addEventListener('open-user-management', open);
     return () => window.removeEventListener('open-user-management', open);
   }, [isAdmin]);
@@ -55,7 +60,7 @@ export default function TopBanner({ currentUser, activeModule }) {
 
         {/* ── User Management button — admin only ───────────────────────────── */}
         {isAdmin && (
-          <UserMgmtBtn type="button" onClick={() => setUserMgmtOpen(true)} title="User Management">
+          <UserMgmtBtn type="button" onClick={() => { setUserMgmtTab('manage'); setUserMgmtOpen(true); }} title="User Management">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="2">
               <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
@@ -104,7 +109,7 @@ export default function TopBanner({ currentUser, activeModule }) {
       {/* User Management Modal */}
       <UserManagementModal
         open={userMgmtOpen}
-        defaultTab="register"
+        defaultTab={userMgmtTab}
         onClose={() => setUserMgmtOpen(false)}
       />
     </Topbar>

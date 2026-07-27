@@ -5,7 +5,7 @@ const audit = require('./auditService');
 const { resolveUnblocked, blockIfNeeded, isBlocked, isInactive, reevaluateDependents } = require('./dependencyService');
 const { getActivityProgress, getPhaseProgress, deriveStatus, getActivityHasActiveWork, getPhaseHasActiveWork } = require('./progressService');
 const { getEffectiveActivityRole } = require('./roleService');
-const { broadcastStatusChanged, broadcastUnblocked, broadcastAssignmentRequest, broadcastProgressUpdated } = require('../socket/socketHandler');
+const { broadcastStatusChanged, broadcastUnblocked, broadcastAssignmentRequest, broadcastAssignmentResponded, broadcastProgressUpdated } = require('../socket/socketHandler');
 const pmChatService = require('./pmChatService');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -201,6 +201,14 @@ async function createTask(activityId, projectId, userId, body) {
 
     // Send an assignment request to each chosen assignee
     for (const uid of [...new Set(assigneeIds)]) {
+      // (task_id, assignee_id) is UNIQUE, so a brand-new task can only ever
+      // hit the INSERT branch here — but this same guard pattern is reused
+      // for re-requests too (see sendAssignmentRequest below), where a
+      // previously Declined row already exists. Re-opening it back to
+      // Pending instead of a bare "IF NOT EXISTS ... INSERT" silent no-op
+      // is what actually lets a Manager re-request someone who declined —
+      // previously that no-op meant nothing happened, no error, no new
+      // Pending card, with no indication to the Manager that it failed.
       await req()
         .input('taskId',      sql.Int,              task.taskId)
         .input('assigneeId',  sql.UniqueIdentifier, uid)
@@ -212,6 +220,10 @@ async function createTask(activityId, projectId, userId, body) {
           )
             INSERT INTO pm_task_assignment_requests (task_id, assignee_id, requested_by)
             VALUES (@taskId, @assigneeId, @requestedBy)
+          ELSE
+            UPDATE pm_task_assignment_requests
+            SET status = 'Pending', requested_by = @requestedBy, created_at = sysdatetimeoffset(), responded_at = NULL
+            WHERE task_id = @taskId AND assignee_id = @assigneeId AND status = 'Declined'
         `);
     }
   });
@@ -300,6 +312,23 @@ async function acceptAssignmentRequest(requestId, userId) {
   if (!row) { const e = new Error('Request not found'); e.statusCode = 404; throw e; }
   if (row.status !== 'Pending') { const e = new Error('Request already responded to'); e.statusCode = 400; throw e; }
 
+  // BUG: a user with an INHERITED higher role (project/phase Manager, with
+  // no explicit row of their own on this specific activity) who accepts a
+  // task here used to get an explicit 'Employee' row inserted below purely
+  // because "no existing row" — but per roleService's inheritance rule, an
+  // explicit activity-level row always wins over an inherited one,
+  // regardless of rank. That silently downgraded a project Manager to
+  // Employee on that one activity, hiding every Manager-only action
+  // (Delete/Chat/Members/Prerequisites) there while leaving every sibling
+  // activity (where they never happened to accept a task) unaffected —
+  // exactly the "identical activities, one has no icons" report. Only
+  // insert the Employee row when the user has no effective access at all
+  // yet (nothing to preserve); skip it entirely if they already have
+  // Employee-or-above access via inheritance so there's no explicit row to
+  // shadow their real (possibly higher) role.
+  const effectiveBefore = await getEffectiveActivityRole(userId, row.activity_id);
+  const needsExplicitRow = !effectiveBefore.role || effectiveBefore.role === 'Viewer';
+
   await withTransaction(async (req) => {
     // Mark request as Accepted
     await req()
@@ -320,15 +349,23 @@ async function acceptAssignmentRequest(requestId, userId) {
           INSERT INTO pm_task_assignees (task_id, user_id) VALUES (@taskId, @userId)
       `);
 
-    // Auto-add accepted user to the activity's member roster (default Employee —
-    // never downgrades if they already hold a higher role there)
-    await req()
-      .input('activityId', sql.Int,              row.activity_id)
-      .input('userId',     sql.UniqueIdentifier, userId)
-      .query(`
-        IF NOT EXISTS (SELECT 1 FROM pm_activity_members WHERE activity_id = @activityId AND user_id = @userId)
-          INSERT INTO pm_activity_members (activity_id, user_id, role) VALUES (@activityId, @userId, 'Employee')
-      `);
+    // Auto-add accepted user to the activity's member roster as Employee —
+    // but only when they had no effective access there at all (see
+    // effectiveBefore/needsExplicitRow above). Skipping this for anyone who
+    // already has Employee-or-above access via phase/project inheritance is
+    // what actually prevents the downgrade the old comment claimed to
+    // already handle — an explicit row here always wins over an inherited
+    // one, so creating one for someone who's already a Manager by
+    // inheritance would silently demote them on this one activity.
+    if (needsExplicitRow) {
+      await req()
+        .input('activityId', sql.Int,              row.activity_id)
+        .input('userId',     sql.UniqueIdentifier, userId)
+        .query(`
+          IF NOT EXISTS (SELECT 1 FROM pm_activity_members WHERE activity_id = @activityId AND user_id = @userId)
+            INSERT INTO pm_activity_members (activity_id, user_id, role) VALUES (@activityId, @userId, 'Employee')
+        `);
+    }
 
     // Also ensure they're in pm_members as a project Member (so they can see the project)
     await req()
@@ -345,6 +382,11 @@ async function acceptAssignmentRequest(requestId, userId) {
   // Fully auto-sync: they now show up in both the task's Shared chat and
   // the Activity's group chat.
   await pmChatService.onAssigneeAccepted(row.task_id, row.activity_id);
+
+  // Live-update anyone viewing this project (e.g. a Manager with TaskItem's
+  // assignee panel open) instead of requiring their next manual refetch —
+  // accept/decline previously emitted no socket event at all.
+  broadcastAssignmentResponded(row.project_id, { taskId: row.task_id, assigneeId: userId, status: 'Accepted' });
 
   return { requestId, status: 'Accepted', taskId: row.task_id };
 }
@@ -379,6 +421,7 @@ async function declineAssignmentRequest(requestId, userId) {
 
   await audit.log({ entityType:'task', entityId:row.task_id, projectId:row.project_id, userId, action:'assignment_declined' });
   // Nothing to sync in chat — a Pending request was never added to either thread.
+  broadcastAssignmentResponded(row.project_id, { taskId: row.task_id, assigneeId: userId, status: 'Declined' });
   return { requestId, status: 'Declined', taskId: row.task_id };
 }
 
@@ -690,6 +733,36 @@ async function reactivateTask(taskId, projectId, userId) {
   await audit.log({ entityType:'task', entityId:taskId, projectId, userId, action:'reactivated' });
 }
 
+// Permanent removal — only reachable once the Task is already deactivated
+// (same two-step convention as the messages module's thread hard-delete).
+// This is the first place a Task's is_deleted ever gets set — see the
+// comment above deleteTask for why a Task's row was never allowed to
+// disappear before: resolveUnblocked's own query requires is_deleted=0 to
+// even see a dependency, so anything still depending on this task has to
+// be unblocked BEFORE the row goes away, not after. Deactivation already
+// ran resolveUnblocked once (in deleteTask); this re-runs it defensively
+// right before the flip in case a new dependency was added since then.
+async function hardDeleteTask(taskId, projectId, userId) {
+  const pool = await getPool();
+  const taskResult = await pool.request()
+    .input('taskId', sql.Int, taskId)
+    .query(`SELECT is_active AS isActive FROM pm_tasks WHERE task_id=@taskId AND is_deleted=0`);
+  const task = taskResult.recordset[0];
+  if (!task) { const e = new Error('Task not found'); e.statusCode = 404; throw e; }
+  if (task.isActive) {
+    const e = new Error('Deactivate this Task before permanently deleting it.');
+    e.statusCode = 409; throw e;
+  }
+
+  const unblockedIds = await resolveUnblocked(() => pool.request(), 'task', taskId);
+  if (unblockedIds.length) broadcastUnblocked(projectId, { entityType:'task', unblockedIds });
+
+  await pool.request()
+    .input('taskId', sql.Int, taskId)
+    .query(`UPDATE pm_tasks SET is_deleted=1 WHERE task_id=@taskId`);
+  await audit.log({ entityType:'task', entityId:taskId, projectId, userId, action:'hard_deleted' });
+}
+
 // ── Send a new assignment request (post-creation) ─────────────────────────────
 
 async function sendAssignmentRequest(taskId, targetUserId, projectId, actorUserId) {
@@ -711,6 +784,10 @@ async function sendAssignmentRequest(taskId, targetUserId, projectId, actorUserI
     e.statusCode = 400; throw e;
   }
 
+  // Re-opens a previously Declined row back to Pending instead of silently
+  // no-opping — see createTask's identical fix above for why (a Manager
+  // re-requesting someone who declined must actually produce a new Pending
+  // card, not nothing).
   await pool.request()
     .input('taskId',      sql.Int,              taskId)
     .input('assigneeId',  sql.UniqueIdentifier, targetUserId)
@@ -719,6 +796,10 @@ async function sendAssignmentRequest(taskId, targetUserId, projectId, actorUserI
       IF NOT EXISTS (SELECT 1 FROM pm_task_assignment_requests WHERE task_id=@taskId AND assignee_id=@assigneeId)
         INSERT INTO pm_task_assignment_requests (task_id, assignee_id, requested_by)
         VALUES (@taskId, @assigneeId, @requestedBy)
+      ELSE
+        UPDATE pm_task_assignment_requests
+        SET status = 'Pending', requested_by = @requestedBy, created_at = sysdatetimeoffset(), responded_at = NULL
+        WHERE task_id = @taskId AND assignee_id = @assigneeId AND status = 'Declined'
     `);
 
   broadcastAssignmentRequest(targetUserId, { taskId, taskName: taskResult.recordset[0].name, projectId });
@@ -955,6 +1036,7 @@ module.exports = {
   updateTaskStatus,
   deleteTask,
   reactivateTask,
+  hardDeleteTask,
   sendAssignmentRequest,
   removeAssignmentRequest,
   getMyAssignmentRequests,

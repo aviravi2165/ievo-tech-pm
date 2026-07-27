@@ -93,10 +93,16 @@ export const OverdueText = styled.span`
   font-size: 11px; color: ${t(th => th.colors.danger)}; font-weight: 600;
 `;
 
+// Tinted (not solid-fill) — was a solid red pill, which read as a fresh
+// alarm on every single row once several late items were visible at once
+// ("everything is red so nothing stands out"). DueSoonTag right below
+// already used a tinted background; this now matches that same quieter
+// treatment so a late item is legible as a fact, not a klaxon repeated
+// down the whole page.
 export const LateTag = styled.span`
   display: inline-flex; align-items: center; gap: 3px;
-  font-size: 10px; font-weight: 700; color: ${t(th => th.colors.onAccent)};
-  background: ${t(th => th.colors.danger)};
+  font-size: 10px; font-weight: 700; color: ${t(th => th.colors.danger)};
+  background: ${t(th => th.colors.danger)}1f;
   border-radius: 10px; padding: 1px 7px; letter-spacing: 0.03em;
 `;
 

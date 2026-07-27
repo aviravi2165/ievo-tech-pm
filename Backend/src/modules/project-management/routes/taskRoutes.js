@@ -57,6 +57,9 @@ router.post('/requests/:requestId/decline', ctrl.declineRequest);
 router.patch('/:id',        resolveTaskProject, requireRole('Member'),  ctrl.update);
 router.delete('/:id',       resolveTaskProject, requireEntityRole('activity', 'Manager'), ctrl.remove);
 router.patch('/:id/reactivate', resolveTaskProject, requireEntityRole('activity', 'Manager'), ctrl.reactivate);
+// Permanent delete — only succeeds once the Task is already deactivated
+// (see taskService.hardDeleteTask).
+router.delete('/:id/hard', resolveTaskProject, requireEntityRole('activity', 'Manager'), ctrl.hardDelete);
 router.patch('/:id/status', resolveTaskProject, requireRole('Member'),  ctrl.updateStatus);
 
 // ── Task chat ────────────────────────────────────────────────────────────────

@@ -125,6 +125,18 @@ function fmtFull(d) {
 // place).
 const MIN_LABEL_PX = 34;
 
+// BUG-033: SegmentBar already gated its status label on MIN_LABEL_PX (see
+// above), but the plain single-color fallback bar (rendered whenever a
+// row has no status-history segments yet) rendered its status text
+// unconditionally — a narrow bar truncated e.g. "To Do" down to an
+// unreadable "T…" fragment instead of just not showing text at all. The
+// bar already carries a `title` tooltip with the full status, so hiding
+// the label below this width just relies on that instead of forcing an
+// illegible fragment onto the bar itself.
+function widthPxOf(pctWidth, contentWidth) {
+  return (parseFloat(pctWidth) / 100) * contentWidth;
+}
+
 // Distinct, progressively lighter background per nesting level — Phase
 // (section header) gets the strongest tint, Activity a step lighter, Task
 // (leaf row) plain white — so the hierarchy reads at a glance from the row
@@ -336,10 +348,16 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
   // (a task bar starting to the left of its own activity's bar). Clamp the
   // RENDERED range to the parent's range when the parent has dates; the
   // underlying data is untouched, this only affects where the bar is drawn.
+  // BUG-034: returns { start, end, clamped } instead of a bare [start, end]
+  // tuple — clamped is true whenever the rendered range differs from the
+  // child's REAL planned dates, so callers can show that visually (a
+  // striped/dashed edge + a tooltip explaining the real dates) instead of
+  // silently drawing the bar at the parent's edge with no indication
+  // anything was adjusted. The clamp itself is unchanged.
   const clampToParent = (start, end, parentStart, parentEnd) => {
     const s = parseDate(start);
     const e = parseDate(end);
-    if (!s || !e) return [start, end];
+    if (!s || !e) return { start, end, clamped: false };
     const ps = parseDate(parentStart);
     const pe = parseDate(parentEnd);
     let cs = s, ce = e;
@@ -361,7 +379,8 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
       if (ps && cs < ps) cs = ps;
       if (pe && ce > pe) ce = pe;
     }
-    return [toISODateStr(cs), toISODateStr(ce)];
+    const clamped = cs.getTime() !== s.getTime() || ce.getTime() !== e.getTime();
+    return { start: toISODateStr(cs), end: toISODateStr(ce), clamped };
   };
 
   // Returns left% and width% for a bar, or null if no dates
@@ -589,9 +608,11 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
                             style={{ ...barStyle(row.phase.plannedStart, phaseEnd), background: statusBarColor(theme, row.phase.status) }}
                             title={`${row.phase.name} · ${row.phase.status}`}
                           >
-                            <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: 10, display: 'block' }}>
-                              {row.phase.status}
-                            </span>
+                            {widthPxOf(barStyle(row.phase.plannedStart, phaseEnd).width, contentWidth) >= MIN_LABEL_PX && (
+                              <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: 10, display: 'block' }}>
+                                {row.phase.status}
+                              </span>
+                            )}
                           </TlBar>
                         );
                       })()
@@ -619,12 +640,23 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
                   const parentPhaseEnd = row.parentPhase
                     ? effectiveEndDate(row.parentPhase.plannedEnd, row.parentPhase.status, DONE_PHASE_ACTIVITY, phaseHistory[row.parentPhase.phaseId])
                     : undefined;
-                  const [actStart, actEnd] = clampToParent(
+                  const { start: actStart, end: actEnd, clamped: actClamped } = clampToParent(
                     row.act.plannedStart, actOwnEnd,
                     row.parentPhase?.plannedStart, parentPhaseEnd
                   );
                   return (
-                    <TlBarWrap style={{ width: contentWidth, height: ROW_H }}>
+                    <TlBarWrap
+                      style={{
+                        width: contentWidth, height: ROW_H,
+                        // BUG-034: previously an out-of-range activity's bar
+                        // just silently snapped to the phase's edge with
+                        // nothing showing that its real dates differ. This
+                        // dashed outline + tooltip makes that visible instead
+                        // of hidden.
+                        ...(actClamped ? { outline: `2px dashed ${theme.colors.warning}`, outlineOffset: 1 } : null),
+                      }}
+                      title={actClamped ? `Actual planned dates (${fmtFull(row.act.plannedStart)} → ${fmtFull(actOwnEnd)}) fall outside parent Phase "${row.parentPhase?.name}" — bar shown clamped to the Phase's range.` : undefined}
+                    >
                       {barStyle(actStart, actEnd) ? (
                         (() => {
                           const segs = segmentedBarStyle(actStart, actEnd, actHistory[row.act.activityId]);
@@ -633,9 +665,11 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
                               style={{ ...barStyle(actStart, actEnd), background: statusBarColor(theme, row.act.status) }}
                               title={`${row.act.name} · ${row.act.status}`}
                             >
-                              <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: 10, display: 'block' }}>
-                                {row.act.status}
-                              </span>
+                              {widthPxOf(barStyle(actStart, actEnd).width, contentWidth) >= MIN_LABEL_PX && (
+                                <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: 10, display: 'block' }}>
+                                  {row.act.status}
+                                </span>
+                              )}
                             </TlBar>
                           );
                         })()
@@ -669,7 +703,7 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
                   const parentActEnd = row.parentAct
                     ? effectiveEndDate(row.parentAct.plannedEnd, row.parentAct.status, DONE_PHASE_ACTIVITY, actHistory[row.parentAct.activityId])
                     : undefined;
-                  const [taskStart, taskEnd] = clampToParent(
+                  const { start: taskStart, end: taskEnd, clamped: taskClamped } = clampToParent(
                     rawStart, rawEnd,
                     row.parentAct?.plannedStart, parentActEnd
                   );
@@ -687,12 +721,20 @@ export default function TimelineView({ phases = [], projectStart, projectEnd }) 
                   );
                   const segs = segmentedBarStyle(taskStart, taskEnd, taskHistory[row.task.taskId]);
                   return (
-                    <TlBarWrap style={{ width: contentWidth, height: ROW_H }}>
+                    <TlBarWrap
+                      style={{
+                        width: contentWidth, height: ROW_H,
+                        ...(taskClamped ? { outline: `2px dashed ${theme.colors.warning}`, outlineOffset: 1 } : null),
+                      }}
+                      title={taskClamped ? `Actual dates (${fmtFull(rawStart)} → ${fmtFull(rawEnd)}) fall outside parent Activity "${row.parentAct?.name}" — bar shown clamped to the Activity's range.` : undefined}
+                    >
                       {segs ? <SegmentBar segments={segs} theme={theme} contentWidth={contentWidth} /> : (
                         <TlBar style={{ ...bStyle, background: statusBarColor(theme, row.task.status) }} title={`${row.task.name} · ${row.task.status}`}>
-                          <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: 10, display: 'block' }}>
-                            {row.task.status}
-                          </span>
+                          {widthPxOf(bStyle.width, contentWidth) >= MIN_LABEL_PX && (
+                            <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: 10, display: 'block' }}>
+                              {row.task.status}
+                            </span>
+                          )}
                         </TlBar>
                       )}
                     </TlBarWrap>
