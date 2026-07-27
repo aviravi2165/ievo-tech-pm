@@ -64,7 +64,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
   // Project-wide Assignees roll-up — reuses the same fetch-everything hook
   // the Analytics tab uses, gated on the popover actually being open so it
   // doesn't fetch every project's full task tree on every page load.
-  const { tasks: allProjectTasks, loading: assigneesLoading } = useProjectAnalytics(phases, membersOpen);
+  const { tasks: allProjectTasks, loading: assigneesLoading } = useProjectAnalytics(project?.projectId, phases, membersOpen);
 
   const myRole  = project?.myRole;
   const canEdit = myRole === 'Manager';
@@ -174,41 +174,42 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
           <ChevronLeft size={18} strokeWidth={2.2} />
         </IconBtn>
 
+        {/* Plain block stack (title / owner+dates / description), not a
+            single flex-wrap row — a width:100% flex item was relied on to
+            force the description onto its own line below Owner, but that's
+            fragile: it only reliably wraps when the item is the actual next
+            flex sibling with no competing basis, and broke down into the
+            description rendering inline with (or visually ahead of) the
+            Owner/dates line depending on available width. Three explicit
+            blocks stack top-to-bottom unconditionally, no wrap ambiguity. */}
         <div style={{ flex:'1 1 220px', minWidth:180 }}>
           <DetailTitle title={project.name}>{project.name}</DetailTitle>
           <DetailSub>
             {project.ownerName && <span>Owner: {project.ownerName}</span>}
             {project.plannedStart && <span> · {fmtDate(project.plannedStart)} → {fmtDate(project.plannedEnd)}</span>}
             {project.isOverdue && <> · <OverdueBadge /></>}
-            {/* width:100% forces this onto its own line below the owner/date
-                row (was previously just another wrapping flex item, so on
-                wide screens with room to spare it rendered inline right
-                after the dates with no separator — visually blending into
-                the title above it, which read as the project name being
-                shown twice). Italic + "Description:" label make it
-                unambiguous that this is a separate field, not more title. */}
-            {project.description && (
-              // Previously always clamped to 1 line with no way to read the
-              // rest — no tooltip, no expand, the text was just gone.
-              // Click-to-expand toggles the clamp off entirely; native
-              // title= tooltip covers the collapsed state too, so the full
-              // text is reachable either way.
-              <div
-                onClick={() => setDescExpanded(v => !v)}
-                title={descExpanded ? 'Click to collapse' : project.description}
-                style={{
-                  width:'100%', marginTop:3, color:theme.colors.ash, fontSize:11, fontStyle:'italic',
-                  maxWidth:600, cursor:'pointer',
-                  ...(descExpanded
-                    ? { whiteSpace:'pre-wrap' }
-                    : { overflow:'hidden', display:'-webkit-box', WebkitLineClamp:1, WebkitBoxOrient:'vertical' }),
-                }}
-              >
-                <span style={{ fontStyle:'normal', fontWeight:600, marginRight:4 }}>Description:</span>
-                {project.description}
-              </div>
-            )}
           </DetailSub>
+          {project.description && (
+            // Previously always clamped to 1 line with no way to read the
+            // rest — no tooltip, no expand, the text was just gone.
+            // Click-to-expand toggles the clamp off entirely; native
+            // title= tooltip covers the collapsed state too, so the full
+            // text is reachable either way.
+            <div
+              onClick={() => setDescExpanded(v => !v)}
+              title={descExpanded ? 'Click to collapse' : project.description}
+              style={{
+                marginTop:3, color:theme.colors.ash, fontSize:11, fontStyle:'italic',
+                maxWidth:600, cursor:'pointer',
+                ...(descExpanded
+                  ? { whiteSpace:'pre-wrap' }
+                  : { overflow:'hidden', display:'-webkit-box', WebkitLineClamp:1, WebkitBoxOrient:'vertical' }),
+              }}
+            >
+              <span style={{ fontStyle:'normal', fontWeight:600, marginRight:4 }}>Description:</span>
+              {project.description}
+            </div>
+          )}
         </div>
 
         <div style={{ display:'flex', alignItems:'center', gap:12, flexShrink:0 }}>

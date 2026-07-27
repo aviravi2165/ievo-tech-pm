@@ -2,6 +2,10 @@ import api from './axiosInstance';
 
 export const groupApi = {
   list:         ()                          => api.get('/api/groups').then(r => r.data),
+  // Super-admin single-group fetch — for PM Activity chat groups, which are
+  // deliberately excluded from list() (see Backend groupService.js), but
+  // still need to be reachable when ChatButton.js opens one directly.
+  getOneForAdmin: (groupId)                 => api.get(`/api/groups/${groupId}/admin`).then(r => r.data),
   create:       (groupName, description)    => api.post('/api/groups', { groupName, description }).then(r => r.data),
   update:       (groupId, data)             => api.patch(`/api/groups/${groupId}`, data).then(r => r.data),
 

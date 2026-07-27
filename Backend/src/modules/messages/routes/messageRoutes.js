@@ -27,6 +27,7 @@ router.delete('/:conversationId/participants/:userId',       messageController.r
 // below, and uses a distinct '/threads' prefix so it never collides with
 // the numeric-id routes for conversations or messages.
 router.get('/threads',                                       messageController.listThreadsForAdmin);
+router.get('/threads/:conversationId',                       messageController.getOneThreadForAdmin);
 router.patch('/threads/:conversationId/disable',              messageController.disableThread);
 router.patch('/threads/:conversationId/enable',                messageController.enableThread);
 router.post('/threads/:conversationId/hide',                   messageController.hideThread);

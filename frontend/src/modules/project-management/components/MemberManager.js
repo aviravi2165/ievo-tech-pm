@@ -324,28 +324,24 @@ export default function MemberManager({ projectId, members: flatMembers = [], my
 
   return (
     <div>
-      {/* ── How access works — always visible, not buried inside the
-          manager-only Add panel, since Viewers need to understand their own
-          access just as much. ── */}
-      <div style={{
-        background: 'rgba(46, 40, 35, 0.05)', border: `1px solid ${theme.colors.border}`,
-        borderRadius: theme.radius.lg, padding: '12px 16px', marginBottom: 16, fontSize: 11.5, color: theme.colors.ash, lineHeight: 1.6,
-      }}>
-        <strong style={{ color: theme.colors.onyx }}>How project access works:</strong> there are only three ways to have access to a project — no generic
-        "member" list to manage.
-        <br/>
-        <span style={{ display: 'block', marginTop: 6 }}>
-          <strong>1. Managers</strong> — added below, or directly on any Phase/Activity card. A Project Manager has full authority everywhere under
-          this project by default; a Phase or Activity can be given its own separate Manager instead (someone who doesn't need to manage the whole project).
-        </span>
-        <span style={{ display: 'block', marginTop: 4 }}>
-          <strong>2. Assignees</strong> — anyone assigned to a Task shows up automatically as an Assignee on that Task's Activity, and rolls up to its
-          Phase and this project too. This is how regular team members get access — there's nothing to add here for them, assign them a task instead.
-        </span>
-        <span style={{ display: 'block', marginTop: 4 }}>
-          <strong>3. Viewers</strong> — read-only, added only here at the project level (not per Phase/Activity), and visible everywhere under this
-          project once added.
-        </span>
+      {/* ── Access legend — one line, tooltips carry the detail instead of
+          paragraphs. Still always visible (not manager-only) since Viewers
+          need to read their own access too, but it no longer dominates the
+          top of the tab. ── */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginBottom: 16, fontSize: 11 }}>
+        {[
+          { role: 'Manager', hint: 'Full control of this project and everything under it, unless a Phase/Activity has its own Manager set.' },
+          { role: 'Assignee', hint: 'Automatic — anyone assigned to a Task appears here, rolled up to its Activity/Phase/Project. Add via a Task, not here.' },
+          { role: 'Viewer', hint: 'Read-only, project-wide. Added only at project level.' },
+        ].map(({ role, hint }) => {
+          const pill = rolePill(theme, role);
+          return (
+            <span key={role} title={hint} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'help' }}>
+              <span style={{ fontWeight: 700, color: pill.color, background: pill.bg, borderRadius: 8, padding: '1px 8px', fontSize: 10 }}>{role}</span>
+              <span style={{ color: theme.colors.ash }}>{hint.split('.')[0]}</span>
+            </span>
+          );
+        })}
       </div>
 
       {/* ── Add member panel (manager only) ── */}
@@ -354,14 +350,8 @@ export default function MemberManager({ projectId, members: flatMembers = [], my
           background: theme.colors.mid, border: `1px solid ${theme.colors.border}`,
           borderRadius: theme.radius.lg, padding: '16px 18px', marginBottom: 20,
         }}>
-          <div style={{ fontSize: 11, color: theme.colors.ash, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 3, fontWeight: 600 }}>
+          <div style={{ fontSize: 11, color: theme.colors.ash, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 10, fontWeight: 600 }}>
             Add a Manager or Viewer
-          </div>
-          <div style={{ fontSize: 11, color: theme.colors.ash, marginBottom: 10 }}>
-            <strong>Manager</strong> gets full management of this project (and, by default, everything under it — every Phase and Activity, unless a
-            different explicit Manager is set there). <strong>Viewer</strong> gets read-only access everywhere in this project. To scope someone to just
-            one Phase or Activity as a Manager instead, don't add them here — use that Phase/Activity's own "+ Participants" panel. Regular team members
-            don't get added here at all — they get access by being assigned to a Task, which shows up automatically as an Assignee wherever that task lives.
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
             <UserSearchInput selectedUser={selectedUser} onSelect={setSelectedUser}

@@ -176,9 +176,29 @@ async function getStatusHistory(entityType, entityId) {
   }));
 }
 
+// Real per-task completion timestamps for a project, derived from the
+// existing 'status_changed' audit trail (taskService.updateTaskStatus logs
+// one on every transition) rather than a proxy field like due_date — a task
+// can go Complete more than once (reopened, then completed again), so this
+// takes the MOST RECENT such transition per task as "when it actually
+// finished" for analytics purposes.
+async function getTaskCompletionDates(projectId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('projectId', sql.Int, projectId)
+    .query(`
+      SELECT entity_id AS taskId, MAX(changed_at) AS completedAt
+      FROM pm_audit_log
+      WHERE project_id = @projectId AND entity_type = 'task'
+        AND action = 'status_changed' AND field_changed = 'status' AND new_value = 'Complete'
+      GROUP BY entity_id
+    `);
+  return result.recordset;
+}
+
 module.exports = {
   log, getProjectAudit, getMyRecentAudit, getAllRecentAudit,
-  recordStatusIfChanged, getStatusHistory,
+  recordStatusIfChanged, getStatusHistory, getTaskCompletionDates,
 };
 
 async function getMyRecentAudit(userId) {

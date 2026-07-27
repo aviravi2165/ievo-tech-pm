@@ -131,6 +131,22 @@ export default function TeamManager({ isAdmin = false }) {
     } catch { /* silent — row stays, user can retry */ }
   };
 
+  // useSortFilter (and the list it sorts) must run on every render, not
+  // just the list-view branch below — it was previously called only after
+  // the `if (managingTeam) return` early return, so opening a team's detail
+  // view skipped this hook entirely and changed the hook count between
+  // renders (React: "Rendered fewer hooks than expected"), crashing the
+  // whole Messages panel. Hooks can never be conditional; only their
+  // result's usage can be.
+  const searched = teams.filter(t => !search.trim() || t.name.toLowerCase().includes(search.toLowerCase()));
+  const { items: filtered, sortKey, setSortKey, sortDir, toggleSortDir } = useSortFilter(searched, {
+    sorters: {
+      name:    (a, b) => a.name.localeCompare(b.name),
+      members: (a, b) => (a.memberCount || 0) - (b.memberCount || 0),
+    },
+    defaultSortKey: 'name',
+  });
+
   // ── Detail / manage view ──────────────────────────────────────────────────
   if (managingTeam) {
     return (
@@ -211,15 +227,6 @@ export default function TeamManager({ isAdmin = false }) {
   }
 
   // ── List view ──────────────────────────────────────────────────────────────
-  const searched = teams.filter(t => !search.trim() || t.name.toLowerCase().includes(search.toLowerCase()));
-  const { items: filtered, sortKey, setSortKey, sortDir, toggleSortDir } = useSortFilter(searched, {
-    sorters: {
-      name:    (a, b) => a.name.localeCompare(b.name),
-      members: (a, b) => (a.memberCount || 0) - (b.memberCount || 0),
-    },
-    defaultSortKey: 'name',
-  });
-
   return (
     <Sidebar as="section" data-msg-sidebar style={{ flex: 1 }}>
       <SidebarHeader>

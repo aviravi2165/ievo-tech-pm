@@ -18,6 +18,12 @@ router.delete('/:id', setProjectId, requireRole('Manager'), ctrl.remove);
 router.post('/:id/reactivate', setProjectId, requireRole('Manager'), ctrl.reactivate);
 router.get('/:id/audit', setProjectId, requireRole('Manager'), ctrl.getAudit);
 
+// Actual per-task completion timestamps (from the status-change audit
+// trail) — feeds the Analytics tab's "Completions" chart, which used to
+// bucket by dueDate as a proxy since no real timestamp was available.
+// Read-only, same access as /audit's underlying data, no role gate needed.
+router.get('/:id/task-completions', ctrl.getTaskCompletions);
+
 // Members — flat list and hierarchical breakdown (for Members tab)
 router.get('/:id/members',            ctrl.getMembers);
 router.get('/:id/members/hierarchy',  ctrl.getMembersHierarchy);   // ← NEW: phase→activity tree

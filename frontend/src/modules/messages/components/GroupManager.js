@@ -183,23 +183,50 @@ export default function GroupManager({
   // groups/threads may not have finished loading yet when the request first
   // arrives, so this re-runs whenever either list updates until it finds a
   // match, rather than only firing once on mount.
+  //
+  // PM Activity/Task threads are deliberately excluded from these lists
+  // (browsing noise — see the backend's pm_activity_threads/pm_task_threads
+  // exclusion), so a match will never be found for those. Once the list has
+  // actually finished loading and still has no match, fall back to fetching
+  // that one group/thread directly by id (getOneForAdmin/
+  // getOneThreadForAdmin) instead of silently doing nothing — an admin
+  // clicking the chat icon on a Task/Activity should still land on its
+  // moderation panel, same as before these lists were filtered.
   useEffect(() => {
-    if (!autoManageGroupId || !groups.length) return;
+    if (!autoManageGroupId) return;
     const match = groups.find(g => String(g.groupId) === String(autoManageGroupId));
-    if (!match) return;
-    openManage(match);
-    onAutoManageGroupHandled?.();
+    if (match) {
+      openManage(match);
+      onAutoManageGroupHandled?.();
+      return;
+    }
+    if (loading) return; // list still in flight — wait for it, don't fetch prematurely
+    let cancelled = false;
+    groupApi.getOneForAdmin(autoManageGroupId)
+      .then(group => { if (!cancelled) openManage(group); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) onAutoManageGroupHandled?.(); });
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoManageGroupId, groups]);
+  }, [autoManageGroupId, groups, loading]);
 
   useEffect(() => {
-    if (!autoManageThreadId || !threads?.length) return;
-    const match = threads.find(t => String(t.conversationId) === String(autoManageThreadId));
-    if (!match) return;
-    openManageThread(match);
-    onAutoManageThreadHandled?.();
+    if (!autoManageThreadId) return;
+    const match = (threads || []).find(t => String(t.conversationId) === String(autoManageThreadId));
+    if (match) {
+      openManageThread(match);
+      onAutoManageThreadHandled?.();
+      return;
+    }
+    if (threadsLoading) return;
+    let cancelled = false;
+    messageApi.getOneThreadForAdmin(autoManageThreadId)
+      .then(thread => { if (!cancelled) openManageThread(thread); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) onAutoManageThreadHandled?.(); });
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoManageThreadId, threads]);
+  }, [autoManageThreadId, threads, threadsLoading]);
 
   const handleRemoveThreadParticipant = async (conversationId, userId) => {
     try {

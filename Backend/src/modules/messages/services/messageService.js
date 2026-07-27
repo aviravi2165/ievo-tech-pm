@@ -848,7 +848,19 @@ async function getInbox(userId, page = 1, limit = 30) {
       LEFT JOIN comm_groups cg ON cg.group_id = c.group_id
       LEFT JOIN comm_group_hidden gh
         ON gh.group_id = c.group_id AND gh.user_id = @userId
-      WHERE c.is_deleted = 0 AND gh.user_id IS NULL
+      -- Excludes PM Task chat threads (conv_type='cc', auto-created by
+      -- pmChatService.js and linked via pm_task_threads) from the Inbox —
+      -- with tasks now numbering in the dozens per project, their
+      -- auto-managed 1:1-ish "cc" threads were drowning out actual
+      -- person-to-person messages. Still fully reachable — ChatButton.js
+      -- opens them directly by conversationId via
+      -- activityApi.getChat/taskApi.getChat, which never goes through this
+      -- query at all. Deliberately NOT excluding pm_activity_threads here:
+      -- those already carry a real group_id and get routed to the Groups
+      -- tab client-side (MessagingContext.js) — filtering them out of THIS
+      -- result would remove them from Groups too, not just Inbox.
+      LEFT JOIN pm_task_threads ptt ON ptt.conversation_id = c.conversation_id
+      WHERE c.is_deleted = 0 AND gh.user_id IS NULL AND ptt.conversation_id IS NULL
       ORDER BY c.last_message_at DESC
       OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
     `);
@@ -1416,12 +1428,57 @@ async function listAllThreadsForAdmin(userId) {
       FROM comm_conversations c
       LEFT JOIN comm_conversation_hidden ch
         ON ch.conversation_id = c.conversation_id AND ch.user_id = @userId
+      -- Excludes PM Task chat threads — same as getInbox above. conv_type
+      -- already filters out PM Activity threads (those are 'group_thread',
+      -- listed in the Groups admin view instead), but Task threads are
+      -- 'cc' just like a real 1:1/cc conversation, so they weren't caught
+      -- by that filter alone.
+      LEFT JOIN pm_task_threads ptt ON ptt.conversation_id = c.conversation_id
       WHERE c.is_deleted = 0
         AND c.conv_type = 'cc'
         AND ch.user_id IS NULL
+        AND ptt.conversation_id IS NULL
       ORDER BY c.is_disabled ASC, c.created_at DESC
     `);
   return result.recordset;
+}
+
+// Super-admin single-thread lookup by id, bypassing the pm_task_threads
+// exclusion listAllThreadsForAdmin applies for browsing — see that
+// function's comment. ChatButton.js still needs to land an admin on this
+// exact task thread's moderation panel when they click its chat icon, even
+// though it'll never show up in the Threads list.
+async function getThreadForAdmin(conversationId, userId) {
+  const pool = await getPool();
+  const meRes = await pool.request()
+    .input('userId', sql.UniqueIdentifier, userId)
+    .query(`SELECT user_type AS userType FROM auth_users WHERE user_id = @userId`);
+  if (meRes.recordset[0]?.userType !== 'admin') {
+    const e = new Error('Only a super admin can view this'); e.statusCode = 403; throw e;
+  }
+  const result = await pool.request()
+    .input('conversationId', sql.Int, conversationId)
+    .query(`
+      SELECT
+        c.conversation_id AS conversationId,
+        c.subject,
+        c.created_at      AS createdAt,
+        c.created_by      AS createdBy,
+        c.conv_type       AS convType,
+        c.is_disabled     AS isDisabled,
+        CAST(0 AS BIT)    AS isAdmin,
+        CAST(1 AS BIT)    AS isSuperAdmin,
+        CAST(0 AS BIT)    AS isMember,
+        (
+          SELECT CAST(COUNT(*) AS INT)
+          FROM comm_participants p2
+          WHERE p2.conversation_id = c.conversation_id AND p2.is_deleted = 0
+        ) AS participantCount
+      FROM comm_conversations c
+      WHERE c.conversation_id = @conversationId AND c.is_deleted = 0
+    `);
+  if (!result.recordset.length) { const e = new Error('Thread not found'); e.statusCode = 404; throw e; }
+  return result.recordset[0];
 }
 
 async function disableThread(conversationId, actorUserId) {
@@ -1548,7 +1605,7 @@ module.exports = {
   assertConversationParticipant, getParticipantUserIds,
   addParticipant,
   isThreadAdminOrSuperAdmin, assertThreadAdmin,
-  listAllThreadsForAdmin, disableThread, enableThread,
+  listAllThreadsForAdmin, getThreadForAdmin, disableThread, enableThread,
   deleteThreadForActor, hideDisabledThreadForUser,
   editMessage,
   ensureParticipantArchiveColumn,

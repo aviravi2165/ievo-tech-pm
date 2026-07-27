@@ -35,6 +35,15 @@ export default function FloatingPopover({ anchorRef, anchorEl, open, onClose, al
 
   useLayoutEffect(() => {
     if (!open || !anchor) { setPos(null); return; }
+    // Scroll the trigger toward the middle of the viewport BEFORE
+    // computing position — a row near the bottom of a long scrolled table
+    // left the popup with only the MIN_HEIGHT fallback below it, which
+    // technically scrolled internally but read as "still clipped" since
+    // there was no visible cue that more content existed past the fold.
+    // Giving the trigger real room to begin with means the popup almost
+    // always gets its natural height instead of falling back to the
+    // minimum at all.
+    anchor.scrollIntoView({ block: 'center', behavior: 'instant' });
     const compute = () => {
       const rect = anchor.getBoundingClientRect();
       const vw = window.innerWidth;
@@ -53,7 +62,14 @@ export default function FloatingPopover({ anchorRef, anchorEl, open, onClose, al
       // trigger sits right at the bottom edge of the viewport) does this
       // fall back to a minimum-height panel, still anchored below, so it's
       // always reachable by scrolling the underlying page.
-      const MIN_HEIGHT = 160;
+      //
+      // 160px previously — content-heavy panels (e.g. ParticipantsPanel
+      // with 4+ sections) blew way past that when the trigger sat in the
+      // bottom third of a long scrolled table, leaving only ~1-2 sections
+      // visible with a scrollbar too thin to read as "there's more below."
+      // scrollIntoView above already tries to buy real room first; this is
+      // the floor for whatever's left after that.
+      const MIN_HEIGHT = 320;
       const top = Math.max(EDGE_GAP, Math.min(rect.bottom + 6, vh - EDGE_GAP - MIN_HEIGHT));
       const maxHeight = Math.max(MIN_HEIGHT, vh - top - EDGE_GAP);
 

@@ -69,9 +69,11 @@ function Donut({ segments, size = 130 }) {
   );
 }
 
+const ONTIME_COLOR = { 'On Time': '#446f17', Late: '#c12d16' };
+
 export default function ProjectAnalytics({ project, phases, active }) {
   const theme = useTheme();
-  const { loading, error, stats } = useProjectAnalytics(phases, active);
+  const { loading, error, stats } = useProjectAnalytics(project.projectId, phases, active);
 
   if (!phases.length) {
     return <EmptyHint>No phases yet — add phases and activities to see analytics here.</EmptyHint>;
@@ -83,7 +85,9 @@ export default function ProjectAnalytics({ project, phases, active }) {
     return <div style={{ color: theme.colors.danger, fontSize: 13 }}>{error}</div>;
   }
 
-  const { totalTasks, completeTasks, overdueTasks, blockedTasks, statusCounts, priorityCounts, workload, weeks } = stats;
+  const { totalTasks, completeTasks, overdueTasks, blockedTasks, statusCounts, priorityCounts, workload, weeks, onTimeCount, lateCount } = stats;
+  const onTimeTotal = onTimeCount + lateCount;
+  const onTimePct = onTimeTotal ? Math.round((onTimeCount / onTimeTotal) * 100) : null;
   const completionPct = project.progress || 0;
   const maxWeekCount = Math.max(1, ...weeks.map(w => w.count));
 
@@ -180,24 +184,57 @@ export default function ProjectAnalytics({ project, phases, active }) {
         </Section>
       </AnalyticsGrid>
 
-      <Section>
-        <SectionTitle>Completions — Last 6 Weeks</SectionTitle>
-        <SectionHint>
-          Tasks currently marked Complete, bucketed by their due date (a proxy for when that work
-          was scheduled — this project's data doesn't record an exact completion timestamp per task).
-        </SectionHint>
-        {totalTasks === 0 ? <EmptyHint>No tasks yet.</EmptyHint> : (
-          <WeekBars>
-            {weeks.map((w, i) => (
-              <WeekBarCol key={i}>
-                <WeekBarValue>{w.count || ''}</WeekBarValue>
-                <WeekBarFill pct={(w.count / maxWeekCount) * 100} value={w.count} />
-                <WeekBarLabel>{w.end.toLocaleDateString([], { day: 'numeric', month: 'short' })}</WeekBarLabel>
-              </WeekBarCol>
-            ))}
-          </WeekBars>
-        )}
-      </Section>
+      <AnalyticsGrid>
+        <Section>
+          <SectionTitle>Completions — Last 6 Weeks</SectionTitle>
+          <SectionHint>
+            Tasks currently marked Complete, bucketed by the week they actually finished
+            (from each task's real status-change history).
+          </SectionHint>
+          {totalTasks === 0 ? <EmptyHint>No tasks yet.</EmptyHint> : (
+            <WeekBars>
+              {weeks.map((w, i) => (
+                <WeekBarCol key={i}>
+                  <WeekBarValue>{w.count || ''}</WeekBarValue>
+                  <WeekBarFill pct={(w.count / maxWeekCount) * 100} value={w.count} />
+                  <WeekBarLabel>{w.end.toLocaleDateString([], { day: 'numeric', month: 'short' })}</WeekBarLabel>
+                </WeekBarCol>
+              ))}
+            </WeekBars>
+          )}
+        </Section>
+
+        <Section>
+          <SectionTitle>On-Time Completion</SectionTitle>
+          <SectionHint>
+            Completed tasks, by whether they finished at or before their due date (excludes
+            tasks completed before this tracking existed).
+          </SectionHint>
+          {onTimeTotal === 0 ? <EmptyHint>No completed tasks with a due date yet.</EmptyHint> : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
+              <Donut segments={[
+                { label: 'On Time', count: onTimeCount, color: ONTIME_COLOR['On Time'] },
+                { label: 'Late', count: lateCount, color: ONTIME_COLOR.Late },
+              ]} />
+              <div style={{ flex: 1, minWidth: 140 }}>
+                <LegendRow>
+                  <LegendDot color={ONTIME_COLOR['On Time']} />
+                  <LegendLabel>On Time</LegendLabel>
+                  <LegendValue>{onTimeCount}</LegendValue>
+                </LegendRow>
+                <LegendRow>
+                  <LegendDot color={ONTIME_COLOR.Late} />
+                  <LegendLabel>Late</LegendLabel>
+                  <LegendValue>{lateCount}</LegendValue>
+                </LegendRow>
+                {onTimePct != null && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: theme.colors.ash }}>{onTimePct}% on time</div>
+                )}
+              </div>
+            </div>
+          )}
+        </Section>
+      </AnalyticsGrid>
     </AnalyticsWrap>
   );
 }
