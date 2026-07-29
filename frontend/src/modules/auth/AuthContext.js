@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
 // (import.meta.env?.VITE_API_BASE_URL || '') + '/api' — NOT
@@ -19,6 +20,7 @@ export function AuthProvider({ children }) {
   const [user,    setUser]    = useState(null);
   const [token,   setToken]   = useState(() => localStorage.getItem('erp_token'));
   const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
 
   // On mount — if a token is in localStorage, verify it with /api/auth/me
   useEffect(() => {
@@ -75,11 +77,19 @@ export function AuthProvider({ children }) {
     return data;
   }, []);
 
+  // Now that navigation is real URL state (see App.js/AppShell.js's router
+  // migration), the URL itself outlives whoever's logged in — without this,
+  // logging out and logging back in as a different account resumed at
+  // whatever path the previous account had left open (e.g. a specific
+  // project), since nothing ever cleared it. Reset to '/' on the way out so
+  // every fresh login starts from Home regardless of where the last session
+  // was sitting.
   const logout = useCallback(() => {
     localStorage.removeItem('erp_token');
     setToken(null);
     setUser(null);
-  }, []);
+    navigate('/', { replace: true });
+  }, [navigate]);
 
   return (
     <AuthContext.Provider value={{

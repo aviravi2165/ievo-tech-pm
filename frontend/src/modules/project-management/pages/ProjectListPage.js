@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { useTheme } from '@emotion/react';
 import { FolderKanban, RotateCcw, Trash2 } from 'lucide-react';
 import StatusBadge, { InactiveBadge } from '../components/StatusBadge';
+import EmptyStateHint from '../components/EmptyStateHint';
 import ProgressBar from '../components/ProgressBar';
 import OverdueBadge from '../components/OverdueBadge';
 import ProjectFormModal from '../components/ProjectFormModal';
@@ -227,8 +228,9 @@ export default function ProjectListPage({ onSelectProject, onOpenTemplates }) {
                   <ProgressBar value={p.progress || 0} />
                 </Cell>
 
-                <Cell w={COL.status} center>
+                <Cell w={COL.status} center style={{ flexDirection: 'column', gap: 2 }}>
                   <StatusBadge status={p.status} />
+                  <EmptyStateHint emptyState={p.emptyState} theme={theme} />
                 </Cell>
 
                 <Cell w={COL.role} center>

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useTheme } from '@emotion/react';
 import { ChevronLeft, LayoutGrid, RotateCcw } from 'lucide-react';
 import StatusBadge, { InactiveBadge } from '../components/StatusBadge';
+import EmptyStateHint from '../components/EmptyStateHint';
 import ProgressBar from '../components/ProgressBar';
 import OverdueBadge from '../components/OverdueBadge';
 import DelayBadge from '../components/DelayBadge';
@@ -217,7 +218,10 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
             <ProgressBar value={project.progress || 0} />
           </div>
           <DelayBadge days={project.delayDays} label="Delayed by" />
-          <StatusBadge status={project.status} />
+          <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:2 }}>
+            <StatusBadge status={project.status} />
+            <EmptyStateHint emptyState={project.emptyState} theme={theme} />
+          </div>
           {isProjectInactive && <InactiveBadge />}
           {isProjectInactive && myRole === 'Manager' && (
             <IconBtn title="Reactivate project" onClick={handleReactivateProject} style={{ width:26, height:26 }}>

@@ -3,7 +3,7 @@
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
 const { blockIfNeeded, isInactive } = require('./dependencyService');
-const { getPhaseProgress, deriveStatus, getPhaseHasActiveWork } = require('./progressService');
+const { getPhaseProgress, deriveStatus, getPhaseHasActiveWork, getPhaseHasTasks, getPhaseActivityCount } = require('./progressService');
 const { getPhaseDelayDays, getOverdueDays } = require('./delayService');
 const { getEffectivePhaseRole } = require('./roleService');
 const pmChatService = require('./pmChatService');
@@ -70,8 +70,21 @@ async function getPhasesForProject(projectId, userId, isAdmin = false) {
       ph.status = 'To Do'; // will become Completed via deriveStatus below
     }
     ph.status = deriveStatus(ph.progress, ph.status, await getPhaseHasActiveWork(ph.phaseId));
-    ph.isOverdue = Boolean(ph.plannedEndPassed) && ph.status !== 'Completed';
+    // Gated on actually having a task somewhere underneath it — see the
+    // matching comment in activityService.getActivitiesForPhase. isOverdue
+    // stays date-gated (that's a real "behind schedule" fact); emptyState
+    // is NOT date-gated — it's "there's nothing here yet" regardless of
+    // whether the date has passed, distinguishing a Phase with literally
+    // no Activities ('noActivities') from one whose Activities exist but
+    // collectively have zero Tasks ('noTasks') — same wording an empty
+    // Activity itself would show.
+    const [phaseHasTasks, activityCount] = await Promise.all([
+      getPhaseHasTasks(ph.phaseId),
+      getPhaseActivityCount(ph.phaseId),
+    ]);
+    ph.isOverdue = Boolean(ph.plannedEndPassed) && ph.status !== 'Completed' && phaseHasTasks;
     ph.overdueDays = ph.isOverdue ? getOverdueDays(ph.plannedEnd) : 0;
+    ph.emptyState = activityCount === 0 ? 'noActivities' : (phaseHasTasks ? null : 'noTasks');
     delete ph.plannedEndPassed;
     ph.delayDays = ph.status === 'Completed' ? 0 : await getPhaseDelayDays(ph.phaseId, ph.plannedEnd);
     // Cascade: a Phase under an inactive Project reads as inactive too.

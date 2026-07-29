@@ -9,6 +9,13 @@
  * the first place). Overdue leads — it's the more direct, self-contained,
  * immediately actionable fact — and Delayed's number is folded into the
  * tooltip rather than dropped. When only one applies, that one shows alone.
+ *
+ * The "empty" case (nothing added under this yet) lives in EmptyStateHint
+ * (./EmptyStateHint.js) instead, rendered in the Status column — it used to
+ * live here in the Dates column, but that's exactly where these Overdue/
+ * Delayed badges also render, so an empty-but-overdue row could show both
+ * stacked and crowd the column this was built to avoid crowding in the
+ * first place.
  */
 import DelayBadge from './DelayBadge';
 import { LateTag } from '../styles/shared.styles';

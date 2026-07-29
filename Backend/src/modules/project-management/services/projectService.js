@@ -2,7 +2,7 @@
 
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
-const { getProjectProgress, getProjectHasActiveWork, deriveProjectStatus } = require('./progressService');
+const { getProjectProgress, getProjectHasActiveWork, deriveProjectStatus, getProjectHasTasks, getProjectPhaseCount } = require('./progressService');
 const { getProjectDelayDays, getOverdueDays } = require('./delayService');
 const { isInactive } = require('./dependencyService');
 const pmChatService = require('./pmChatService');
@@ -117,8 +117,16 @@ async function listProjects(userId, isAdmin = false, opts = {}) {
   await Promise.all(rows.map(async (p) => {
     p.progress = await getProjectProgress(p.projectId);
     p.status = deriveProjectStatus(p.progress, p.status, await getProjectHasActiveWork(p.projectId));
-    p.isOverdue = Boolean(p.plannedEndPassed) && p.status !== 'Completed' && p.status !== 'Cancelled';
+    // Gated on actually having a task somewhere underneath it — see the
+    // matching comment in activityService.getActivitiesForPhase. emptyState
+    // is NOT date-gated, unlike isOverdue — see phaseService's own comment.
+    const [projectHasTasks, phaseCount] = await Promise.all([
+      getProjectHasTasks(p.projectId),
+      getProjectPhaseCount(p.projectId),
+    ]);
+    p.isOverdue = Boolean(p.plannedEndPassed) && p.status !== 'Completed' && p.status !== 'Cancelled' && projectHasTasks;
     p.overdueDays = p.isOverdue ? getOverdueDays(p.plannedEnd) : 0;
+    p.emptyState = phaseCount === 0 ? 'noPhases' : (projectHasTasks ? null : 'noTasks');
     delete p.plannedEndPassed;
   }));
   return paginated ? { items: rows, total, page, pageSize } : rows;
@@ -160,8 +168,13 @@ async function getProject(projectId, userId, isAdmin = false) {
     `);
   const progress = await getProjectProgress(projectId);
   proj.status = deriveProjectStatus(progress, proj.status, await getProjectHasActiveWork(projectId));
-  proj.isOverdue = Boolean(proj.plannedEndPassed) && proj.status !== 'Completed' && proj.status !== 'Cancelled';
+  const [detailProjectHasTasks, detailPhaseCount] = await Promise.all([
+    getProjectHasTasks(projectId),
+    getProjectPhaseCount(projectId),
+  ]);
+  proj.isOverdue = Boolean(proj.plannedEndPassed) && proj.status !== 'Completed' && proj.status !== 'Cancelled' && detailProjectHasTasks;
   proj.overdueDays = proj.isOverdue ? getOverdueDays(proj.plannedEnd) : 0;
+  proj.emptyState = detailPhaseCount === 0 ? 'noPhases' : (detailProjectHasTasks ? null : 'noTasks');
   delete proj.plannedEndPassed;
   const delayDays = (proj.status === 'Completed' || proj.status === 'Cancelled')
     ? 0

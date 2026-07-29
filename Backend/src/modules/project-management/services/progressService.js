@@ -155,7 +155,79 @@ function deriveProjectStatus(progress, persistedStatus, hasActiveWork = false) {
   return 'Active';
 }
 
+/**
+ * "Has any ACTIVE task at all underneath" — distinct from hasActiveWork
+ * (only true for 'Ongoing' tasks) and from progress (reads 0% either way
+ * for an empty shell or one where nothing's done yet, so it can't tell
+ * those two apart). An Activity/Phase/Project with literally nothing
+ * active under it isn't "behind schedule" just because its planned_end
+ * passed — there's no work to actually be behind ON. isOverdue
+ * (activityService/phaseService/projectService) is gated on this so an
+ * empty container reads as "no tasks yet", not a false Overdue alarm.
+ *
+ * Filters on is_active=1, not just is_deleted=0 — a deactivated
+ * ("deleted") task/activity/phase still has a live row, so counting it
+ * here read as "there's real work here" when there isn't: the exact same
+ * staleness bug fixed on the frontend's Assignees tile (ActivityRow.js/
+ * PhasePanel.js counted deactivated tasks as active assignees), just one
+ * layer up — a container whose only children are all deactivated should
+ * read as empty, same as one with zero children at all.
+ */
+async function getActivityHasTasks(activityId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('activityId', sql.Int, activityId)
+    .query(`SELECT COUNT(*) AS cnt FROM pm_tasks WHERE activity_id=@activityId AND is_deleted=0 AND is_active=1`);
+  return (result.recordset[0]?.cnt || 0) > 0;
+}
+
+async function getPhaseHasTasks(phaseId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('phaseId', sql.Int, phaseId)
+    .query(`SELECT activity_id AS activityId FROM pm_activities WHERE phase_id=@phaseId AND is_deleted=0 AND is_active=1`);
+  if (!result.recordset.length) return false;
+  const flags = await Promise.all(result.recordset.map(a => getActivityHasTasks(a.activityId)));
+  return flags.some(Boolean);
+}
+
+async function getProjectHasTasks(projectId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('projectId', sql.Int, projectId)
+    .query(`SELECT phase_id AS phaseId FROM pm_phases WHERE project_id=@projectId AND is_deleted=0 AND is_active=1`);
+  if (!result.recordset.length) return false;
+  const flags = await Promise.all(result.recordset.map(ph => getPhaseHasTasks(ph.phaseId)));
+  return flags.some(Boolean);
+}
+
+// Immediate ACTIVE-child counts — used to tell "nothing active added under
+// this yet at all" (no activities / no phases) apart from "has active
+// activities/phases, but none of THEM have any active tasks yet" (see
+// phaseService/projectService's emptyState, which picks the wording based
+// on which of these is true). Same is_active=1 reasoning as the
+// hasTasks family above — a Phase whose only Activity was deactivated
+// should read "No activities yet", not silently stay "empty" forever
+// because a dead row is still technically there.
+async function getPhaseActivityCount(phaseId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('phaseId', sql.Int, phaseId)
+    .query(`SELECT COUNT(*) AS cnt FROM pm_activities WHERE phase_id=@phaseId AND is_deleted=0 AND is_active=1`);
+  return result.recordset[0]?.cnt || 0;
+}
+
+async function getProjectPhaseCount(projectId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('projectId', sql.Int, projectId)
+    .query(`SELECT COUNT(*) AS cnt FROM pm_phases WHERE project_id=@projectId AND is_deleted=0 AND is_active=1`);
+  return result.recordset[0]?.cnt || 0;
+}
+
 module.exports = {
   getProjectProgress, getPhaseProgress, getActivityProgress, deriveStatus, deriveProjectStatus,
+  getPhaseActivityCount, getProjectPhaseCount,
   getActivityHasActiveWork, getPhaseHasActiveWork, getProjectHasActiveWork,
+  getActivityHasTasks, getPhaseHasTasks, getProjectHasTasks,
 };

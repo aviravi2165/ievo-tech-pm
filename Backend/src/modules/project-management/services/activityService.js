@@ -3,7 +3,7 @@
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
 const { blockIfNeeded, isBlocked, isInactive } = require('./dependencyService');
-const { getActivityProgress, deriveStatus, getActivityHasActiveWork } = require('./progressService');
+const { getActivityProgress, deriveStatus, getActivityHasActiveWork, getActivityHasTasks } = require('./progressService');
 const { getActivityDelayDays, getOverdueDays } = require('./delayService');
 const pmChatService = require('./pmChatService');
 const { getEffectiveActivityRole } = require('./roleService');
@@ -114,8 +114,16 @@ async function getActivitiesForPhase(phaseId, userId, isAdmin = false) {
     delete act.ownIsActive; delete act.parentPhaseActive; delete act.parentProjectActive;
     // Same "Completed" gate delayDays already uses, now applied to isOverdue
     // too — both facts go silent together against the same derived status.
-    act.isOverdue = Boolean(act.plannedEndPassed) && act.status !== 'Completed';
+    // Also gated on actually having a task underneath — an Activity with
+    // nothing in it yet isn't "behind schedule" just because its planned_end
+    // passed. isOverdue stays date-gated (a real "behind schedule" fact);
+    // emptyState is NOT date-gated — "nothing here yet" is true regardless
+    // of whether the date has passed, so the frontend can show a quiet "no
+    // tasks yet" note immediately rather than only once it's also overdue.
+    const hasTasks = await getActivityHasTasks(act.activityId);
+    act.isOverdue = Boolean(act.plannedEndPassed) && act.status !== 'Completed' && hasTasks;
     act.overdueDays = act.isOverdue ? getOverdueDays(act.plannedEnd) : 0;
+    act.emptyState = hasTasks ? null : 'noTasks';
     delete act.plannedEndPassed;
     act.delayDays = act.status === 'Completed' ? 0 : await getActivityDelayDays(act.activityId, act.plannedEnd);
     act.myRole = userId ? (await getEffectiveActivityRole(userId, act.activityId, isAdmin)).role : null;
@@ -310,11 +318,39 @@ async function createActivity(phaseId, projectId, userId, body) {
         `);
     }
 
-    // Seed additional activity members (default role: Employee)
+    // Seed additional activity members (default role: Employee).
+    // BUG: this used to unconditionally insert an explicit 'Employee' row
+    // for every plain member ID (one with no {role} chosen) — but per
+    // roleService's inheritance rule, an explicit activity-level row ALWAYS
+    // wins over an inherited one from Phase/Project, regardless of rank.
+    // So adding someone who's already a Project/Phase Manager as a plain
+    // activity member here silently downgraded them to Employee on this
+    // one Activity. Same fix as taskService.acceptAssignmentRequest: only
+    // seed the default 'Employee' row when the member has no better access
+    // already inherited from Phase/Project; an EXPLICITLY chosen role
+    // (raw is an object with a real {role}) is a deliberate choice and is
+    // always honored as-is.
     for (const raw of [...new Set(memberIds)]) {
-      const uid  = typeof raw === 'object' ? raw.userId : raw;
-      const role = (typeof raw === 'object' && ACTIVITY_MEMBER_ROLES.includes(raw.role)) ? raw.role : 'Employee';
+      const uid = typeof raw === 'object' ? raw.userId : raw;
+      const explicitRole = (typeof raw === 'object' && ACTIVITY_MEMBER_ROLES.includes(raw.role)) ? raw.role : null;
       if (!uid || String(uid) === String(ownerId)) continue; // owner already seeded as Manager above
+
+      let role = explicitRole || 'Employee';
+      if (!explicitRole) {
+        const inherited = await req()
+          .input('checkUid',   sql.UniqueIdentifier, uid)
+          .input('phaseId2',   sql.Int,              phaseId)
+          .input('projectId2', sql.Int,              projectId)
+          .query(`
+            SELECT pm2.role AS phaseRole, pm.role AS projectRole
+            FROM (SELECT 1 AS x) dummy
+            LEFT JOIN pm_phase_members pm2 ON pm2.phase_id=@phaseId2 AND pm2.user_id=@checkUid
+            LEFT JOIN pm_members       pm  ON pm.project_id=@projectId2 AND pm.user_id=@checkUid
+          `);
+        const inheritedRole = inherited.recordset[0]?.phaseRole || inherited.recordset[0]?.projectRole || null;
+        if (inheritedRole && inheritedRole !== 'Viewer') continue; // already has Employee-or-above via inheritance — don't downgrade
+      }
+
       await req()
         .input('activityId', sql.Int,              row.activityId)
         .input('uid',        sql.UniqueIdentifier, uid)

@@ -4,6 +4,7 @@ import { ChevronRight, ChevronUp, ChevronDown, ArrowRight, RotateCcw, Trash2, Us
 import StatusBadge, { InactiveBadge } from './StatusBadge';
 import ProgressBar from './ProgressBar';
 import ScheduleBadge from './ScheduleBadge';
+import EmptyStateHint from './EmptyStateHint';
 import ActivityRow from './ActivityRow';
 import ParticipantsPanel from './ParticipantsPanel';
 import { aggregateAssignees } from '../utils/aggregateAssignees';
@@ -91,7 +92,6 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
   // themselves.
   const [phaseAssignees,        setPhaseAssignees]        = useState([]);
   const [assigneesLoading,      setAssigneesLoading]      = useState(false);
-  const hasLoadedAssigneesRef = useRef(false);
 
   // phase.myRole is the user's EFFECTIVE role on THIS phase (explicit
   // phase-level row, else inherited from their project role — computed
@@ -174,16 +174,22 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
 
   // Fetches every Activity under this Phase (reusing fetchActivities'
   // cache if already loaded) then every one of THEIR tasks in parallel, and
-  // aggregates the assignees. Guarded so opening the panel twice doesn't
-  // re-fetch.
+  // aggregates the assignees. Used to be guarded to fetch only once ever
+  // (skip if already loaded) — but tasks get added/reassigned/deleted while
+  // the panel sits open across visits, and the popover reopening was the
+  // one moment a stale rollup was most visible (a task deleted since the
+  // last open kept its assignee showing here indefinitely). Refetches every
+  // time the popover opens instead; the underlying per-activity task fetch
+  // is itself cheap and cached at the ActivityRow level.
   const fetchPhaseAssignees = useCallback(async () => {
-    if (hasLoadedAssigneesRef.current) return;
     setAssigneesLoading(true);
     try {
       const acts = hasLoadedActivitiesRef.current ? activities : await phaseApi.getActivities(phase.phaseId);
       const taskLists = await Promise.all(acts.map(a => activityApi.getTasks(a.activityId).catch(() => [])));
-      setPhaseAssignees(aggregateAssignees(taskLists.flat()));
-      hasLoadedAssigneesRef.current = true;
+      // Same fix as ActivityRow.js's activityAssignees: a deactivated
+      // ("deleted") task's row still exists, just with isActive=false — skip
+      // it so its assignee doesn't linger in the Phase-level rollup.
+      setPhaseAssignees(aggregateAssignees(taskLists.flat().filter(t => t.isActive !== false)));
     } catch { }
     finally { setAssigneesLoading(false); }
   }, [phase.phaseId, activities]);
@@ -220,7 +226,12 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
       });
       setNewActName(''); setNewActStart(''); setNewActEnd(''); setActErrors({});
       setPanel(null);
-      fetchActivities();
+      // fetchActivities() refreshes the sibling activities' own .emptyState,
+      // but this Phase's own .emptyState (noActivities -> null once it has
+      // its first Activity) lives one level up in useProject's `phases`
+      // list — without this it kept showing "No activities yet" until a
+      // full reload happened to re-fetch that list.
+      fetchActivities(); onRefetchProject?.();
     } catch (err) { showToast(apiErrorMessage(err, 'Failed to add activity.')); }
     finally { setAddingAct(false); }
   };
@@ -275,23 +286,14 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
     .map(m => ({ userId: m.userId, name: m.name, email: m.email }))
     .filter(p => !explicitManagerIds.has(String(p.userId)));
 
-  // Legacy/auto-added non-Manager rows merged into the Assignees display
-  // even if they have zero current tasks — these predate "members" being
-  // removed as an addable tier (or Viewer moving to project-only), or come
-  // from the task-accept auto-add; either way they're real access someone
-  // granted, and hiding them entirely (Assignees is otherwise purely
-  // task-derived) would silently make them disappear from every view.
-  const legacyAssigneeStubs = phaseMembers
-    .filter(m => m.role !== 'Manager')
-    .map(m => ({ userId: m.userId, name: m.name }));
-  const mergedPhaseAssignees = (() => {
-    const map = new Map(phaseAssignees.map(a => [String(a.userId), a]));
-    legacyAssigneeStubs.forEach(m => {
-      const key = String(m.userId);
-      if (!map.has(key)) map.set(key, { userId: m.userId, name: m.name, taskCount: 0 });
-    });
-    return [...map.values()].sort((a, b) => b.taskCount - a.taskCount);
-  })();
+  // Assignees is strictly "who has an actual task somewhere in this Phase"
+  // — it used to also merge in any bare non-Manager pm_phase_members row
+  // (a "legacy stub"), even with zero tasks anywhere, which contradicted
+  // the section's own "(from tasks in this scope)" label. Same fix as
+  // ActivityRow.js's activityAssignees — see its comment for why this
+  // reads as a real bug (a stray explicit non-Manager row showing up as a
+  // 0-task "assignee") rather than a deliberate feature.
+  const mergedPhaseAssignees = phaseAssignees;
 
   const handleDelete = async () => {
     if (!window.confirm(`Delete phase "${phase.name}"?`)) return;
@@ -437,8 +439,9 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
         </div>
 
         {/* Grid column 5: Status */}
-        <div style={{ overflow:'hidden', display:'flex', justifyContent:'center' }}>
+        <div style={{ overflow:'hidden', display:'flex', flexDirection:'column', alignItems:'center', gap:2 }}>
           <StatusBadge status={phase.status} />
+          <EmptyStateHint emptyState={phase.emptyState} theme={theme} />
         </div>
 
         {/* Grid column 6 (max-content track): action buttons — always

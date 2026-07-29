@@ -4,6 +4,7 @@ import { ChevronRight, ArrowRight, RotateCcw, Trash2, Lock, Users } from 'lucide
 import StatusBadge, { InactiveBadge } from './StatusBadge';
 import ProgressBar from './ProgressBar';
 import ScheduleBadge from './ScheduleBadge';
+import EmptyStateHint from './EmptyStateHint';
 import TaskItem from './TaskItem';
 import UserSearchInput from './UserSearchInput';
 import ChatButton from './ChatButton';
@@ -241,19 +242,22 @@ export default function ActivityRow({
     .map(m => ({ userId: m.userId, name: m.name, email: m.email }))
     .filter(p => !explicitManagerIds.has(String(p.userId)) && !inheritedManagerIds.has(String(p.userId)));
 
-  // Legacy/auto-added non-Manager rows merged into Assignees even with zero
-  // current tasks — same reasoning as PhasePanel.js's mergedPhaseAssignees.
-  const legacyAssigneeStubs = actMembers
-    .filter(m => m.role !== 'Manager')
-    .map(m => ({ userId: m.userId, name: m.name }));
+  // Assignees is strictly "who has an actual task here" — it used to also
+  // merge in any bare non-Manager pm_activity_members row (a "legacy
+  // stub"), even with zero tasks, which directly contradicted the section's
+  // own "(from tasks in this scope)" label: someone with a stray explicit
+  // Employee row and no tasks showed up as an "assignee" with none, which
+  // read as a bug (and often WAS one — see the createActivity fix above;
+  // an inherited Manager who picked up a stray explicit Employee row here
+  // showed up exactly this way). That row is still real access — just not
+  // an assignee fact — so it belongs in the Managers/quickAddPool accounting
+  // above, not here.
   const activityAssignees = useMemo(() => {
-    const map = new Map(aggregateAssignees(tasks).map(a => [String(a.userId), a]));
-    legacyAssigneeStubs.forEach(m => {
-      const key = String(m.userId);
-      if (!map.has(key)) map.set(key, { userId: m.userId, name: m.name, taskCount: 0 });
-    });
-    return [...map.values()].sort((a, b) => b.taskCount - a.taskCount);
-  }, [tasks, actMembers]);
+    // Deactivating ("deleting") a task doesn't remove its row, only flips
+    // isActive — without this filter, someone whose only task here just got
+    // deleted kept showing up in the Assignees tile until a hard-delete.
+    return aggregateAssignees(tasks.filter(t => t.isActive !== false));
+  }, [tasks]);
 
   // Task assignment's quick-pick used to only suggest actMembers (this
   // activity's own explicit rows) — someone with real access here via
@@ -294,7 +298,12 @@ export default function ActivityRow({
       setNewTaskName(''); setNewTaskDue(''); setNewTaskStart(''); setNewTaskDesc('');
       setTaskAssignees([]); setTaskAssignSearch(null); setNewTaskDeps([]);
       setPanel(null); setAddErrors({});
-      fetchTasks(); onRefetchProject?.();
+      // fetchTasks() only refreshes THIS Activity's own tasks — its
+      // .emptyState field lives one level up, in PhasePanel's `activities`
+      // list (from phaseApi.getActivities), which nothing here was
+      // refreshing. That's why "No tasks yet" kept showing until a full
+      // page reload happened to re-fetch it.
+      fetchTasks(); onRefetchPhase?.(); onRefetchProject?.();
     } catch (err) { showToast(apiErrorMessage(err, 'Failed to add task.')); }
     finally { setAddingTask(false); }
   };
@@ -443,8 +452,9 @@ export default function ActivityRow({
         </div>
 
         {/* Grid column 5: Status */}
-        <div style={{ overflow:'hidden', display:'flex', justifyContent:'center' }}>
+        <div style={{ overflow:'hidden', display:'flex', flexDirection:'column', alignItems:'center', gap:2 }}>
           <StatusBadge status={activity.status} />
+          <EmptyStateHint emptyState={activity.emptyState} theme={theme} />
         </div>
 
         {/* Grid column 6 (max-content): actions. "Edit" icon removed:
