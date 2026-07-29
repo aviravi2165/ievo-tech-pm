@@ -579,6 +579,55 @@ ALTER TABLE dbo.pm_audit_log WITH NOCHECK ADD CONSTRAINT CK_pm_audit_log_entity_
     CHECK (entity_type IN ('project','phase','activity','task'));
 
 -- ────────────────────────────────────────────────────────────
+-- pm_project_insights — per-project OVERRIDES to the Analytics catalog's
+-- default visibility (see insightsService.js's CATALOG, each entry marked
+-- `default: true/false`). A project with no rows here shows exactly the
+-- catalog's own defaults (the original fixed sections — Progress by Phase,
+-- Task Status, etc.) with the optional ones (Cumulative Flow, Cycle Time,
+-- etc.) hidden. A row EITHER hides a default OR shows an optional — the
+-- `visible` bit is what makes both directions the same mechanism, so
+-- removing a "default" section and re-adding an "optional" one go through
+-- identical code, and a removed default reappears in the "+ Add Insight"
+-- picker exactly like any other not-currently-visible catalog entry.
+-- Nothing about an insight's actual DATA lives here — every widget is
+-- computed fresh on read, same "never stored" philosophy as progress/delay
+-- elsewhere in this module.
+-- ────────────────────────────────────────────────────────────
+IF OBJECT_ID('dbo.pm_project_insights', 'U') IS NULL
+CREATE TABLE dbo.pm_project_insights (
+    id            int IDENTITY(1,1) NOT NULL,
+    project_id    int NOT NULL,
+    insight_type  varchar(40) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    visible       bit NOT NULL,
+    display_order int DEFAULT 0 NOT NULL,
+    changed_by    uniqueidentifier NULL,
+    changed_at    datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_pm_project_insights PRIMARY KEY (id),
+    CONSTRAINT FK_pm_project_insights_project FOREIGN KEY (project_id) REFERENCES dbo.pm_projects(project_id) ON DELETE CASCADE,
+    CONSTRAINT FK_pm_project_insights_user FOREIGN KEY (changed_by) REFERENCES dbo.auth_users(user_id),
+    CONSTRAINT UQ_pm_project_insights UNIQUE (project_id, insight_type)
+);
+
+-- Migration for an already-created pm_project_insights table from before
+-- the `visible` bit existed (back when a row's mere presence meant "added",
+-- with no way to represent "hide a default"). Existing rows under that old
+-- model always meant "shown", so they backfill to visible=1. Each step is
+-- guarded so this is safe to run against either the old shape, the new
+-- shape, or a table that doesn't exist yet at all.
+IF OBJECT_ID('dbo.pm_project_insights', 'U') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_project_insights') AND name = 'visible')
+ALTER TABLE dbo.pm_project_insights ADD visible bit NOT NULL CONSTRAINT DF_pm_project_insights_visible DEFAULT 1;
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_project_insights') AND name = 'added_by')
+   AND NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_project_insights') AND name = 'changed_by')
+EXEC sp_rename 'dbo.pm_project_insights.added_by', 'changed_by', 'COLUMN';
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_project_insights') AND name = 'added_at')
+   AND NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_project_insights') AND name = 'changed_at')
+EXEC sp_rename 'dbo.pm_project_insights.added_at', 'changed_at', 'COLUMN';
+
+
+-- ────────────────────────────────────────────────────────────
 -- Indexes (mirrors the PostgreSQL schema's index section)
 -- ────────────────────────────────────────────────────────────
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_pm_phases_project')

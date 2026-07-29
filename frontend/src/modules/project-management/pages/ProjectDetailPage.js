@@ -187,7 +187,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
           <DetailSub>
             {project.ownerName && <span>Owner: {project.ownerName}</span>}
             {project.plannedStart && <span> · {fmtDate(project.plannedStart)} → {fmtDate(project.plannedEnd)}</span>}
-            {project.isOverdue && <> · <OverdueBadge /></>}
+            {project.isOverdue && <> · <OverdueBadge days={project.overdueDays} /></>}
           </DetailSub>
           {project.description && (
             // Previously always clamped to 1 line with no way to read the
@@ -431,7 +431,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
               <div>
                 {(project.members || []).map(m => (
                   <MemberRow key={m.userId} style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize:13, color:theme.colors.onyx, flex:1 }}>{m.name}</div>
+                    <div style={{ fontSize:12, color:theme.colors.onyx, flex:1 }}>{m.name}</div>
                     <DepBadge as="span" style={{ padding:'2px 10px' }}>{m.role}</DepBadge>
                   </MemberRow>
                 ))}

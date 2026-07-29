@@ -136,7 +136,7 @@ function MemberCard({ m, onRoleChange, onRemove, roleError, isManager, isSelf, o
           {/* Both truncate — the parent is min-width:0 flex, but an email
               is a single unbreakable token that would still paint past the
               card edge without its own ellipsis. */}
-          <div style={{ fontSize: 13, color: theme.colors.onyx, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.name}>{m.name}</div>
+          <div style={{ fontSize: 12, color: theme.colors.onyx, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.name}>{m.name}</div>
           <div style={{ fontSize: 11, color: theme.colors.ash, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.email}>{m.email}</div>
         </div>
 
@@ -372,7 +372,7 @@ export default function MemberManager({ projectId, members: flatMembers = [], my
       <div style={{ marginBottom: 12 }}>
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder="Filter members…"
-          style={{ width: '100%', background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '7px 12px', color: theme.colors.onyx, fontSize: 13, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }} />
+          style={{ width: '100%', background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '7px 12px', color: theme.colors.onyx, fontSize: 12, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }} />
       </div>
 
       {/* ── Summary ── */}
@@ -391,7 +391,7 @@ export default function MemberManager({ projectId, members: flatMembers = [], my
       </div>
 
       {/* ── Member cards ── */}
-      {loading && <div style={{ color: theme.colors.ash, fontSize: 13, padding: '12px 0' }}>Loading members…</div>}
+      {loading && <div style={{ color: theme.colors.ash, fontSize: 12, padding: '12px 0' }}>Loading members…</div>}
       {!loading && membersToShow.map(m => (
         <MemberCard
           key={m.userId}
@@ -406,7 +406,7 @@ export default function MemberManager({ projectId, members: flatMembers = [], my
         />
       ))}
       {!loading && membersToShow.length === 0 && (
-        <div style={{ fontSize: 13, color: theme.colors.ash, textAlign: 'center', padding: '30px 0' }}>
+        <div style={{ fontSize: 12, color: theme.colors.ash, textAlign: 'center', padding: '30px 0' }}>
           {search ? 'No members match your search.' : 'No members yet. Add one above.'}
         </div>
       )}

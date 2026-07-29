@@ -4,21 +4,26 @@
  * delayService — cascading schedule-delay computation, computed on fetch
  * (same philosophy as progressService: never stored).
  *
- * The rule at every level is the same shape, just one level up each time:
- *   - A child scheduled to (or actually) finish AFTER the parent's own
- *     planned_end means the parent's window has been violated — the parent
- *     is "late by" however many days the child overruns it.
- *   - A child that is itself already late bubbles that lateness up too —
- *     an Activity with a late Task is itself late by at least that much,
- *     even before its own planned_end has passed.
- *   - The parent's own planned_end being in the past, while it still isn't
- *     100% done, also counts.
- * The delay shown at any level is the MAX of all of the above, so the
- * headline number always reflects the worst offender underneath it.
+ * "Delayed" and "Overdue" are deliberately kept distinct and are NEVER
+ * interchangeable:
+ *   - Overdue (isOverdue, computed alongside each entity's own row) means
+ *     THIS entity is incomplete past its OWN planned_end/due_date. It is
+ *     entirely self-contained — no children involved.
+ *   - Delayed (delayDays, computed here) means a CHILD is causing this
+ *     entity to run late — either the child overruns THIS entity's own
+ *     planned_end, or the child is itself already delayed (or overdue) and
+ *     that bubbles up. It deliberately does NOT fold in this entity's own
+ *     planned_end being in the past — that fact is Overdue's job, not
+ *     Delayed's, so the two badges never fire off the same underlying cause.
+ * The delay shown at any level is the MAX of the child-caused components,
+ * so the headline number always reflects the worst offender underneath it.
  *
- * Task delay is the simple base case: incomplete + past its own due date.
+ * Task delay is the simple base case: incomplete + past its own due date —
+ * for a leaf with no children, "delayed" and "overdue" coincide by
+ * definition, so getTaskDelayDays doubles as both.
  */
 const { getPool, sql } = require('../../../config/db');
+const { getActivityProgress, getPhaseProgress } = require('./progressService');
 
 function today() {
   const d = new Date();
@@ -57,6 +62,22 @@ function daysBetween(later, earlier) {
   return Math.round((later - earlier) / 86400000);
 }
 
+/**
+ * Overdue magnitude — how many days past ITS OWN planned_end/due_date an
+ * entity is, today. Shared by every level (Task/Activity/Phase/Project) so
+ * the Overdue badge can show a real number ("Overdue by 8d") instead of a
+ * bare boolean — the one thing Overdue was missing that Delayed and Task's
+ * own lateness already had. Caller is responsible for the "is this actually
+ * overdue" gate (incomplete + status not stale — see activityService/
+ * phaseService/projectService's isOverdue computation); this only does the
+ * date math, same parseDate/daysBetween used everywhere else in this file.
+ */
+function getOverdueDays(plannedEnd) {
+  const end = parseDate(plannedEnd);
+  if (!end) return 0;
+  return Math.max(0, daysBetween(today(), end));
+}
+
 /** Task: delayed if incomplete and past its own due date. Pure — no I/O. */
 function getTaskDelayDays(task) {
   if (!task?.dueDate || task.status === 'Complete') return 0;
@@ -68,8 +89,19 @@ function getTaskDelayDays(task) {
 /**
  * Activity: max of —
  *   (a) any child task's own delay (bubbled up)
- *   (b) any child task's due date running past the activity's planned_end
- *   (c) the activity's own planned_end already passed while incomplete
+ *   (b) any INCOMPLETE child task's due date running past the activity's
+ *       planned_end
+ * (b) is gated on the task still being incomplete — a task's due date used
+ * to get compared against the activity's planned_end unconditionally, so a
+ * task that had already been marked Complete kept pinning the Activity's
+ * Delayed number at its old overrun forever, with no way for it to ever go
+ * down even though the thing that caused it was finished. Task status is a
+ * plain, directly-set column (unlike Activity/Phase's derived status), so
+ * gating on it here is exact, not the staleness problem isOverdue had.
+ *
+ * Deliberately excludes the activity's own planned_end having passed —
+ * that's what isOverdue is for; folding it in here would make Delayed and
+ * Overdue fire off the same fact and read as interchangeable.
  */
 async function getActivityDelayDays(activityId, activityPlannedEnd) {
   const pool = await getPool();
@@ -82,28 +114,34 @@ async function getActivityDelayDays(activityId, activityPlannedEnd) {
 
   for (const t of result.recordset) {
     maxDelay = Math.max(maxDelay, getTaskDelayDays(t));
-    if (end && t.dueDate) {
+    if (end && t.dueDate && t.status !== 'Complete') {
       const due = parseDate(t.dueDate);
       maxDelay = Math.max(maxDelay, daysBetween(due, end));
     }
-  }
-
-  if (end) {
-    const allComplete = result.recordset.length > 0 && result.recordset.every(t => t.status === 'Complete');
-    if (!allComplete) maxDelay = Math.max(maxDelay, daysBetween(today(), end));
   }
 
   return Math.max(0, maxDelay);
 }
 
 /**
- * Phase: same shape one level up — activities in place of tasks.
+ * Phase: same shape one level up — activities in place of tasks. Same
+ * exclusion applies: the phase's own planned_end passing is Overdue's
+ * signal, not Delayed's.
+ *
+ * The "child overruns parent" term is gated on the Activity being
+ * incomplete — same reasoning as getActivityDelayDays's task gate, but
+ * checked via PROGRESS (getActivityProgress) rather than a status column:
+ * pm_activities.status is never reliably written back to 'Completed' (it's
+ * only ever derived fresh from progress on read, in activityService), so
+ * gating on the raw column here would reproduce the exact isOverdue
+ * staleness bug already fixed elsewhere — progress>=100 is the same signal
+ * deriveStatus itself uses to decide "Completed".
  */
 async function getPhaseDelayDays(phaseId, phasePlannedEnd) {
   const pool = await getPool();
   const result = await pool.request()
     .input('phaseId', sql.Int, phaseId)
-    .query(`SELECT activity_id AS activityId, planned_end AS plannedEnd, status FROM pm_activities WHERE phase_id=@phaseId AND is_deleted=0`);
+    .query(`SELECT activity_id AS activityId, planned_end AS plannedEnd FROM pm_activities WHERE phase_id=@phaseId AND is_deleted=0`);
 
   const end = parseDate(phasePlannedEnd);
   let maxDelay = 0;
@@ -112,27 +150,29 @@ async function getPhaseDelayDays(phaseId, phasePlannedEnd) {
     const activityDelay = await getActivityDelayDays(a.activityId, a.plannedEnd);
     maxDelay = Math.max(maxDelay, activityDelay);
     if (end && a.plannedEnd) {
-      const aEnd = parseDate(a.plannedEnd);
-      maxDelay = Math.max(maxDelay, daysBetween(aEnd, end));
+      const progress = await getActivityProgress(a.activityId);
+      if (progress < 100) {
+        const aEnd = parseDate(a.plannedEnd);
+        maxDelay = Math.max(maxDelay, daysBetween(aEnd, end));
+      }
     }
-  }
-
-  if (end) {
-    const allComplete = result.recordset.length > 0 && result.recordset.every(a => a.status === 'Completed');
-    if (!allComplete) maxDelay = Math.max(maxDelay, daysBetween(today(), end));
   }
 
   return Math.max(0, maxDelay);
 }
 
 /**
- * Project: same shape again — phases in place of activities.
+ * Project: same shape again — phases in place of activities. Same
+ * exclusion applies: the project's own planned_end passing is Overdue's
+ * signal, not Delayed's. Same progress-based completion gate as
+ * getPhaseDelayDays, for the same reason (pm_phases.status is equally
+ * unreliable as a raw column).
  */
 async function getProjectDelayDays(projectId, projectPlannedEnd) {
   const pool = await getPool();
   const result = await pool.request()
     .input('projectId', sql.Int, projectId)
-    .query(`SELECT phase_id AS phaseId, planned_end AS plannedEnd, status FROM pm_phases WHERE project_id=@projectId AND is_deleted=0`);
+    .query(`SELECT phase_id AS phaseId, planned_end AS plannedEnd FROM pm_phases WHERE project_id=@projectId AND is_deleted=0`);
 
   const end = parseDate(projectPlannedEnd);
   let maxDelay = 0;
@@ -141,17 +181,15 @@ async function getProjectDelayDays(projectId, projectPlannedEnd) {
     const phaseDelay = await getPhaseDelayDays(ph.phaseId, ph.plannedEnd);
     maxDelay = Math.max(maxDelay, phaseDelay);
     if (end && ph.plannedEnd) {
-      const phEnd = parseDate(ph.plannedEnd);
-      maxDelay = Math.max(maxDelay, daysBetween(phEnd, end));
+      const progress = await getPhaseProgress(ph.phaseId);
+      if (progress < 100) {
+        const phEnd = parseDate(ph.plannedEnd);
+        maxDelay = Math.max(maxDelay, daysBetween(phEnd, end));
+      }
     }
-  }
-
-  if (end) {
-    const allComplete = result.recordset.length > 0 && result.recordset.every(ph => ph.status === 'Completed');
-    if (!allComplete) maxDelay = Math.max(maxDelay, daysBetween(today(), end));
   }
 
   return Math.max(0, maxDelay);
 }
 
-module.exports = { getTaskDelayDays, getActivityDelayDays, getPhaseDelayDays, getProjectDelayDays };
+module.exports = { getTaskDelayDays, getActivityDelayDays, getPhaseDelayDays, getProjectDelayDays, getOverdueDays };

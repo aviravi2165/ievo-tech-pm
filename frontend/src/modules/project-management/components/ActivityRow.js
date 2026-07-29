@@ -3,7 +3,7 @@ import { useTheme } from '@emotion/react';
 import { ChevronRight, ArrowRight, RotateCcw, Trash2, Lock, Users } from 'lucide-react';
 import StatusBadge, { InactiveBadge } from './StatusBadge';
 import ProgressBar from './ProgressBar';
-import DelayBadge from './DelayBadge';
+import ScheduleBadge from './ScheduleBadge';
 import TaskItem from './TaskItem';
 import UserSearchInput from './UserSearchInput';
 import ChatButton from './ChatButton';
@@ -433,7 +433,7 @@ export default function ActivityRow({
           title={(canEdit && !isInactive) ? 'Click to edit dates / description' : undefined}
         >
           <span style={{ fontSize:10, color:theme.colors.ash, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'100%' }}>{fmtRange(activity.plannedStart, activity.plannedEnd)}</span>
-          {activity.delayDays > 0 && <DelayBadge days={activity.delayDays} label="Late by" />}
+          <ScheduleBadge isOverdue={activity.isOverdue} overdueDays={activity.overdueDays} delayDays={activity.delayDays} delayLabel="Late by" />
         </div>
 
         {/* Grid column 4: Progress — BUG-030, same fix as PhasePanel.js's
@@ -447,42 +447,56 @@ export default function ActivityRow({
           <StatusBadge status={activity.status} />
         </div>
 
-        {/* Grid column 6 (max-content): actions — always visible. "Edit"
-            icon removed: clicking the Dates cell above opens the same
-            panel. "Members" icon was ALSO removed earlier in favor of
-            clicking the Manager cell text — that made adding a Manager/
-            Viewer here undiscoverable, so it's back as an explicit icon
-            alongside that click, not instead of it. */}
-        {canEdit && (
+        {/* Grid column 6 (max-content): actions. "Edit" icon removed:
+            clicking the Dates cell above opens the same panel. "Members"
+            icon was ALSO removed earlier in favor of clicking the Manager
+            cell text — that made adding a Manager/Viewer here
+            undiscoverable, so it's back as an explicit icon alongside that
+            click, not instead of it.
+            BUG: this whole block used to be gated on `canEdit` (Manager)
+            ONLY, which made `showChatButton`'s own more permissive check
+            (Manager OR an Employee/Member who's an activity participant —
+            see its definition above) completely unreachable: a regular
+            assigned team member could never see or open this activity's
+            chat at all, no matter how the unread state computed. The
+            Prerequisites/Reactivate/Delete actions stay Manager-only
+            (their own `canEdit` guard, unchanged); only the chat button's
+            visibility is no longer smuggled behind that same gate. */}
+        {(canEdit || showChatButton) && (
           <RowActions data-row-actions onClick={e => e.stopPropagation()}>
             {/* Members icon removed — redundant now that the Participants
                 cell (grid column 2) itself opens the same panel, viewable
                 by anyone and not just Managers. */}
             {showChatButton && (
               <span onClick={e => e.stopPropagation()}>
-                <ChatButton kind="activity" id={activity.activityId} compact />
+                <ChatButton kind="activity" id={activity.activityId} compact
+                  hasUnread={activity.hasUnreadChat} conversationId={activity.chatConversationId} />
               </span>
             )}
-            {!isInactive && otherActivities.length > 0 && (
-              <IconBtn active={panel === 'deps'} title="Prerequisites"
-                onClick={e => { setDepsAnchorEl(e.currentTarget); togglePanel('deps'); }} style={{ width:20, height:20 }}>
-                <ArrowRight size={14} strokeWidth={2} />
-              </IconBtn>
-            )}
-            <div style={{ width:1, height:16, background:theme.colors.border, margin:'0 1px', flexShrink:0 }} />
-            {isInactive ? (
+            {canEdit && (
               <>
-                <IconBtn title="Reactivate" onClick={handleReactivate} style={{ width:20, height:20 }}>
-                  <RotateCcw size={14} strokeWidth={2} />
-                </IconBtn>
-                <IconBtnDanger title="Delete permanently" onClick={handleHardDelete} style={{ width:20, height:20 }}>
-                  <Trash2 size={14} strokeWidth={2} />
-                </IconBtnDanger>
+                {!isInactive && otherActivities.length > 0 && (
+                  <IconBtn active={panel === 'deps'} title="Prerequisites"
+                    onClick={e => { setDepsAnchorEl(e.currentTarget); togglePanel('deps'); }} style={{ width:20, height:20 }}>
+                    <ArrowRight size={14} strokeWidth={2} />
+                  </IconBtn>
+                )}
+                <div style={{ width:1, height:16, background:theme.colors.border, margin:'0 1px', flexShrink:0 }} />
+                {isInactive ? (
+                  <>
+                    <IconBtn title="Reactivate" onClick={handleReactivate} style={{ width:20, height:20 }}>
+                      <RotateCcw size={14} strokeWidth={2} />
+                    </IconBtn>
+                    <IconBtnDanger title="Delete permanently" onClick={handleHardDelete} style={{ width:20, height:20 }}>
+                      <Trash2 size={14} strokeWidth={2} />
+                    </IconBtnDanger>
+                  </>
+                ) : (
+                  <IconBtnDanger title="Delete" onClick={handleDelete} style={{ width:20, height:20 }}>
+                    <Trash2 size={14} strokeWidth={2} />
+                  </IconBtnDanger>
+                )}
               </>
-            ) : (
-              <IconBtnDanger title="Delete" onClick={handleDelete} style={{ width:20, height:20 }}>
-                <Trash2 size={14} strokeWidth={2} />
-              </IconBtnDanger>
             )}
           </RowActions>
         )}

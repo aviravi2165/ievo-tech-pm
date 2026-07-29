@@ -204,7 +204,7 @@ export default function ProjectListPage({ onSelectProject, onOpenTemplates }) {
                       {p.name}
                     </span>
                     {p.isActive === false && <InactiveBadge />}
-                    {p.isOverdue && <OverdueBadge />}
+                    {p.isOverdue && <OverdueBadge days={p.overdueDays} />}
                   </div>
                   <span style={{ fontSize: 9, color: theme.colors.ashLight }}>
                     {p.phaseCount} phase{p.phaseCount !== 1 ? 's' : ''} · {p.memberCount} member{p.memberCount !== 1 ? 's' : ''}

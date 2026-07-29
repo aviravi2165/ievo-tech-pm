@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTheme } from '@emotion/react';
-import { ArrowRight, FileText, RotateCcw, Trash2 } from 'lucide-react';
+import { ArrowRight, FileText, RotateCcw, Trash2, AlertCircle, Clock } from 'lucide-react';
 import StatusBadge, { InactiveBadge } from './StatusBadge';
 import PriorityBadge from './PriorityBadge';
 import UserSearchInput from './UserSearchInput';
@@ -53,6 +53,15 @@ function initials(name = '') { return (name || '?').split(' ').map(w => w[0]).jo
 // Now only genuinely missing dates show "—"; a completed task still shows
 // its actual date, just without the urgency styling (no point flagging a
 // finished task as "late").
+//
+// Late/due-soon used to REPLACE the date text with "⚠ 12d late" / "Due in
+// 3d" — the actual due date disappeared the moment it needed a badge. A
+// follow-up put the date back but buried "12d late" in a title= tooltip —
+// which is invisible until you hover, so the row looked like a plain date
+// with no indication anything was wrong. Both facts now render unconditionally,
+// stacked (date on top, the late/due-soon detail right under it) — the row's
+// min-height (not a fixed height) lets it grow the extra few px without
+// disturbing sibling rows.
 function DueDateBadge({ dueDate, status }) {
   const theme = useTheme();
   if (!dueDate) return <span style={{ fontSize: 11, color: theme.colors.ashLight }}>—</span>;
@@ -60,8 +69,26 @@ function DueDateBadge({ dueDate, status }) {
   const dt   = parseLocalDate(dueDate);
   const now  = new Date(); now.setHours(0, 0, 0, 0);
   const diff = Math.round((dt - now) / 86400000);
-  if (diff < 0)  return <LateTag>⚠ {Math.abs(diff)}d late</LateTag>;
-  if (diff <= 2) return <DueSoonTag>Due {diff === 0 ? 'today' : `in ${diff}d`}</DueSoonTag>;
+  if (diff < 0) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+        <span style={{ fontSize: 11, color: theme.colors.danger, fontWeight: 600 }}>{fmtDate(dueDate)}</span>
+        <LateTag style={{ whiteSpace: 'nowrap' }}>
+          <AlertCircle size={9} strokeWidth={2.5} /> {Math.abs(diff)}d late
+        </LateTag>
+      </div>
+    );
+  }
+  if (diff <= 2) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+        <span style={{ fontSize: 11, color: theme.colors.ash }}>{fmtDate(dueDate)}</span>
+        <DueSoonTag style={{ whiteSpace: 'nowrap' }}>
+          <Clock size={9} strokeWidth={2.5} /> {diff === 0 ? 'Today' : `In ${diff}d`}
+        </DueSoonTag>
+      </div>
+    );
+  }
   return <span style={{ fontSize: 11, color: theme.colors.ash }}>{fmtDate(dueDate)}</span>;
 }
 
@@ -378,7 +405,8 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
                 </IconBtn>
               )}
               {(canEdit || isAssigned) && (
-                <ChatButton kind="task" id={task.taskId} compact />
+                <ChatButton kind="task" id={task.taskId} compact
+                  hasUnread={task.hasUnreadChat} conversationId={task.chatConversationId} />
               )}
             </>
           )}

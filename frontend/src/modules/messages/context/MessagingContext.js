@@ -24,11 +24,16 @@ import { useGroups }  from '../hooks/useGroups';
 const MessagingContext = createContext(null);
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
+// Capped so a burst of new-message events (several conversations getting
+// messages within the same few seconds) can't stack the toast column taller
+// than the viewport — oldest excess toast is dropped rather than the stack
+// growing unbounded off-screen.
+const MAX_TOASTS = 4;
 function useToast() {
   const [toasts, setToasts] = useState([]);
   const add = useCallback((msg, type = 'info', onClick) => {
     const id = Date.now() + Math.random();
-    setToasts(prev => [...prev, { id, msg, type, onClick }]);
+    setToasts(prev => [...prev, { id, msg, type, onClick }].slice(-MAX_TOASTS));
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
   }, []);
   return { toasts, toast: add };

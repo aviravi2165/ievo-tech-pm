@@ -36,6 +36,17 @@ router.post('/:id/members',           setProjectId, requireRole('Manager'), ctrl
 router.patch('/:id/members/:uid',     setProjectId, requireRole('Manager'), ctrl.updateMember);
 router.delete('/:id/members/:uid',    setProjectId, requireRole('Manager'), ctrl.removeMember);
 
+// Analytics "+ Add Insight" catalog — read (catalog + which are added +
+// their computed data) is open to any project member; adding/removing is
+// Manager-gated, same as everything else that changes what a project looks
+// like for everyone viewing it.
+const insightsCtrl = require('../controllers/insightsController');
+router.get('/insights/catalog',   insightsCtrl.getCatalog);
+router.get('/:id/insights',       insightsCtrl.getAdded);
+router.get('/:id/insights/data',  insightsCtrl.getData);
+router.post('/:id/insights',      setProjectId, requireRole('Manager'), insightsCtrl.add);
+router.delete('/:id/insights/:type', setProjectId, requireRole('Manager'), insightsCtrl.remove);
+
 // Phases list for a project
 const phaseCtrl = require('../controllers/phaseController');
 router.get('/:projectId/phases',  phaseCtrl.list);

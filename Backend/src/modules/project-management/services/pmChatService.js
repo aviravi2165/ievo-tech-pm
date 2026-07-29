@@ -404,6 +404,59 @@ async function onActivityManagersChanged(activityId) {
   for (const t of tasksResult.recordset) await syncTaskThreadParticipants(t.taskId);
 }
 
+// ── Deactivate / reactivate: keep an Activity's group chat in step with its
+// (or an ancestor's) active state ─────────────────────────────────────────
+//
+// Written directly against comm_groups rather than routed through
+// messageService/groupService's disableGroup/enableGroup — those are
+// user-initiated admin actions gated by assertGroupAdmin, and this is a
+// system-triggered side effect of a PM write with no admin in the loop
+// (same reasoning as upsertParticipants above being duplicated rather than
+// imported). `disabled_by` is left NULL so an admin's own manual disable
+// (which does set disabled_by) is visibly distinguishable from this.
+//
+// Guarded with `AND is_disabled <> @disabled` so re-running this (e.g.
+// reactivating a Project whose Activity chat an admin had already manually
+// re-enabled) is a no-op rather than clobbering unrelated state.
+async function setActivityThreadDisabled(activityId, disabled) {
+  const thread = await getActivityThreadId(activityId);
+  if (!thread?.groupId) return; // no thread yet — nothing to toggle
+  const pool = await getPool();
+  await pool.request()
+    .input('groupId',  sql.Int, thread.groupId)
+    .input('disabled', sql.Bit, disabled ? 1 : 0)
+    .query(`
+      UPDATE comm_groups
+      SET is_disabled = @disabled,
+          disabled_at = CASE WHEN @disabled = 1 THEN SYSDATETIMEOFFSET() ELSE NULL END,
+          disabled_by = NULL
+      WHERE group_id = @groupId AND is_disabled <> @disabled
+    `);
+}
+
+/** Every Activity under a Phase — used when the Phase itself is (de)activated. */
+async function setActivityThreadsDisabledForPhase(phaseId, disabled) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('phaseId', sql.Int, phaseId)
+    .query(`SELECT activity_id AS activityId FROM pm_activities WHERE phase_id=@phaseId AND is_deleted=0`);
+  for (const r of result.recordset) await setActivityThreadDisabled(r.activityId, disabled);
+}
+
+/** Every Activity under a Project — used when the Project itself is (de)activated. */
+async function setActivityThreadsDisabledForProject(projectId, disabled) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('projectId', sql.Int, projectId)
+    .query(`
+      SELECT a.activity_id AS activityId
+      FROM pm_activities a
+      INNER JOIN pm_phases ph ON ph.phase_id = a.phase_id
+      WHERE ph.project_id = @projectId AND a.is_deleted = 0 AND ph.is_deleted = 0
+    `);
+  for (const r of result.recordset) await setActivityThreadDisabled(r.activityId, disabled);
+}
+
 module.exports = {
   ensureTaskThread,
   ensureActivityThread,
@@ -414,4 +467,7 @@ module.exports = {
   onAssigneeAccepted,
   onAssigneeRemoved,
   onActivityManagersChanged,
+  setActivityThreadDisabled,
+  setActivityThreadsDisabledForPhase,
+  setActivityThreadsDisabledForProject,
 };

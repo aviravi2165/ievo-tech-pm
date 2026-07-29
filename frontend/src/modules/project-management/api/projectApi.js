@@ -28,6 +28,15 @@ export const projectApi = {
   addMember:         (id, body)      => axiosInstance.post(`${BASE}/${id}/members`, body).then(r => r.data),
   updateMember:      (id, uid, body) => axiosInstance.patch(`${BASE}/${id}/members/${uid}`, body).then(r => r.data),
   removeMember:      (id, uid)       => axiosInstance.delete(`${BASE}/${id}/members/${uid}`).then(r => r.data),
+  // "+ Add Insight" catalog (Analytics tab) — catalog is the fixed list of
+  // available widget types; getInsights is which ones THIS project has
+  // turned on; getInsightsData computes all of those widgets' data in one
+  // round trip instead of one request per widget.
+  getInsightCatalog: ()               => axiosInstance.get(`${BASE}/insights/catalog`).then(r => r.data),
+  getInsights:       (id)             => axiosInstance.get(`${BASE}/${id}/insights`).then(r => r.data),
+  getInsightsData:   (id)             => axiosInstance.get(`${BASE}/${id}/insights/data`).then(r => r.data),
+  addInsight:        (id, insightType) => axiosInstance.post(`${BASE}/${id}/insights`, { insightType }).then(r => r.data),
+  removeInsight:     (id, insightType) => axiosInstance.delete(`${BASE}/${id}/insights/${insightType}`).then(r => r.data),
 };
 
 export const phaseApi = {

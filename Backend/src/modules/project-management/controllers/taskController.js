@@ -3,7 +3,7 @@
 const svc  = require('../services/taskService');
 const audit = require('../services/auditService');
 
-const list           = async (req,res,next) => { try { res.json(await svc.getTasksForActivity(req.params.activityId)); } catch(e){next(e);} };
+const list           = async (req,res,next) => { try { res.json(await svc.getTasksForActivity(req.params.activityId, req.user.userId)); } catch(e){next(e);} };
 const create         = async (req,res,next) => { try { res.status(201).json(await svc.createTask(req.params.activityId, req.pmProjectId, req.user.userId, req.body)); } catch(e){next(e);} };
 const update         = async (req,res,next) => { try { res.json(await svc.updateTask(req.params.id, req.pmProjectId, req.user.userId, req.body, req.user.userType === 'admin')); } catch(e){next(e);} };
 const updateStatus   = async (req,res,next) => { try { res.json(await svc.updateTaskStatus(req.params.id, req.pmProjectId, req.user.userId, req.body.status, req.projectRole, req.user.userType === 'admin')); } catch(e){next(e);} };

@@ -17,7 +17,7 @@ function overdue(task) {
 // actually selected) and caches after the first load — switching tabs back
 // and forth doesn't re-fetch; use `refetch` to force a reload after data
 // changes elsewhere.
-export function useProjectAnalytics(projectId, phases, active) {
+export function useProjectAnalytics(projectId, phases, active, projectDates = {}) {
   const [state, setState] = useState({ loading: false, error: '', activities: [], tasks: [], completions: {} });
   const loadedRef = useRef(false);
 
@@ -113,12 +113,62 @@ export function useProjectAnalytics(projectId, phases, active) {
   // has both. Only meaningful with a real completedAt (comparing dueDate
   // to itself is trivially "on time"), so tasks without an audit row are
   // excluded here rather than falling back like the week-bucket chart does.
-  let onTimeCount = 0, lateCount = 0;
+  //
+  // totalLateDays feeds an "avg Nd late" figure alongside the Late count —
+  // this is the one place "how late" survives past completion. The live
+  // Overdue/Delayed badges on a Task/Activity/Phase/Project row intentionally
+  // go silent the moment something's marked Complete (nothing left to act
+  // on), so "was this late, and by how much" is a reporting question that
+  // belongs here, not a live warning that belongs on the row.
+  let onTimeCount = 0, lateCount = 0, totalLateDays = 0;
   tasks.forEach(t => {
     if (t.status !== DONE_TASK || !t.dueDate || !completions[t.taskId]) return;
-    if (new Date(completions[t.taskId]) <= new Date(t.dueDate)) onTimeCount += 1;
-    else lateCount += 1;
+    const completedAt = new Date(completions[t.taskId]);
+    const dueDate = new Date(t.dueDate);
+    if (completedAt <= dueDate) {
+      onTimeCount += 1;
+    } else {
+      lateCount += 1;
+      totalLateDays += Math.round((completedAt - dueDate) / 86400000);
+    }
   });
+  const avgLateDays = lateCount ? Math.round(totalLateDays / lateCount) : 0;
+
+  // Burn-up — cumulative Complete tasks over the project's full planned
+  // span (not just the last-6-weeks window the velocity bars above use),
+  // bucketed into a fixed number of points so the chart stays readable
+  // regardless of how long the project actually runs. "Ideal" is only
+  // drawn when both planned dates exist — a straight reference line from 0
+  // at plannedStart to totalTasks at plannedEnd; "Actual" is real
+  // cumulative completions to date, same completedAt-with-dueDate-fallback
+  // rule the weekly bars use.
+  const BURNUP_POINTS = 10;
+  const { plannedStart, plannedEnd } = projectDates;
+  let burnup = [];
+  const completionDates = tasks
+    .filter(t => t.status === DONE_TASK && (completions[t.taskId] || t.dueDate))
+    .map(t => new Date(completions[t.taskId] || t.dueDate))
+    .filter(d => !isNaN(d));
+  const earliestCompletion = completionDates.length ? new Date(Math.min(...completionDates)) : null;
+  const rangeStart = plannedStart ? new Date(plannedStart) : earliestCompletion;
+  const plannedEndDate = plannedEnd ? new Date(plannedEnd) : null;
+  const rangeEnd = plannedEndDate && plannedEndDate > now ? plannedEndDate : now;
+
+  if (rangeStart && rangeEnd > rangeStart && totalTasks > 0) {
+    const span = rangeEnd - rangeStart;
+    burnup = Array.from({ length: BURNUP_POINTS }, (_, i) => {
+      const date = new Date(rangeStart.getTime() + (span * i) / (BURNUP_POINTS - 1));
+      const actual = tasks.filter(t => {
+        if (t.status !== DONE_TASK) return false;
+        const completedAt = completions[t.taskId] || t.dueDate;
+        return completedAt && new Date(completedAt) <= date;
+      }).length;
+      const ideal = (plannedStart && plannedEndDate)
+        ? Math.round(totalTasks * Math.min(1, Math.max(0, (date - rangeStart) / (plannedEndDate - rangeStart))))
+        : null;
+      return { date, actual, ideal };
+    });
+  }
 
   return {
     loading: state.loading,
@@ -130,7 +180,8 @@ export function useProjectAnalytics(projectId, phases, active) {
       totalTasks, completeTasks, overdueTasks, blockedTasks,
       totalActivities: activities.length,
       statusCounts, priorityCounts, workload, weeks,
-      onTimeCount, lateCount,
+      onTimeCount, lateCount, avgLateDays,
+      burnup,
     },
   };
 }

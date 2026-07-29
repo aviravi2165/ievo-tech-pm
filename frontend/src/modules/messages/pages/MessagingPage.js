@@ -106,6 +106,16 @@ export default function MessagingPage({ currentUser }) {
         String(payload.senderUserId) === String(currentUserId);
       if (isMine) return;
 
+      // System-posted messages (Activity Insights cron, group-renamed
+      // notices, etc.) have no human sender and fire on their own schedule
+      // rather than in response to something the user did — popping a
+      // "New message in X" toast for every one of them (once per eligible
+      // Activity, every cron run) buried real messages and, at a short test
+      // interval, could flood the toast stack fast enough to overflow it.
+      // They're already excluded from unread counts (excludeFromUnread);
+      // skip the toast for the same reason.
+      if (payload.isSystem) return;
+
       const isOpen = activeConvIdRef.current != null &&
         String(activeConvIdRef.current) === String(payload.conversationId);
       if (isOpen) return;

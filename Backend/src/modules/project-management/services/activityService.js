@@ -4,7 +4,7 @@ const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
 const { blockIfNeeded, isBlocked, isInactive } = require('./dependencyService');
 const { getActivityProgress, deriveStatus, getActivityHasActiveWork } = require('./progressService');
-const { getActivityDelayDays } = require('./delayService');
+const { getActivityDelayDays, getOverdueDays } = require('./delayService');
 const pmChatService = require('./pmChatService');
 const { getEffectiveActivityRole } = require('./roleService');
 
@@ -22,6 +22,7 @@ async function getActivitiesForPhase(phaseId, userId, isAdmin = false) {
   const pool = await getPool();
   const result = await pool.request()
     .input('phaseId', sql.Int, phaseId)
+    .input('userId', sql.UniqueIdentifier, userId)
     .query(`
       SELECT a.activity_id   AS activityId,
              a.phase_id      AS phaseId,
@@ -35,8 +36,35 @@ async function getActivitiesForPhase(phaseId, userId, isAdmin = false) {
              parentPh.status AS parentPhaseStatus,
              a.is_active AS ownIsActive, parentPh.is_active AS parentPhaseActive,
              parentProj.is_active AS parentProjectActive,
-             CASE WHEN a.planned_end < CAST(GETDATE() AS DATE) AND a.status <> 'Completed'
-                  THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS isOverdue,
+             pat.conversation_id AS chatConversationId,
+             -- Unread dot for the row's own chat icon — deliberately
+             -- separate from the global Inbox/Groups unread badge (which
+             -- excludes PM Activity/Task threads entirely, see
+             -- messageService.getUnreadCount's comment) and deliberately
+             -- INCLUDES system messages (sender_id IS NULL — e.g. the
+             -- Activity Insights cron post), unlike the global badge which
+             -- excludes those too. This is a per-row "something changed in
+             -- this specific chat" signal, not the browsing-noise concern
+             -- that exclusion was about.
+             CAST(CASE WHEN pat.conversation_id IS NOT NULL AND EXISTS (
+               SELECT 1 FROM comm_messages cm
+               LEFT JOIN comm_participants cp ON cp.conversation_id = cm.conversation_id AND cp.user_id = @userId
+               WHERE cm.conversation_id = pat.conversation_id
+                 AND cm.is_deleted = 0
+                 AND (cm.sender_id IS NULL OR cm.sender_id <> @userId)
+                 AND cm.sent_at > COALESCE(cp.joined_at, '1753-01-01')
+                 AND NOT EXISTS (SELECT 1 FROM comm_read_receipts rr WHERE rr.message_id = cm.message_id AND rr.user_id = @userId)
+             ) THEN 1 ELSE 0 END AS BIT) AS hasUnreadChat,
+             -- Raw "past its own planned_end" only — status exclusion is
+             -- applied in JS below, against the DERIVED status, not this
+             -- column's raw a.status. pm_activities.status is never
+             -- reliably written back to 'Completed' (deriveStatus computes
+             -- it fresh from progress on every read, below), so gating here
+             -- against the raw column let isOverdue stay true forever on an
+             -- Activity that's actually 100% done and reads "Completed" —
+             -- exactly the "why is a Completed row still Overdue" report.
+             CASE WHEN a.planned_end < CAST(GETDATE() AS DATE)
+                  THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS plannedEndPassed,
              COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''), u.email) AS ownerName,
              (
                SELECT STRING_AGG(CAST(depends_on_activity_id AS VARCHAR(20)), ',')
@@ -55,6 +83,7 @@ async function getActivitiesForPhase(phaseId, userId, isAdmin = false) {
              ) AS managerNames
       FROM pm_activities a
       LEFT JOIN auth_users u ON u.user_id = a.owner_id
+      LEFT JOIN pm_activity_threads pat ON pat.activity_id = a.activity_id
       INNER JOIN pm_phases parentPh ON parentPh.phase_id = a.phase_id
       INNER JOIN pm_projects parentProj ON parentProj.project_id = parentPh.project_id
       WHERE a.phase_id = @phaseId AND a.is_deleted = 0
@@ -83,6 +112,11 @@ async function getActivitiesForPhase(phaseId, userId, isAdmin = false) {
     // grandparent here would leave everything under it looking active).
     act.isActive = act.ownIsActive !== false && act.parentPhaseActive !== false && act.parentProjectActive !== false;
     delete act.ownIsActive; delete act.parentPhaseActive; delete act.parentProjectActive;
+    // Same "Completed" gate delayDays already uses, now applied to isOverdue
+    // too — both facts go silent together against the same derived status.
+    act.isOverdue = Boolean(act.plannedEndPassed) && act.status !== 'Completed';
+    act.overdueDays = act.isOverdue ? getOverdueDays(act.plannedEnd) : 0;
+    delete act.plannedEndPassed;
     act.delayDays = act.status === 'Completed' ? 0 : await getActivityDelayDays(act.activityId, act.plannedEnd);
     act.myRole = userId ? (await getEffectiveActivityRole(userId, act.activityId, isAdmin)).role : null;
     // Real status-history tracking for Timeline segmented bars — see
@@ -227,25 +261,19 @@ async function createActivity(phaseId, projectId, userId, body) {
 
   const pool = await getPool();
 
-  // An Activity can't be planned to start before its own Phase, or end
-  // after it — same containment rule as Phase→Project
-  // (phaseService.createPhase) and Task→Activity (taskService.createTask),
-  // enforced here too so the chain holds at every level, not just the
-  // starts. BUG-028: the end-date half of this check didn't exist at all
-  // — an activity dated entirely after its phase ended was silently
-  // accepted (201) with no validation error.
-  if (plannedStart || plannedEnd) {
+  // An Activity can't be planned to start before its own Phase — but it
+  // CAN be planned (or run) past the Phase's planned_end: that's a real
+  // schedule delay, not an invalid input, and it's exactly what
+  // delayService.getPhaseDelayDays surfaces (it compares each Activity's
+  // planned_end against the Phase's own and bubbles up the overrun as
+  // delayDays) rather than something to reject at write time.
+  if (plannedStart) {
     const phaseResult = await pool.request()
       .input('phaseId', sql.Int, phaseId)
-      .query(`SELECT planned_start AS plannedStart, planned_end AS plannedEnd FROM pm_phases WHERE phase_id=@phaseId`);
+      .query(`SELECT planned_start AS plannedStart FROM pm_phases WHERE phase_id=@phaseId`);
     const phaseStart = phaseResult.recordset[0]?.plannedStart;
-    const phaseEnd   = phaseResult.recordset[0]?.plannedEnd;
-    if (plannedStart && phaseStart && new Date(plannedStart) < new Date(phaseStart)) {
+    if (phaseStart && new Date(plannedStart) < new Date(phaseStart)) {
       const e = new Error("Activity start date can't be before its Phase's planned start date.");
-      e.statusCode = 400; throw e;
-    }
-    if (plannedEnd && phaseEnd && new Date(plannedEnd) > new Date(phaseEnd)) {
-      const e = new Error("Activity end date can't be after its Phase's planned end date.");
       e.statusCode = 400; throw e;
     }
   }
@@ -397,6 +425,7 @@ async function deleteActivity(activityId, projectId, userId) {
       .input('activityId', sql.Int, activityId)
       .query(`UPDATE pm_activities SET is_active=0 WHERE activity_id=@activityId`);
     await audit.log({ entityType:'activity', entityId:activityId, projectId, userId, action:'deactivated' });
+    await pmChatService.setActivityThreadDisabled(activityId, true);
     return { action: 'deactivated' };
   }
 
@@ -412,10 +441,35 @@ async function deleteActivity(activityId, projectId, userId) {
 
 async function reactivateActivity(activityId, projectId, userId) {
   const pool = await getPool();
+
+  // The Reactivate button reads as available whenever the Activity's
+  // CASCADED isActive is false (see getActivitiesForPhase's isActive
+  // computation above), which also fires when only an ancestor Phase/
+  // Project is inactive and this Activity's own row was never touched.
+  // Flipping pm_activities.is_active=1 in that case is a silent no-op —
+  // the Activity reads inactive again on the very next fetch because the
+  // ancestor still is — so tell the user where to actually act instead of
+  // letting the click appear to do nothing.
+  if (!(await isInactive('activity', activityId))) {
+    const phaseResult = await pool.request()
+      .input('activityId', sql.Int, activityId)
+      .query(`SELECT phase_id AS phaseId FROM pm_activities WHERE activity_id=@activityId`);
+    const phaseId = phaseResult.recordset[0]?.phaseId;
+    if (await isInactive('phase', phaseId)) {
+      const e = new Error("This Activity is inactive because its Phase is inactive — reactivate the Phase instead.");
+      e.statusCode = 409; throw e;
+    }
+    if (await isInactive('project', projectId)) {
+      const e = new Error("This Activity is inactive because its Project is inactive — reactivate the Project instead.");
+      e.statusCode = 409; throw e;
+    }
+  }
+
   await pool.request()
     .input('activityId', sql.Int, activityId)
     .query(`UPDATE pm_activities SET is_active=1 WHERE activity_id=@activityId`);
   await audit.log({ entityType:'activity', entityId:activityId, projectId, userId, action:'reactivated' });
+  await pmChatService.setActivityThreadDisabled(activityId, false);
 }
 
 // Permanent removal — only reachable once the Activity is already
@@ -429,10 +483,21 @@ async function hardDeleteActivity(activityId, projectId, userId) {
   const pool = await getPool();
   const activityResult = await pool.request()
     .input('activityId', sql.Int, activityId)
-    .query(`SELECT is_active AS isActive FROM pm_activities WHERE activity_id=@activityId AND is_deleted=0`);
+    .query(`
+      SELECT a.is_active AS ownActive, ph.is_active AS phaseActive, pr.is_active AS projectActive
+      FROM pm_activities a
+      INNER JOIN pm_phases   ph ON ph.phase_id   = a.phase_id
+      INNER JOIN pm_projects pr ON pr.project_id = ph.project_id
+      WHERE a.activity_id=@activityId AND a.is_deleted=0
+    `);
   const activity = activityResult.recordset[0];
   if (!activity) { const e = new Error('Activity not found'); e.statusCode = 404; throw e; }
-  if (activity.isActive) {
+  // Same cascaded-vs-own mismatch as taskService.hardDeleteTask — an
+  // Activity reading Inactive in the list because its Phase/Project is
+  // inactive, even though the Activity's own row was never explicitly
+  // deactivated, should satisfy this guard too.
+  const isActive = activity.ownActive !== false && activity.phaseActive !== false && activity.projectActive !== false;
+  if (isActive) {
     const e = new Error('Deactivate this Activity before permanently deleting it.');
     e.statusCode = 409; throw e;
   }

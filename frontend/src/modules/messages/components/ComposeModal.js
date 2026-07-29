@@ -507,12 +507,20 @@ export default function ComposeModal({ onClose, onSent, initialRecipients = [], 
               <Req>*</Req>
             </FieldLabel>
             <RecipientBox
-              // Clicking anywhere in the box focuses its input — without
-              // this, only the actual thin <input> element (squeezed
-              // between chips, surrounded by the box's own padding) was
-              // clickable, so most clicks on the box landed on dead space
-              // and needed several tries to actually hit the input.
-              onClick={e => { if (e.target === e.currentTarget) e.currentTarget.querySelector('input')?.focus(); }}
+              // Clicking anywhere in the box focuses its input. The
+              // previous `e.target === e.currentTarget` guard only caught
+              // clicks landing on the box's own background — chip gaps and
+              // the input's own flex-item wrapper (which doesn't
+              // necessarily stretch to fill the box's full padded area)
+              // still had dead space that ate 1-2 clicks before one
+              // happened to land exactly on the box or the input itself.
+              // Focusing unconditionally on any click within the box is
+              // harmless even when the click was really meant for a chip's
+              // remove/expand button — those are real <button> elements
+              // with their own onClick that still fires; this just also
+              // focuses the input as a side effect, which doesn't block or
+              // change that.
+              onClick={e => e.currentTarget.querySelector('input')?.focus()}
               style={{ flexWrap: 'wrap', minHeight: 46, maxHeight: 120, overflowY: 'auto', alignItems: 'flex-start', paddingTop: 8, cursor: 'text' }}>
               {chipRows.map(r => {
                 const isSubMember = !!r._fromGroup;

@@ -3,7 +3,7 @@ import { useTheme } from '@emotion/react';
 import { ChevronRight, ChevronUp, ChevronDown, ArrowRight, RotateCcw, Trash2, Users } from 'lucide-react';
 import StatusBadge, { InactiveBadge } from './StatusBadge';
 import ProgressBar from './ProgressBar';
-import DelayBadge from './DelayBadge';
+import ScheduleBadge from './ScheduleBadge';
 import ActivityRow from './ActivityRow';
 import ParticipantsPanel from './ParticipantsPanel';
 import { aggregateAssignees } from '../utils/aggregateAssignees';
@@ -425,7 +425,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
           title={(canEdit && !isInactive) ? 'Click to edit dates' : undefined}
         >
           <span style={{ fontSize:10, color:theme.colors.ash, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'100%' }}>{dateRange}</span>
-          {phase.delayDays > 0 && <DelayBadge days={phase.delayDays} label="Late by" />}
+          <ScheduleBadge isOverdue={phase.isOverdue} overdueDays={phase.overdueDays} delayDays={phase.delayDays} delayLabel="Late by" />
         </div>
 
         {/* Grid column 4: Progress — BUG-030: this used to be crammed into

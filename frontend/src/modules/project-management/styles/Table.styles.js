@@ -15,11 +15,13 @@ import styled from '@emotion/styled';
 const t = (fn) => (props) => fn(props.theme);
 
 // due: 64 was too narrow for what actually renders there — DueDateBadge
-// shows "⚠ 12d late" / "Due in 3d" for anything overdue or due-soon (not
-// just a plain date), and Cell has overflow:hidden (needed elsewhere to
-// stop text bleeding into neighboring columns), so any due-date badge
-// wider than 64px was being silently clipped down to nothing visible —
-// reading as "tasks don't show due date" even though the data was there.
+// shows an icon + the actual date ("⚠ 12 Jan" / "🕐 12 Jan") for anything
+// overdue or due-soon (the late/due-soon detail moved into a title=
+// tooltip, but the date itself is never replaced), and Cell has
+// overflow:hidden (needed elsewhere to stop text bleeding into neighboring
+// columns), so any due-date badge wider than 64px was being silently
+// clipped down to nothing visible — reading as "tasks don't show due date"
+// even though the data was there.
 export const COL = {
   assignee: 60,
   due: 88,
@@ -196,7 +198,11 @@ export const GroupRow = styled.div`
   display: grid; grid-template-columns: ${GROUP_GRID_COLS};
   align-items: center; gap: 5px;
   min-height: ${t(th => th.row.group)}; flex-shrink: 0;
-  padding: 0 10px 0 ${(props) => 10 + props.level * 15}px;
+  /* Vertical padding — min-height alone only guarantees a FLOOR; a row
+     whose Dates cell grows past it (date text + a ScheduleBadge stacked
+     underneath) had zero breathing room above/below, so the badge sat
+     flush against the row's own bottom border. */
+  padding: 6px 10px 6px ${(props) => 10 + props.level * 15}px;
   margin-top: ${(props) => (props.level === 0 ? '10px' : '0')};
   background: ${(props) => (props.level === 0 ? props.theme.colors.copper : props.theme.colors.navyTint)}26;
   border-bottom: 1px solid ${t(th => th.colors.border)};
@@ -212,7 +218,9 @@ export const TaskTableRow = styled.div`
   display: grid; grid-template-columns: ${TASK_GRID_COLS};
   align-items: center; gap: 5px;
   min-height: ${t(th => th.row.task)}; flex-shrink: 0;
-  padding: 0 10px 0 ${10 + 2 * 15}px;
+  /* Same reasoning as GroupRow's padding above — the Due Date cell can grow
+     to two lines (date + "Nd late"/"due soon" underneath it). */
+  padding: 6px 10px 6px ${10 + 2 * 15}px;
   border-bottom: 1px solid ${t(th => th.colors.border)};
   background: ${t(th => th.colors.white)};
   &:last-child { border-bottom: none; }
