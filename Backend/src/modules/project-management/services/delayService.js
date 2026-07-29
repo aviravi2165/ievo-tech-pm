@@ -144,21 +144,27 @@ async function getPhaseDelayDays(phaseId, phasePlannedEnd) {
     .query(`SELECT activity_id AS activityId, planned_end AS plannedEnd FROM pm_activities WHERE phase_id=@phaseId AND is_deleted=0`);
 
   const end = parseDate(phasePlannedEnd);
-  let maxDelay = 0;
 
-  for (const a of result.recordset) {
-    const activityDelay = await getActivityDelayDays(a.activityId, a.plannedEnd);
-    maxDelay = Math.max(maxDelay, activityDelay);
-    if (end && a.plannedEnd) {
-      const progress = await getActivityProgress(a.activityId);
-      if (progress < 100) {
-        const aEnd = parseDate(a.plannedEnd);
-        maxDelay = Math.max(maxDelay, daysBetween(aEnd, end));
-      }
+  // PERF: this used to be a sequential `for...await` loop — each Activity
+  // waited on the previous one, and each Activity itself did TWO separate
+  // round trips (getActivityDelayDays, then getActivityProgress) one after
+  // another. Promise.all across activities, with the two per-activity
+  // calls also run concurrently, turns what was 2×A serialized round trips
+  // into effectively one concurrent batch.
+  const perActivity = await Promise.all(result.recordset.map(async (a) => {
+    const [activityDelay, progress] = await Promise.all([
+      getActivityDelayDays(a.activityId, a.plannedEnd),
+      (end && a.plannedEnd) ? getActivityProgress(a.activityId) : Promise.resolve(null),
+    ]);
+    let delay = activityDelay;
+    if (end && a.plannedEnd && progress < 100) {
+      const aEnd = parseDate(a.plannedEnd);
+      delay = Math.max(delay, daysBetween(aEnd, end));
     }
-  }
+    return delay;
+  }));
 
-  return Math.max(0, maxDelay);
+  return Math.max(0, ...perActivity);
 }
 
 /**
@@ -175,21 +181,23 @@ async function getProjectDelayDays(projectId, projectPlannedEnd) {
     .query(`SELECT phase_id AS phaseId, planned_end AS plannedEnd FROM pm_phases WHERE project_id=@projectId AND is_deleted=0`);
 
   const end = parseDate(projectPlannedEnd);
-  let maxDelay = 0;
 
-  for (const ph of result.recordset) {
-    const phaseDelay = await getPhaseDelayDays(ph.phaseId, ph.plannedEnd);
-    maxDelay = Math.max(maxDelay, phaseDelay);
-    if (end && ph.plannedEnd) {
-      const progress = await getPhaseProgress(ph.phaseId);
-      if (progress < 100) {
-        const phEnd = parseDate(ph.plannedEnd);
-        maxDelay = Math.max(maxDelay, daysBetween(phEnd, end));
-      }
+  // PERF: same fix as getPhaseDelayDays above — was a sequential loop with
+  // two serialized round trips per Phase; now concurrent both ways.
+  const perPhase = await Promise.all(result.recordset.map(async (ph) => {
+    const [phaseDelay, progress] = await Promise.all([
+      getPhaseDelayDays(ph.phaseId, ph.plannedEnd),
+      (end && ph.plannedEnd) ? getPhaseProgress(ph.phaseId) : Promise.resolve(null),
+    ]);
+    let delay = phaseDelay;
+    if (end && ph.plannedEnd && progress < 100) {
+      const phEnd = parseDate(ph.plannedEnd);
+      delay = Math.max(delay, daysBetween(phEnd, end));
     }
-  }
+    return delay;
+  }));
 
-  return Math.max(0, maxDelay);
+  return Math.max(0, ...perPhase);
 }
 
 module.exports = { getTaskDelayDays, getActivityDelayDays, getPhaseDelayDays, getProjectDelayDays, getOverdueDays };

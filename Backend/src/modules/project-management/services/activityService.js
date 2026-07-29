@@ -3,7 +3,7 @@
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
 const { blockIfNeeded, isBlocked, isInactive } = require('./dependencyService');
-const { getActivityProgress, deriveStatus, getActivityHasActiveWork, getActivityHasTasks } = require('./progressService');
+const { deriveStatus, getActivityStats } = require('./progressService');
 const { getActivityDelayDays, getOverdueDays } = require('./delayService');
 const pmChatService = require('./pmChatService');
 const { getEffectiveActivityRole } = require('./roleService');
@@ -91,15 +91,24 @@ async function getActivitiesForPhase(phaseId, userId, isAdmin = false) {
     `);
 
   const rows = result.recordset.map(r => ({ ...r, dependsOn: parseIdList(r.dependsOn) }));
-  for (const act of rows) {
-    act.progress = await getActivityProgress(act.activityId);
+  // PERF: this used to be a sequential `for...await` loop, each row waiting
+  // on the previous one, and each row separately called
+  // getActivityProgress/getActivityHasActiveWork/getActivityHasTasks — three
+  // round trips independently re-reading the exact same pm_tasks rows.
+  // getActivityStats collapses those three into one query; Promise.all
+  // across rows runs every activity's work concurrently instead of
+  // serialized — see projectService.listProjects's identical PERF note for
+  // why this was the slowest part of loading a Phase's activity list.
+  await Promise.all(rows.map(async (act) => {
+    const stats = await getActivityStats(act.activityId);
+    act.progress = stats.progress;
     if (act.progress >= 100 && act.status === 'Blocked') {
       await pool.request()
         .input('activityId', sql.Int, act.activityId)
         .query(`UPDATE pm_activities SET status = 'To Do' WHERE activity_id = @activityId AND status = 'Blocked'`);
       act.status = 'To Do';
     }
-    act.status = deriveStatus(act.progress, act.status, await getActivityHasActiveWork(act.activityId));
+    act.status = deriveStatus(act.progress, act.status, stats.hasActiveWork);
     // Cascade blocking: an Activity under a Blocked Phase reads as Blocked
     // too, until the Phase's own dependency resolves — reflected at read
     // time rather than writing every descendant row.
@@ -120,18 +129,23 @@ async function getActivitiesForPhase(phaseId, userId, isAdmin = false) {
     // emptyState is NOT date-gated — "nothing here yet" is true regardless
     // of whether the date has passed, so the frontend can show a quiet "no
     // tasks yet" note immediately rather than only once it's also overdue.
-    const hasTasks = await getActivityHasTasks(act.activityId);
-    act.isOverdue = Boolean(act.plannedEndPassed) && act.status !== 'Completed' && hasTasks;
+    act.isOverdue = Boolean(act.plannedEndPassed) && act.status !== 'Completed' && stats.hasTasks;
     act.overdueDays = act.isOverdue ? getOverdueDays(act.plannedEnd) : 0;
-    act.emptyState = hasTasks ? null : 'noTasks';
+    act.emptyState = stats.hasTasks ? null : 'noTasks';
     delete act.plannedEndPassed;
-    act.delayDays = act.status === 'Completed' ? 0 : await getActivityDelayDays(act.activityId, act.plannedEnd);
-    act.myRole = userId ? (await getEffectiveActivityRole(userId, act.activityId, isAdmin)).role : null;
+    // delayDays/myRole are independent of progress/hasTasks/hasActiveWork
+    // above — run them concurrently rather than after one another.
+    const [delayDays, roleResult] = await Promise.all([
+      act.status === 'Completed' ? Promise.resolve(0) : getActivityDelayDays(act.activityId, act.plannedEnd),
+      userId ? getEffectiveActivityRole(userId, act.activityId, isAdmin) : Promise.resolve(null),
+    ]);
+    act.delayDays = delayDays;
+    act.myRole = roleResult ? roleResult.role : null;
     // Real status-history tracking for Timeline segmented bars — see
     // auditService.recordStatusIfChanged's comment for why this lives here
     // (on every read) rather than only on direct write actions.
     audit.recordStatusIfChanged('activity', act.activityId, act.projectId, act.status).catch(() => {});
-  }
+  }));
   return rows;
 }
 

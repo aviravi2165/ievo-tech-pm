@@ -3,7 +3,7 @@
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
 const { blockIfNeeded, isInactive } = require('./dependencyService');
-const { getPhaseProgress, deriveStatus, getPhaseHasActiveWork, getPhaseHasTasks, getPhaseActivityCount } = require('./progressService');
+const { deriveStatus, getPhaseStats } = require('./progressService');
 const { getPhaseDelayDays, getOverdueDays } = require('./delayService');
 const { getEffectivePhaseRole } = require('./roleService');
 const pmChatService = require('./pmChatService');
@@ -58,8 +58,16 @@ async function getPhasesForProject(projectId, userId, isAdmin = false) {
       ORDER BY ph.is_active DESC, ph.display_order
     `);
   const rows = result.recordset.map(r => ({ ...r, dependsOn: parseIdList(r.dependsOn) }));
-  for (const ph of rows) {
-    ph.progress = await getPhaseProgress(ph.phaseId);
+  // PERF: same fix as activityService.getActivitiesForPhase — this used to
+  // be a sequential `for...await` loop, and each row separately called
+  // getPhaseProgress/getPhaseHasActiveWork/getPhaseHasTasks/
+  // getPhaseActivityCount, each of which independently re-fetched this
+  // Phase's activity list AND re-ran its own fan-out over every activity.
+  // getPhaseStats collapses all four into one traversal per Phase;
+  // Promise.all across rows runs every Phase's work concurrently.
+  await Promise.all(rows.map(async (ph) => {
+    const stats = await getPhaseStats(ph.phaseId);
+    ph.progress = stats.progress;
     // If phase reached 100% but DB still says Blocked (stale from a dep that
     // was added before its predecessor was done), clear it now so deriveStatus
     // can return Completed correctly.
@@ -69,7 +77,7 @@ async function getPhasesForProject(projectId, userId, isAdmin = false) {
         .query(`UPDATE pm_phases SET status = 'To Do' WHERE phase_id = @phaseId AND status = 'Blocked'`);
       ph.status = 'To Do'; // will become Completed via deriveStatus below
     }
-    ph.status = deriveStatus(ph.progress, ph.status, await getPhaseHasActiveWork(ph.phaseId));
+    ph.status = deriveStatus(ph.progress, ph.status, stats.hasActiveWork);
     // Gated on actually having a task somewhere underneath it — see the
     // matching comment in activityService.getActivitiesForPhase. isOverdue
     // stays date-gated (that's a real "behind schedule" fact); emptyState
@@ -78,24 +86,25 @@ async function getPhasesForProject(projectId, userId, isAdmin = false) {
     // no Activities ('noActivities') from one whose Activities exist but
     // collectively have zero Tasks ('noTasks') — same wording an empty
     // Activity itself would show.
-    const [phaseHasTasks, activityCount] = await Promise.all([
-      getPhaseHasTasks(ph.phaseId),
-      getPhaseActivityCount(ph.phaseId),
-    ]);
-    ph.isOverdue = Boolean(ph.plannedEndPassed) && ph.status !== 'Completed' && phaseHasTasks;
+    ph.isOverdue = Boolean(ph.plannedEndPassed) && ph.status !== 'Completed' && stats.hasTasks;
     ph.overdueDays = ph.isOverdue ? getOverdueDays(ph.plannedEnd) : 0;
-    ph.emptyState = activityCount === 0 ? 'noActivities' : (phaseHasTasks ? null : 'noTasks');
+    ph.emptyState = stats.activityCount === 0 ? 'noActivities' : (stats.hasTasks ? null : 'noTasks');
     delete ph.plannedEndPassed;
-    ph.delayDays = ph.status === 'Completed' ? 0 : await getPhaseDelayDays(ph.phaseId, ph.plannedEnd);
     // Cascade: a Phase under an inactive Project reads as inactive too.
     ph.isActive = ph.ownIsActive !== false && ph.parentProjectActive !== false;
     delete ph.ownIsActive; delete ph.parentProjectActive;
-    ph.myRole = userId ? (await getEffectivePhaseRole(userId, ph.phaseId, isAdmin)).role : null;
+    // delayDays/myRole are independent of stats above — run concurrently.
+    const [delayDays, roleResult] = await Promise.all([
+      ph.status === 'Completed' ? Promise.resolve(0) : getPhaseDelayDays(ph.phaseId, ph.plannedEnd),
+      userId ? getEffectivePhaseRole(userId, ph.phaseId, isAdmin) : Promise.resolve(null),
+    ]);
+    ph.delayDays = delayDays;
+    ph.myRole = roleResult ? roleResult.role : null;
     // Real status-history tracking for Timeline segmented bars — see
     // auditService.recordStatusIfChanged's comment for why this lives here
     // (on every read) rather than only on direct write actions.
     audit.recordStatusIfChanged('phase', ph.phaseId, ph.projectId, ph.status).catch(() => {});
-  }
+  }));
   return rows;
 }
 

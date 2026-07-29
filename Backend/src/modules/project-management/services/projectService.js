@@ -2,7 +2,7 @@
 
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
-const { getProjectProgress, getProjectHasActiveWork, deriveProjectStatus, getProjectHasTasks, getProjectPhaseCount } = require('./progressService');
+const { deriveProjectStatus, getProjectStats } = require('./progressService');
 const { getProjectDelayDays, getOverdueDays } = require('./delayService');
 const { isInactive } = require('./dependencyService');
 const pmChatService = require('./pmChatService');
@@ -114,19 +114,21 @@ async function listProjects(userId, isAdmin = false, opts = {}) {
   // SQL fetch itself (above) is what actually bounds this loop's size now —
   // a page of 25 always does 25 concurrent chains, not however many
   // projects exist in total.
+  //
+  // PERF, round 2: progress/hasActiveWork/hasTasks/phaseCount used to be 4
+  // SEPARATE calls, each independently re-walking the same phase→activity→
+  // task tree from scratch. getProjectStats does it all in one traversal —
+  // see its comment in progressService.js.
   await Promise.all(rows.map(async (p) => {
-    p.progress = await getProjectProgress(p.projectId);
-    p.status = deriveProjectStatus(p.progress, p.status, await getProjectHasActiveWork(p.projectId));
+    const stats = await getProjectStats(p.projectId);
+    p.progress = stats.progress;
+    p.status = deriveProjectStatus(p.progress, p.status, stats.hasActiveWork);
     // Gated on actually having a task somewhere underneath it — see the
     // matching comment in activityService.getActivitiesForPhase. emptyState
     // is NOT date-gated, unlike isOverdue — see phaseService's own comment.
-    const [projectHasTasks, phaseCount] = await Promise.all([
-      getProjectHasTasks(p.projectId),
-      getProjectPhaseCount(p.projectId),
-    ]);
-    p.isOverdue = Boolean(p.plannedEndPassed) && p.status !== 'Completed' && p.status !== 'Cancelled' && projectHasTasks;
+    p.isOverdue = Boolean(p.plannedEndPassed) && p.status !== 'Completed' && p.status !== 'Cancelled' && stats.hasTasks;
     p.overdueDays = p.isOverdue ? getOverdueDays(p.plannedEnd) : 0;
-    p.emptyState = phaseCount === 0 ? 'noPhases' : (projectHasTasks ? null : 'noTasks');
+    p.emptyState = stats.phaseCount === 0 ? 'noPhases' : (stats.hasTasks ? null : 'noTasks');
     delete p.plannedEndPassed;
   }));
   return paginated ? { items: rows, total, page, pageSize } : rows;
@@ -166,15 +168,14 @@ async function getProject(projectId, userId, isAdmin = false) {
       FROM pm_members m LEFT JOIN auth_users u ON u.user_id=m.user_id
       WHERE m.project_id=@projectId ORDER BY m.role, u.first_name
     `);
-  const progress = await getProjectProgress(projectId);
-  proj.status = deriveProjectStatus(progress, proj.status, await getProjectHasActiveWork(projectId));
-  const [detailProjectHasTasks, detailPhaseCount] = await Promise.all([
-    getProjectHasTasks(projectId),
-    getProjectPhaseCount(projectId),
-  ]);
-  proj.isOverdue = Boolean(proj.plannedEndPassed) && proj.status !== 'Completed' && proj.status !== 'Cancelled' && detailProjectHasTasks;
+  // getProjectStats collapses progress/hasActiveWork/hasTasks/phaseCount
+  // into one traversal — see listProjects's identical PERF note above.
+  const stats = await getProjectStats(projectId);
+  const progress = stats.progress;
+  proj.status = deriveProjectStatus(progress, proj.status, stats.hasActiveWork);
+  proj.isOverdue = Boolean(proj.plannedEndPassed) && proj.status !== 'Completed' && proj.status !== 'Cancelled' && stats.hasTasks;
   proj.overdueDays = proj.isOverdue ? getOverdueDays(proj.plannedEnd) : 0;
-  proj.emptyState = detailPhaseCount === 0 ? 'noPhases' : (detailProjectHasTasks ? null : 'noTasks');
+  proj.emptyState = stats.phaseCount === 0 ? 'noPhases' : (stats.hasTasks ? null : 'noTasks');
   delete proj.plannedEndPassed;
   const delayDays = (proj.status === 'Completed' || proj.status === 'Cancelled')
     ? 0
