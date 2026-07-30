@@ -1,5 +1,6 @@
 const svc   = require('../services/projectService');
 const audit = require('../services/auditService');
+const activityInsights = require('../services/activityInsightsService');
 
 const list   = async (req,res,next) => {
   try {
@@ -22,6 +23,8 @@ const update = async (req,res,next) => { try { res.json(await svc.updateProject(
 const remove = async (req,res,next) => { try { res.json(await svc.deleteProject(req.params.id, req.user.userId)); } catch(e){next(e);} };
 const reactivate = async (req,res,next) => { try { await svc.reactivateProject(req.params.id, req.user.userId); res.json({ok:true}); } catch(e){next(e);} };
 const getAudit      = async (req,res,next) => { try { res.json(await audit.getProjectAudit(req.params.id)); } catch(e){next(e);} };
+const getTaskCompletions = async (req,res,next) => { try { res.json(await audit.getTaskCompletionDates(req.params.id)); } catch(e){next(e);} };
+const runActivityInsightsNow = async (req,res,next) => { try { res.json(await activityInsights.runActivityInsightsJob()); } catch(e){next(e);} };
 const getMembers    = async (req,res,next) => { try { res.json(await svc.getMembers(req.params.id)); } catch(e){next(e);} };
 
 // Returns deduplicated members with full phase → activity hierarchy for the Members tab
@@ -31,4 +34,4 @@ const addMember     = async (req,res,next) => { try { await svc.addMember(req.pa
 const updateMember  = async (req,res,next) => { try { await svc.updateMemberRole(req.params.id, req.params.uid, req.body.role, req.user.userId); res.json({ok:true}); } catch(e){next(e);} };
 const removeMember  = async (req,res,next) => { try { await svc.removeMember(req.params.id, req.params.uid, req.user.userId); res.json({ok:true}); } catch(e){next(e);} };
 
-module.exports = { list, get, create, update, remove, reactivate, getAudit, getMembers, getMembersHierarchy, addMember, updateMember, removeMember };
+module.exports = { list, get, create, update, remove, reactivate, getAudit, getTaskCompletions, runActivityInsightsNow, getMembers, getMembersHierarchy, addMember, updateMember, removeMember };

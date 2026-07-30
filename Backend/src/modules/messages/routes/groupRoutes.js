@@ -9,6 +9,10 @@ router.use(authenticate);
 router.get('/',    groupController.list);
 router.post('/',   groupController.create);
 
+// Super-admin single-group fetch, bypassing the Groups list's PM-thread
+// exclusion — see groupController.getOneForAdmin.
+router.get('/:groupId/admin', groupController.getOneForAdmin);
+
 router.get('/:groupId/members',         groupController.getMembers);
 router.post('/:groupId/members',        groupController.addMembers);
 router.delete('/:groupId/members/:userId', groupController.removeMember);

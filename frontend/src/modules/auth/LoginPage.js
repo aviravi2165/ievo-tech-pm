@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useAuth } from './AuthContext';
 import { useTheme } from '@emotion/react';
+import logoIcon from '../../shell/assets/specula-icon.png';
 import {
-  Root, Brand, BrandInner, Logo, LogoSub, Tagline, BrandFooter,
+  Root, Brand, BrandInner, LogoRow, LogoIcon, Logo, LogoSub, Tagline, BrandFooter,
   FormPanel, FormCard, Heading, Subheading, Field, Label, Input,
   ErrorBox, SuccessBox, SubmitBtn, Hint,
 } from './styles/AuthLayout.styles';
@@ -96,7 +97,10 @@ export default function LoginPage() {
       {/* Left brand panel */}
       <Brand>
         <BrandInner>
-          <Logo>SPECULA</Logo>
+          <LogoRow>
+            <LogoIcon src={logoIcon} alt="" />
+            <Logo>SPECULA</Logo>
+          </LogoRow>
           <LogoSub>Unified Platform</LogoSub>
           <Tagline>Design | Demonstrate | Deliver</Tagline>
           <FeatureList>

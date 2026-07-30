@@ -38,16 +38,26 @@ export default function TemplateEditor({ templateId, onClose, onSaved }) {
   // One shared "add" draft per level — only one phase/activity is ever
   // expanded at a time, so a single draft object per level is enough
   // without a form library or per-row state maps.
-  const [newPhase, setNewPhase] = useState({ name: '', description: '', startOffsetDays: 0, durationDays: 5 });
-  const [newActivity, setNewActivity] = useState({ name: '', description: '', startOffsetDays: 0, durationDays: 3 });
-  const [newTask, setNewTask] = useState({ name: '', description: '', priority: 'Medium', dueOffsetDays: 2 });
+  const [newPhase, setNewPhase] = useState({ name: '', description: '', startOffsetDays: 0, durationDays: 5, dependsOnPrevious: true });
+  const [newActivity, setNewActivity] = useState({ name: '', description: '', startOffsetDays: 0, durationDays: 3, dependsOnPrevious: true });
+  const [newTask, setNewTask] = useState({ name: '', description: '', priority: 'Medium', dueOffsetDays: 2, dependsOnPrevious: false });
 
   useEscapeKey(onClose);
 
   const refetch = useCallback(async (id) => {
-    const t = await templateApi.get(id);
-    setTemplate(t);
-    setName(t.name); setDescription(t.description || ''); setCategory(t.category || '');
+    // A failed fetch used to leave `template` at its initial `null` with no
+    // feedback at all — since `!template` is exactly the condition that
+    // renders the "New Template" form below, a broken Edit fetch looked
+    // indistinguishable from clicking "New Template": no error, just the
+    // wrong form. Surfacing the error here at least makes that failure
+    // visible instead of silently swapping which form you're looking at.
+    try {
+      const t = await templateApi.get(id);
+      setTemplate(t);
+      setName(t.name); setDescription(t.description || ''); setCategory(t.category || '');
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Failed to load template');
+    }
   }, []);
 
   useEffect(() => { if (templateId != null) refetch(templateId); }, [templateId, refetch]);
@@ -73,7 +83,7 @@ export default function TemplateEditor({ templateId, onClose, onSaved }) {
     if (!newPhase.name.trim() || !newPhase.durationDays) return;
     try {
       await templateApi.addPhase(template.templateId, newPhase);
-      setNewPhase({ name: '', description: '', startOffsetDays: 0, durationDays: 5 });
+      setNewPhase({ name: '', description: '', startOffsetDays: 0, durationDays: 5, dependsOnPrevious: true });
       await refetch(template.templateId);
     } catch (err) { alert(err?.response?.data?.error || 'Failed to add phase'); }
   };
@@ -82,12 +92,19 @@ export default function TemplateEditor({ templateId, onClose, onSaved }) {
     try { await templateApi.removePhase(phaseId); await refetch(template.templateId); }
     catch (err) { alert(err?.response?.data?.error || 'Failed to remove phase'); }
   };
+  // Toggled straight from the phase row's checkbox — no separate save step,
+  // same "changes apply immediately" convention every other template edit
+  // here already follows.
+  const togglePhaseDep = async (phaseId, dependsOnPrevious) => {
+    try { await templateApi.updatePhase(phaseId, { dependsOnPrevious }); await refetch(template.templateId); }
+    catch (err) { alert(err?.response?.data?.error || 'Failed to update phase'); }
+  };
 
   const addActivity = async (phaseId) => {
     if (!newActivity.name.trim() || !newActivity.durationDays) return;
     try {
       await templateApi.addActivity(phaseId, newActivity);
-      setNewActivity({ name: '', description: '', startOffsetDays: 0, durationDays: 3 });
+      setNewActivity({ name: '', description: '', startOffsetDays: 0, durationDays: 3, dependsOnPrevious: true });
       await refetch(template.templateId);
     } catch (err) { alert(err?.response?.data?.error || 'Failed to add activity'); }
   };
@@ -96,12 +113,16 @@ export default function TemplateEditor({ templateId, onClose, onSaved }) {
     try { await templateApi.removeActivity(activityId); await refetch(template.templateId); }
     catch (err) { alert(err?.response?.data?.error || 'Failed to remove activity'); }
   };
+  const toggleActivityDep = async (activityId, dependsOnPrevious) => {
+    try { await templateApi.updateActivity(activityId, { dependsOnPrevious }); await refetch(template.templateId); }
+    catch (err) { alert(err?.response?.data?.error || 'Failed to update activity'); }
+  };
 
   const addTask = async (activityId) => {
     if (!newTask.name.trim()) return;
     try {
       await templateApi.addTask(activityId, newTask);
-      setNewTask({ name: '', description: '', priority: 'Medium', dueOffsetDays: 2 });
+      setNewTask({ name: '', description: '', priority: 'Medium', dueOffsetDays: 2, dependsOnPrevious: false });
       await refetch(template.templateId);
     } catch (err) { alert(err?.response?.data?.error || 'Failed to add task'); }
   };
@@ -109,6 +130,10 @@ export default function TemplateEditor({ templateId, onClose, onSaved }) {
     if (!window.confirm('Remove this task from the template?')) return;
     try { await templateApi.removeTask(taskId); await refetch(template.templateId); }
     catch (err) { alert(err?.response?.data?.error || 'Failed to remove task'); }
+  };
+  const toggleTaskDep = async (taskId, dependsOnPrevious) => {
+    try { await templateApi.updateTask(taskId, { dependsOnPrevious }); await refetch(template.templateId); }
+    catch (err) { alert(err?.response?.data?.error || 'Failed to update task'); }
   };
 
   const inputStyle = { background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '6px 10px', color: theme.colors.onyx, fontSize: 12, fontFamily: 'inherit', outline: 'none' };
@@ -121,8 +146,27 @@ export default function TemplateEditor({ templateId, onClose, onSaved }) {
           <X size={18} strokeWidth={2} />
         </button>
 
-        <h3>{template ? 'Edit Template' : 'New Template'}</h3>
+        <h3>{templateId != null ? 'Edit Template' : 'New Template'}</h3>
 
+        {/* templateId != null but template hasn't loaded yet — either still
+            fetching, or the fetch failed (see refetch's catch above). Either
+            way this must NOT fall through to the "New Template" form below:
+            that form's own Create button would let you accidentally create
+            a brand-new template while thinking you're editing an existing
+            one, with no indication anything went wrong. */}
+        {templateId != null && !template ? (
+          <>
+            {error && <div style={{ color: theme.colors.danger, fontSize: 12, marginBottom: 10 }}>{error}</div>}
+            <div style={{ fontSize: 12, color: theme.colors.ash, marginBottom: 10 }}>
+              {error ? 'Could not load this template.' : 'Loading…'}
+            </div>
+            <ModalFooter>
+              <BtnGhost onClick={onClose}>Close</BtnGhost>
+              {error && <BtnPrimary onClick={() => refetch(templateId)}>Retry</BtnPrimary>}
+            </ModalFooter>
+          </>
+        ) : (
+        <>
         <Field>
           <label>Name <span className="req">*</span></label>
           <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Software Development Lifecycle" autoFocus />
@@ -150,7 +194,7 @@ export default function TemplateEditor({ templateId, onClose, onSaved }) {
             </div>
 
             <EditPanelTitle>Phases ({template.phases.length})</EditPanelTitle>
-            {template.phases.map(ph => (
+            {template.phases.map((ph, phIdx) => (
               <div key={ph.templatePhaseId} style={{ border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, marginBottom: 8, overflow: 'hidden' }}>
                 <div
                   onClick={() => setExpandedPhaseId(v => v === ph.templatePhaseId ? null : ph.templatePhaseId)}
@@ -159,6 +203,24 @@ export default function TemplateEditor({ templateId, onClose, onSaved }) {
                   {expandedPhaseId === ph.templatePhaseId ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                   <span style={{ fontSize: 12, fontWeight: 600, color: theme.colors.onyx, flex: 1 }}>{ph.name}</span>
                   <span style={{ fontSize: 10, color: theme.colors.ash }}>day {ph.startOffsetDays} → {ph.startOffsetDays + ph.durationDays} ({ph.activities.length} activit{ph.activities.length !== 1 ? 'ies' : 'y'})</span>
+                  {/* Only meaningful from the 2nd phase on — the first has
+                      no previous sibling to depend on either way. Instant
+                      toggle, no separate save step, same convention as
+                      everything else in this editor. */}
+                  {phIdx > 0 && (
+                    <label
+                      onClick={e => e.stopPropagation()}
+                      title="When on, this phase is blocked until the previous phase finishes (in every project created from this template)."
+                      style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 9.5, color: theme.colors.ash, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={ph.dependsOnPrevious !== false}
+                        onChange={e => togglePhaseDep(ph.templatePhaseId, e.target.checked)}
+                      />
+                      depends on previous
+                    </label>
+                  )}
                   <IconBtnDanger title="Remove phase" onClick={e => { e.stopPropagation(); removePhase(ph.templatePhaseId); }} style={{ width: 22, height: 22 }}>
                     <Trash2 size={12} strokeWidth={2} />
                   </IconBtnDanger>
@@ -166,7 +228,7 @@ export default function TemplateEditor({ templateId, onClose, onSaved }) {
 
                 {expandedPhaseId === ph.templatePhaseId && (
                   <div style={{ padding: '10px 14px', background: theme.colors.white }}>
-                    {ph.activities.map(act => (
+                    {ph.activities.map((act, actIdx) => (
                       <div key={act.templateActivityId} style={{ border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, marginBottom: 6, overflow: 'hidden' }}>
                         <div
                           onClick={() => setExpandedActivityId(v => v === act.templateActivityId ? null : act.templateActivityId)}
@@ -175,6 +237,20 @@ export default function TemplateEditor({ templateId, onClose, onSaved }) {
                           {expandedActivityId === act.templateActivityId ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                           <span style={{ fontSize: 11.5, fontWeight: 600, color: theme.colors.onyx, flex: 1 }}>{act.name}</span>
                           <span style={{ fontSize: 9.5, color: theme.colors.ash }}>day {act.startOffsetDays} → {act.startOffsetDays + act.durationDays} ({act.tasks.length} task{act.tasks.length !== 1 ? 's' : ''})</span>
+                          {actIdx > 0 && (
+                            <label
+                              onClick={e => e.stopPropagation()}
+                              title="When on, this activity is blocked until the previous activity in this phase finishes."
+                              style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 9, color: theme.colors.ash, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={act.dependsOnPrevious !== false}
+                                onChange={e => toggleActivityDep(act.templateActivityId, e.target.checked)}
+                              />
+                              depends on previous
+                            </label>
+                          )}
                           <IconBtnDanger title="Remove activity" onClick={e => { e.stopPropagation(); removeActivity(act.templateActivityId); }} style={{ width: 20, height: 20 }}>
                             <Trash2 size={11} strokeWidth={2} />
                           </IconBtnDanger>
@@ -182,10 +258,23 @@ export default function TemplateEditor({ templateId, onClose, onSaved }) {
 
                         {expandedActivityId === act.templateActivityId && (
                           <div style={{ padding: '8px 12px', background: theme.colors.white }}>
-                            {act.tasks.map(tk => (
+                            {act.tasks.map((tk, tkIdx) => (
                               <div key={tk.templateTaskId} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', borderBottom: `1px solid ${theme.colors.border}` }}>
                                 <span style={{ fontSize: 11, color: theme.colors.onyx, flex: 1 }}>{tk.name}</span>
                                 <span style={{ fontSize: 9.5, color: theme.colors.ash }}>{tk.priority} · due day {tk.dueOffsetDays}</span>
+                                {tkIdx > 0 && (
+                                  <label
+                                    title="When on, this task is blocked until the previous task in this activity finishes. Off by default — templates never auto-chained tasks before."
+                                    style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 9, color: theme.colors.ash, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={Boolean(tk.dependsOnPrevious)}
+                                      onChange={e => toggleTaskDep(tk.templateTaskId, e.target.checked)}
+                                    />
+                                    depends on previous
+                                  </label>
+                                )}
                                 <IconBtnDanger title="Remove task" onClick={() => removeTask(tk.templateTaskId)} style={{ width: 18, height: 18 }}>
                                   <Trash2 size={10} strokeWidth={2} />
                                 </IconBtnDanger>
@@ -207,6 +296,16 @@ export default function TemplateEditor({ templateId, onClose, onSaved }) {
                                   <label style={labelStyle}>Due (day)</label>
                                   <input type="number" min={0} style={{ ...inputStyle, width: 60 }} value={newTask.dueOffsetDays} onChange={e => setNewTask(f => ({ ...f, dueOffsetDays: Number(e.target.value) }))} />
                                 </div>
+                                {act.tasks.length > 0 && (
+                                  <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10.5, color: theme.colors.ash, cursor: 'pointer', paddingBottom: 7 }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={newTask.dependsOnPrevious}
+                                      onChange={e => setNewTask(f => ({ ...f, dependsOnPrevious: e.target.checked }))}
+                                    />
+                                    depends on previous
+                                  </label>
+                                )}
                                 <BtnPrimary style={{ padding: '7px 14px' }} onClick={() => addTask(act.templateActivityId)}>+ Add Task</BtnPrimary>
                               </div>
                             </EditPanel>
@@ -229,6 +328,16 @@ export default function TemplateEditor({ templateId, onClose, onSaved }) {
                           <label style={labelStyle}>Duration (days)</label>
                           <input type="number" min={1} style={{ ...inputStyle, width: 60 }} value={newActivity.durationDays} onChange={e => setNewActivity(f => ({ ...f, durationDays: Number(e.target.value) }))} />
                         </div>
+                        {ph.activities.length > 0 && (
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10.5, color: theme.colors.ash, cursor: 'pointer', paddingBottom: 7 }}>
+                            <input
+                              type="checkbox"
+                              checked={newActivity.dependsOnPrevious}
+                              onChange={e => setNewActivity(f => ({ ...f, dependsOnPrevious: e.target.checked }))}
+                            />
+                            depends on previous
+                          </label>
+                        )}
                         <BtnPrimary style={{ padding: '7px 14px' }} onClick={() => addActivity(ph.templatePhaseId)}>+ Add Activity</BtnPrimary>
                       </div>
                     </EditPanel>
@@ -252,6 +361,16 @@ export default function TemplateEditor({ templateId, onClose, onSaved }) {
                   <label style={labelStyle}>Duration (days)</label>
                   <input type="number" min={1} style={{ ...inputStyle, width: 60 }} value={newPhase.durationDays} onChange={e => setNewPhase(f => ({ ...f, durationDays: Number(e.target.value) }))} />
                 </div>
+                {template.phases.length > 0 && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10.5, color: theme.colors.ash, cursor: 'pointer', paddingBottom: 7 }}>
+                    <input
+                      type="checkbox"
+                      checked={newPhase.dependsOnPrevious}
+                      onChange={e => setNewPhase(f => ({ ...f, dependsOnPrevious: e.target.checked }))}
+                    />
+                    depends on previous
+                  </label>
+                )}
                 <BtnPrimary style={{ padding: '7px 14px' }} onClick={addPhase}>+ Add Phase</BtnPrimary>
               </div>
               <FieldHint>"Start (day)" is relative to the project's own start date once someone uses this template — Phase 1 usually starts at day 0.</FieldHint>
@@ -261,6 +380,8 @@ export default function TemplateEditor({ templateId, onClose, onSaved }) {
               <BtnPrimary onClick={() => onSaved()}>Done</BtnPrimary>
             </ModalFooter>
           </>
+        )}
+        </>
         )}
       </Modal>
     </ModalOverlay>

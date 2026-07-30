@@ -17,6 +17,22 @@ async function list(req, res) {
   }
 }
 
+// Super-admin single-group fetch, used to auto-open the moderation panel
+// for a PM Activity's chat group when it's not in the (deliberately
+// filtered) Groups list — see groupService.getGroupForAdmin.
+async function getOneForAdmin(req, res) {
+  try {
+    const groupId = parseInt(req.params.groupId, 10);
+    if (Number.isNaN(groupId)) {
+      return res.status(400).json({ error: 'Invalid group id' });
+    }
+    const group = await groupService.getGroupForAdmin(groupId, req.user.userId);
+    return res.json(group);
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
 async function create(req, res) {
   try {
     const groupName    = (req.body.groupName    || '').trim();
@@ -290,6 +306,7 @@ async function updateGroup(req, res) {
 
 module.exports = {
   list,
+  getOneForAdmin,
   create,
   updateGroup,
   getMembers,

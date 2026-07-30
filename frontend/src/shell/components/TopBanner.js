@@ -1,11 +1,11 @@
 import { useAuth }              from '../../modules/auth/AuthContext';
-import logo                     from '../assets/logo.png';
+import logo                     from '../assets/specula-icon.png';
 import { useState, useEffect } from 'react';
 import ProfileMenu              from './ProfileMenu';
 import ChangePasswordModal      from './ChangePasswordModal';
 import UserManagementModal      from '../../modules/users/UserManagementModal';
 import {
-  Topbar, TopbarBrand, TopbarLogoImg, TopbarDivider, TopbarModule,
+  Topbar, TopbarBrand, TopbarLogoImg, TopbarWordmark, TopbarDivider, TopbarModule,
   TopbarActions, TopbarStatus, StatusDot, TopbarProfile, TopbarAvatar,
   TopbarName, TopbarLogout, UserMgmtBtn,
 } from '../styles/TopBanner.styles';
@@ -43,7 +43,8 @@ export default function TopBanner({ currentUser, activeModule }) {
   return (
     <Topbar>
       <TopbarBrand>
-        <TopbarLogoImg src={logo} alt="I.EVO" />
+        <TopbarLogoImg src={logo} alt="" />
+        <TopbarWordmark>SPECULA</TopbarWordmark>
         <TopbarDivider />
         <TopbarModule>{activeModule?.label ?? 'ERP'}</TopbarModule>
       </TopbarBrand>

@@ -174,6 +174,18 @@ async function listThreadsForAdmin(req, res) {
   } catch (err) { return handleError(res, err); }
 }
 
+// Super-admin single-thread fetch, used to auto-open the moderation panel
+// for a PM Task's chat thread when it's not in the (deliberately filtered)
+// Threads list — see messageService.getThreadForAdmin.
+async function getOneThreadForAdmin(req, res) {
+  try {
+    const conversationId = parseInt(req.params.conversationId, 10);
+    if (isNaN(conversationId)) return res.status(400).json({ error: 'Invalid conversation id' });
+    const thread = await messageService.getThreadForAdmin(conversationId, req.user.userId);
+    return res.json(thread);
+  } catch (err) { return handleError(res, err); }
+}
+
 async function disableThread(req, res) {
   try {
     const conversationId = parseInt(req.params.conversationId, 10);
@@ -216,6 +228,6 @@ module.exports = {
   removeParticipant,  // FIX: exported
   addParticipant,
   markRead, remove, editMessage,
-  listThreadsForAdmin, disableThread, enableThread, deleteThread, hideThread,
+  listThreadsForAdmin, getOneThreadForAdmin, disableThread, enableThread, deleteThread, hideThread,
 };
  

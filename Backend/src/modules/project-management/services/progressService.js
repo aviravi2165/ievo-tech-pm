@@ -155,7 +155,172 @@ function deriveProjectStatus(progress, persistedStatus, hasActiveWork = false) {
   return 'Active';
 }
 
+/**
+ * "Has any ACTIVE task at all underneath" — distinct from hasActiveWork
+ * (only true for 'Ongoing' tasks) and from progress (reads 0% either way
+ * for an empty shell or one where nothing's done yet, so it can't tell
+ * those two apart). An Activity/Phase/Project with literally nothing
+ * active under it isn't "behind schedule" just because its planned_end
+ * passed — there's no work to actually be behind ON. isOverdue
+ * (activityService/phaseService/projectService) is gated on this so an
+ * empty container reads as "no tasks yet", not a false Overdue alarm.
+ *
+ * Filters on is_active=1, not just is_deleted=0 — a deactivated
+ * ("deleted") task/activity/phase still has a live row, so counting it
+ * here read as "there's real work here" when there isn't: the exact same
+ * staleness bug fixed on the frontend's Assignees tile (ActivityRow.js/
+ * PhasePanel.js counted deactivated tasks as active assignees), just one
+ * layer up — a container whose only children are all deactivated should
+ * read as empty, same as one with zero children at all.
+ */
+async function getActivityHasTasks(activityId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('activityId', sql.Int, activityId)
+    .query(`SELECT COUNT(*) AS cnt FROM pm_tasks WHERE activity_id=@activityId AND is_deleted=0 AND is_active=1`);
+  return (result.recordset[0]?.cnt || 0) > 0;
+}
+
+async function getPhaseHasTasks(phaseId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('phaseId', sql.Int, phaseId)
+    .query(`SELECT activity_id AS activityId FROM pm_activities WHERE phase_id=@phaseId AND is_deleted=0 AND is_active=1`);
+  if (!result.recordset.length) return false;
+  const flags = await Promise.all(result.recordset.map(a => getActivityHasTasks(a.activityId)));
+  return flags.some(Boolean);
+}
+
+async function getProjectHasTasks(projectId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('projectId', sql.Int, projectId)
+    .query(`SELECT phase_id AS phaseId FROM pm_phases WHERE project_id=@projectId AND is_deleted=0 AND is_active=1`);
+  if (!result.recordset.length) return false;
+  const flags = await Promise.all(result.recordset.map(ph => getPhaseHasTasks(ph.phaseId)));
+  return flags.some(Boolean);
+}
+
+// Immediate ACTIVE-child counts — used to tell "nothing active added under
+// this yet at all" (no activities / no phases) apart from "has active
+// activities/phases, but none of THEM have any active tasks yet" (see
+// phaseService/projectService's emptyState, which picks the wording based
+// on which of these is true). Same is_active=1 reasoning as the
+// hasTasks family above — a Phase whose only Activity was deactivated
+// should read "No activities yet", not silently stay "empty" forever
+// because a dead row is still technically there.
+async function getPhaseActivityCount(phaseId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('phaseId', sql.Int, phaseId)
+    .query(`SELECT COUNT(*) AS cnt FROM pm_activities WHERE phase_id=@phaseId AND is_deleted=0 AND is_active=1`);
+  return result.recordset[0]?.cnt || 0;
+}
+
+async function getProjectPhaseCount(projectId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('projectId', sql.Int, projectId)
+    .query(`SELECT COUNT(*) AS cnt FROM pm_phases WHERE project_id=@projectId AND is_deleted=0 AND is_active=1`);
+  return result.recordset[0]?.cnt || 0;
+}
+
+/**
+ * PERF: getActivitiesForPhase/getPhasesForProject/listProjects each used to
+ * call 3-4 of the individual functions above SEPARATELY per row — progress,
+ * hasActiveWork, hasTasks, (activity/phase count) — and every one of those
+ * independently re-walked the SAME child rows from scratch. For an Activity
+ * with N tasks that's 3 separate round trips reading the exact same N rows
+ * of pm_tasks; for a Phase with A activities, each of ITS 3-4 aggregate
+ * calls independently re-fetched the activity list AND re-ran its own
+ * fan-out over every activity — so a page with a few phases and a few dozen
+ * activities/tasks was doing many times more DB round trips than there are
+ * actual rows, which is what made list/detail loads measurably slow.
+ *
+ * getActivityStats/getPhaseStats/getProjectStats below replace that: ONE
+ * query per level (or one combined query at the task leaf) computing
+ * progress + hasActiveWork + hasTasks (+ child count one level up) in a
+ * single pass, called ONCE per activity/phase/project. The individual
+ * getXxxProgress/getXxxHasActiveWork/getXxxHasTasks/getXxxCount functions
+ * above are kept as-is and still exported — delayService/dependencyService/
+ * taskService only ever need ONE of these facts at a time for a single
+ * entity (e.g. one dependency check), so dragging in the full combined
+ * query there would be pure waste, not a speedup.
+ */
+async function getActivityStats(activityId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('activityId', sql.Int, activityId)
+    .query(`
+      SELECT
+        ROUND(AVG(CASE WHEN status='Complete' THEN 100.0 ELSE 0 END), 0) AS progress,
+        CAST(CASE WHEN SUM(CASE WHEN status='Ongoing' THEN 1 ELSE 0 END) > 0 THEN 1 ELSE 0 END AS BIT) AS hasActiveWork,
+        CAST(CASE WHEN SUM(CASE WHEN is_active=1 THEN 1 ELSE 0 END) > 0 THEN 1 ELSE 0 END AS BIT) AS hasTasks
+      FROM pm_tasks WHERE activity_id=@activityId AND is_deleted=0
+    `);
+  const row = result.recordset[0] || {};
+  return {
+    progress: parseInt(row.progress || 0, 10),
+    hasActiveWork: Boolean(row.hasActiveWork),
+    hasTasks: Boolean(row.hasTasks),
+  };
+}
+
+async function getPhaseStats(phaseId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('phaseId', sql.Int, phaseId)
+    .query(`SELECT activity_id AS activityId, is_active AS isActive FROM pm_activities WHERE phase_id=@phaseId AND is_deleted=0`);
+  const activities = result.recordset;
+  if (!activities.length) return { progress: 0, hasActiveWork: false, hasTasks: false, activityCount: 0 };
+
+  const statsList = await Promise.all(activities.map(a => getActivityStats(a.activityId)));
+  const progress = Math.round(statsList.reduce((s, v) => s + v.progress, 0) / activities.length);
+  const hasActiveWork = statsList.some(s => s.hasActiveWork);
+  // hasTasks/activityCount only count ACTIVE activities (a deactivated
+  // Activity's tasks shouldn't mask the Phase reading as empty) — matches
+  // getPhaseHasTasks/getPhaseActivityCount's is_active=1 filter above.
+  // progress/hasActiveWork deliberately still average/OR over ALL
+  // activities, active or not, matching getPhaseProgress/
+  // getPhaseHasActiveWork's unfiltered queries above.
+  let hasTasks = false, activityCount = 0;
+  activities.forEach((a, i) => {
+    if (a.isActive !== false) {
+      activityCount += 1;
+      if (statsList[i].hasTasks) hasTasks = true;
+    }
+  });
+  return { progress, hasActiveWork, hasTasks, activityCount };
+}
+
+async function getProjectStats(projectId) {
+  const pool = await getPool();
+  const result = await pool.request()
+    .input('projectId', sql.Int, projectId)
+    .query(`SELECT phase_id AS phaseId, is_active AS isActive FROM pm_phases WHERE project_id=@projectId AND is_deleted=0`);
+  const phases = result.recordset;
+  if (!phases.length) return { progress: 0, hasActiveWork: false, hasTasks: false, phaseCount: 0 };
+
+  const statsList = await Promise.all(phases.map(ph => getPhaseStats(ph.phaseId)));
+  const progress = Math.round(statsList.reduce((s, v) => s + v.progress, 0) / phases.length);
+  const hasActiveWork = statsList.some(s => s.hasActiveWork);
+  // Same active-only filter for hasTasks/phaseCount, all-phases for
+  // progress/hasActiveWork — matches getProjectHasTasks/getProjectPhaseCount
+  // vs getProjectProgress/getProjectHasActiveWork above.
+  let hasTasks = false, phaseCount = 0;
+  phases.forEach((ph, i) => {
+    if (ph.isActive !== false) {
+      phaseCount += 1;
+      if (statsList[i].hasTasks) hasTasks = true;
+    }
+  });
+  return { progress, hasActiveWork, hasTasks, phaseCount };
+}
+
 module.exports = {
   getProjectProgress, getPhaseProgress, getActivityProgress, deriveStatus, deriveProjectStatus,
+  getPhaseActivityCount, getProjectPhaseCount,
   getActivityHasActiveWork, getPhaseHasActiveWork, getProjectHasActiveWork,
+  getActivityHasTasks, getPhaseHasTasks, getProjectHasTasks,
+  getActivityStats, getPhaseStats, getProjectStats,
 };

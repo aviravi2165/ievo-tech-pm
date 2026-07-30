@@ -130,7 +130,12 @@ export default function MessageBubble({
         >
           <span style={
             systemExpanded
-              ? { whiteSpace: 'normal', wordBreak: 'break-word' }
+              // pre-line (not normal) so multi-line system messages (e.g.
+              // Activity Insights reports) keep their line breaks instead of
+              // collapsing into one run-on paragraph — a no-op for the
+              // original one-line system messages (name/description
+              // changes), which never contain a newline to begin with.
+              ? { whiteSpace: 'pre-line', wordBreak: 'break-word' }
               : { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
           }>
             {fullText}

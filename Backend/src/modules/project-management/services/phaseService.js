@@ -3,9 +3,10 @@
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
 const { blockIfNeeded, isInactive } = require('./dependencyService');
-const { getPhaseProgress, deriveStatus, getPhaseHasActiveWork } = require('./progressService');
-const { getPhaseDelayDays } = require('./delayService');
+const { deriveStatus, getPhaseStats } = require('./progressService');
+const { getPhaseDelayDays, getOverdueDays } = require('./delayService');
 const { getEffectivePhaseRole } = require('./roleService');
+const pmChatService = require('./pmChatService');
 
 function parseIdList(val) {
   if (!val) return [];
@@ -28,8 +29,12 @@ async function getPhasesForProject(projectId, userId, isAdmin = false) {
              ph.planned_start AS plannedStart, ph.planned_end AS plannedEnd,
              ph.status, ph.status_override AS statusOverride, ph.created_at AS createdAt,
              ph.is_active AS ownIsActive, parentProj.is_active AS parentProjectActive,
-             CASE WHEN ph.planned_end < CAST(GETDATE() AS DATE) AND ph.status <> 'Completed'
-                  THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS isOverdue,
+             -- Raw "past its own planned_end" only — status exclusion
+             -- applied in JS below against the DERIVED status; see the
+             -- matching comment in activityService.getActivitiesForPhase
+             -- for why gating this on the raw ph.status column was wrong.
+             CASE WHEN ph.planned_end < CAST(GETDATE() AS DATE)
+                  THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS plannedEndPassed,
              (
                SELECT STRING_AGG(CAST(depends_on_phase_id AS VARCHAR(20)), ',')
                FROM pm_phase_deps WHERE phase_id = ph.phase_id
@@ -53,8 +58,16 @@ async function getPhasesForProject(projectId, userId, isAdmin = false) {
       ORDER BY ph.is_active DESC, ph.display_order
     `);
   const rows = result.recordset.map(r => ({ ...r, dependsOn: parseIdList(r.dependsOn) }));
-  for (const ph of rows) {
-    ph.progress = await getPhaseProgress(ph.phaseId);
+  // PERF: same fix as activityService.getActivitiesForPhase — this used to
+  // be a sequential `for...await` loop, and each row separately called
+  // getPhaseProgress/getPhaseHasActiveWork/getPhaseHasTasks/
+  // getPhaseActivityCount, each of which independently re-fetched this
+  // Phase's activity list AND re-ran its own fan-out over every activity.
+  // getPhaseStats collapses all four into one traversal per Phase;
+  // Promise.all across rows runs every Phase's work concurrently.
+  await Promise.all(rows.map(async (ph) => {
+    const stats = await getPhaseStats(ph.phaseId);
+    ph.progress = stats.progress;
     // If phase reached 100% but DB still says Blocked (stale from a dep that
     // was added before its predecessor was done), clear it now so deriveStatus
     // can return Completed correctly.
@@ -64,17 +77,34 @@ async function getPhasesForProject(projectId, userId, isAdmin = false) {
         .query(`UPDATE pm_phases SET status = 'To Do' WHERE phase_id = @phaseId AND status = 'Blocked'`);
       ph.status = 'To Do'; // will become Completed via deriveStatus below
     }
-    ph.status = deriveStatus(ph.progress, ph.status, await getPhaseHasActiveWork(ph.phaseId));
-    ph.delayDays = ph.status === 'Completed' ? 0 : await getPhaseDelayDays(ph.phaseId, ph.plannedEnd);
+    ph.status = deriveStatus(ph.progress, ph.status, stats.hasActiveWork);
+    // Gated on actually having a task somewhere underneath it — see the
+    // matching comment in activityService.getActivitiesForPhase. isOverdue
+    // stays date-gated (that's a real "behind schedule" fact); emptyState
+    // is NOT date-gated — it's "there's nothing here yet" regardless of
+    // whether the date has passed, distinguishing a Phase with literally
+    // no Activities ('noActivities') from one whose Activities exist but
+    // collectively have zero Tasks ('noTasks') — same wording an empty
+    // Activity itself would show.
+    ph.isOverdue = Boolean(ph.plannedEndPassed) && ph.status !== 'Completed' && stats.hasTasks;
+    ph.overdueDays = ph.isOverdue ? getOverdueDays(ph.plannedEnd) : 0;
+    ph.emptyState = stats.activityCount === 0 ? 'noActivities' : (stats.hasTasks ? null : 'noTasks');
+    delete ph.plannedEndPassed;
     // Cascade: a Phase under an inactive Project reads as inactive too.
     ph.isActive = ph.ownIsActive !== false && ph.parentProjectActive !== false;
     delete ph.ownIsActive; delete ph.parentProjectActive;
-    ph.myRole = userId ? (await getEffectivePhaseRole(userId, ph.phaseId, isAdmin)).role : null;
+    // delayDays/myRole are independent of stats above — run concurrently.
+    const [delayDays, roleResult] = await Promise.all([
+      ph.status === 'Completed' ? Promise.resolve(0) : getPhaseDelayDays(ph.phaseId, ph.plannedEnd),
+      userId ? getEffectivePhaseRole(userId, ph.phaseId, isAdmin) : Promise.resolve(null),
+    ]);
+    ph.delayDays = delayDays;
+    ph.myRole = roleResult ? roleResult.role : null;
     // Real status-history tracking for Timeline segmented bars — see
     // auditService.recordStatusIfChanged's comment for why this lives here
     // (on every read) rather than only on direct write actions.
     audit.recordStatusIfChanged('phase', ph.phaseId, ph.projectId, ph.status).catch(() => {});
-  }
+  }));
   return rows;
 }
 
@@ -94,24 +124,19 @@ async function createPhase(projectId, userId, body) {
 
   const pool = await getPool();
 
-  // A Phase can't be planned to start before, or end after, its own
-  // Project — mirrors the same rule enforced for Task→Activity (see
-  // taskService.createTask) and the Timeline's visual clamp-to-parent, but
-  // at the write boundary so the underlying data can't drift out of sync
-  // with what the UI shows. BUG-028: the end-date half of this didn't
-  // exist — same gap as Activity→Phase one level down.
-  if (plannedStart || plannedEnd) {
+  // A Phase can't be planned to start before its own Project — but it CAN
+  // be planned (or run) past the Project's planned_end: that's a real
+  // schedule delay, not an invalid input, and it's exactly what
+  // delayService.getProjectDelayDays surfaces (it compares each Phase's
+  // planned_end against the Project's own and bubbles up the overrun as
+  // delayDays) rather than something to reject at write time.
+  if (plannedStart) {
     const projResult = await pool.request()
       .input('projectId', sql.Int, projectId)
-      .query(`SELECT planned_start AS plannedStart, planned_end AS plannedEnd FROM pm_projects WHERE project_id=@projectId`);
+      .query(`SELECT planned_start AS plannedStart FROM pm_projects WHERE project_id=@projectId`);
     const projectStart = projResult.recordset[0]?.plannedStart;
-    const projectEnd   = projResult.recordset[0]?.plannedEnd;
-    if (plannedStart && projectStart && new Date(plannedStart) < new Date(projectStart)) {
+    if (projectStart && new Date(plannedStart) < new Date(projectStart)) {
       const e = new Error("Phase start date can't be before its Project's planned start date.");
-      e.statusCode = 400; throw e;
-    }
-    if (plannedEnd && projectEnd && new Date(plannedEnd) > new Date(projectEnd)) {
-      const e = new Error("Phase end date can't be after its Project's planned end date.");
       e.statusCode = 400; throw e;
     }
   }
@@ -213,6 +238,7 @@ async function deletePhase(phaseId, projectId, userId) {
       .input('phaseId', sql.Int, phaseId)
       .query(`UPDATE pm_phases SET is_active=0 WHERE phase_id=@phaseId`);
     await audit.log({ entityType:'phase', entityId:phaseId, projectId, userId, action:'deactivated' });
+    await pmChatService.setActivityThreadsDisabledForPhase(phaseId, true);
     return { action: 'deactivated' };
   }
 
@@ -225,10 +251,23 @@ async function deletePhase(phaseId, projectId, userId) {
 
 async function reactivatePhase(phaseId, projectId, userId) {
   const pool = await getPool();
+
+  // Same gap as activityService.reactivateActivity: the Reactivate button
+  // reads as available whenever the Phase's CASCADED isActive is false,
+  // which also fires when only the Project is inactive and this Phase's
+  // own row was never touched — flipping pm_phases.is_active=1 then is a
+  // silent no-op. Point the user at the Project instead of letting the
+  // click appear to do nothing.
+  if (!(await isInactive('phase', phaseId)) && await isInactive('project', projectId)) {
+    const e = new Error("This Phase is inactive because its Project is inactive — reactivate the Project instead.");
+    e.statusCode = 409; throw e;
+  }
+
   await pool.request()
     .input('phaseId', sql.Int, phaseId)
     .query(`UPDATE pm_phases SET is_active=1 WHERE phase_id=@phaseId`);
   await audit.log({ entityType:'phase', entityId:phaseId, projectId, userId, action:'reactivated' });
+  await pmChatService.setActivityThreadsDisabledForPhase(phaseId, false);
 }
 
 // Permanent removal — only reachable once the Phase is already deactivated
@@ -248,10 +287,20 @@ async function hardDeletePhase(phaseId, projectId, userId) {
   const pool = await getPool();
   const phaseResult = await pool.request()
     .input('phaseId', sql.Int, phaseId)
-    .query(`SELECT is_active AS isActive FROM pm_phases WHERE phase_id=@phaseId AND is_deleted=0`);
+    .query(`
+      SELECT ph.is_active AS ownActive, pr.is_active AS projectActive
+      FROM pm_phases ph
+      INNER JOIN pm_projects pr ON pr.project_id = ph.project_id
+      WHERE ph.phase_id=@phaseId AND ph.is_deleted=0
+    `);
   const phase = phaseResult.recordset[0];
   if (!phase) { const e = new Error('Phase not found'); e.statusCode = 404; throw e; }
-  if (phase.isActive) {
+  // Same cascaded-vs-own mismatch as taskService.hardDeleteTask — a Phase
+  // reading Inactive in the list because its Project is inactive, even
+  // though the Phase's own row was never explicitly deactivated, should
+  // satisfy this guard too.
+  const isActive = phase.ownActive !== false && phase.projectActive !== false;
+  if (isActive) {
     const e = new Error('Deactivate this Phase before permanently deleting it.');
     e.statusCode = 409; throw e;
   }

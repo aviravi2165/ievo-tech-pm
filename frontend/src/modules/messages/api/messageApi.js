@@ -45,6 +45,13 @@ export const messageApi = {
   getAdminThreads: () =>
     api.get('/api/messages/threads').then(r => r.data),
 
+  // Super-admin single-thread fetch — for PM Task chat threads, which are
+  // deliberately excluded from getAdminThreads() (see Backend
+  // messageService.js), but still need to be reachable when ChatButton.js
+  // opens one directly.
+  getOneThreadForAdmin: (conversationId) =>
+    api.get(`/api/messages/threads/${conversationId}`).then(r => r.data),
+
   // Creator or super admin only — freeze / unfreeze a non-group thread
   disableThread: (conversationId) =>
     api.patch(`/api/messages/threads/${conversationId}/disable`).then(r => r.data),

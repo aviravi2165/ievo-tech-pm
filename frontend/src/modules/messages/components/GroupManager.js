@@ -15,6 +15,8 @@ import {
   MemberRow, MemberAvatar, MemberInfo, MemberName, MemberEmail, AdminTag,
   MemberActions,
 } from '../styles/GroupManager.styles';
+import { useSortFilter } from '../../shared/hooks/useSortFilter';
+import { SortSelect, FilterToggle } from '../../shared/components/TableControls';
 
 // Mirrors InboxSidebar's fmtTime — same relative-time labels so all tabs feel identical
 function fmtTime(dateStr) {
@@ -83,6 +85,8 @@ export default function GroupManager({
   const [creating,       setCreating]       = useState(false);
   const [groupSearch,    setGroupSearch]    = useState('');
   const [threadSearch,   setThreadSearch]   = useState('');
+  const [showGroupControls,  setShowGroupControls]  = useState(false);
+  const [showThreadControls, setShowThreadControls] = useState(false);
   const [newName,        setNewName]        = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [createError,    setCreateError]    = useState('');
@@ -117,6 +121,63 @@ export default function GroupManager({
 
   // Determine if current user is super admin (any group will have isSuperAdmin set)
   const isSuperAdmin = groups.some(g => g.isSuperAdmin);
+
+  // Sort/filter — same collapsed-behind-a-toggle pattern InboxSidebar uses
+  // (see its own comment for why), which this list never had at all: it
+  // only ever had the plain name search box, no user-toggleable sort
+  // direction and no "unread only" filter, even though those exist one tab
+  // over. "Unread only" is skipped for the admin governance view — an
+  // admin isn't a real participant in any of these conversations (see
+  // socketHandler.js's super-admin room-join bypass), so unreadCount is
+  // never meaningful for them.
+  const groupsSearched = useMemo(() =>
+    groups.filter(g => !groupSearch.trim() || (g.groupName || '').toLowerCase().includes(groupSearch.toLowerCase())),
+    [groups, groupSearch]
+  );
+  // Disabled groups sink to the bottom regardless of chosen sort direction —
+  // sorted separately and appended after, rather than folded into the
+  // comparator, since useSortFilter multiplies the WHOLE comparator result
+  // by the direction toggle: a same-comparator "disabled last" term would
+  // have flipped to "disabled first" the moment someone picked Oldest-first.
+  const {
+    items: sortedActiveGroups, sortDir: groupSortDir, toggleSortDir: toggleGroupSortDir,
+    filters: groupFilters, setFilter: setGroupFilter,
+  } = useSortFilter(groupsSearched.filter(g => !g.isDisabled), {
+    sorters: {
+      recent: (a, b) => {
+        const ta = groupConvMap[String(a.groupId)]?.latestAt || a.createdAt || '';
+        const tb = groupConvMap[String(b.groupId)]?.latestAt || b.createdAt || '';
+        return new Date(ta).getTime() - new Date(tb).getTime();
+      },
+    },
+    filters: { unreadOnly: { predicate: (g) => (groupConvMap[String(g.groupId)]?.unreadCount || 0) > 0 } },
+    defaultSortKey: 'recent',
+    defaultSortDir: 'desc',
+  });
+  const disabledGroups = groupsSearched
+    .filter(g => g.isDisabled && (!groupFilters.unreadOnly || (groupConvMap[String(g.groupId)]?.unreadCount || 0) > 0))
+    .sort((a, b) => {
+      const ta = groupConvMap[String(a.groupId)]?.latestAt || a.createdAt || '';
+      const tb = groupConvMap[String(b.groupId)]?.latestAt || b.createdAt || '';
+      return (new Date(tb).getTime() - new Date(ta).getTime()) * (groupSortDir === 'asc' ? -1 : 1);
+    });
+  const sortedGroups = [...sortedActiveGroups, ...disabledGroups];
+
+  const threadsSearched = useMemo(() =>
+    (threads || []).filter(t => {
+      if (t.convType !== 'cc') return false;
+      return !threadSearch.trim() || (t.subject || '').toLowerCase().includes(threadSearch.toLowerCase());
+    }),
+    [threads, threadSearch]
+  );
+  const {
+    items: sortedThreads, sortDir: threadSortDir, toggleSortDir: toggleThreadSortDir,
+  } = useSortFilter(threadsSearched, {
+    sorters: { recent: (a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime() },
+    filters: {},
+    defaultSortKey: 'recent',
+    defaultSortDir: 'desc',
+  });
 
   const handleCreate = async () => {
     if (!newName.trim()) { setCreateError('Group name is required.'); return; }
@@ -183,23 +244,50 @@ export default function GroupManager({
   // groups/threads may not have finished loading yet when the request first
   // arrives, so this re-runs whenever either list updates until it finds a
   // match, rather than only firing once on mount.
+  //
+  // PM Activity/Task threads are deliberately excluded from these lists
+  // (browsing noise — see the backend's pm_activity_threads/pm_task_threads
+  // exclusion), so a match will never be found for those. Once the list has
+  // actually finished loading and still has no match, fall back to fetching
+  // that one group/thread directly by id (getOneForAdmin/
+  // getOneThreadForAdmin) instead of silently doing nothing — an admin
+  // clicking the chat icon on a Task/Activity should still land on its
+  // moderation panel, same as before these lists were filtered.
   useEffect(() => {
-    if (!autoManageGroupId || !groups.length) return;
+    if (!autoManageGroupId) return;
     const match = groups.find(g => String(g.groupId) === String(autoManageGroupId));
-    if (!match) return;
-    openManage(match);
-    onAutoManageGroupHandled?.();
+    if (match) {
+      openManage(match);
+      onAutoManageGroupHandled?.();
+      return;
+    }
+    if (loading) return; // list still in flight — wait for it, don't fetch prematurely
+    let cancelled = false;
+    groupApi.getOneForAdmin(autoManageGroupId)
+      .then(group => { if (!cancelled) openManage(group); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) onAutoManageGroupHandled?.(); });
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoManageGroupId, groups]);
+  }, [autoManageGroupId, groups, loading]);
 
   useEffect(() => {
-    if (!autoManageThreadId || !threads?.length) return;
-    const match = threads.find(t => String(t.conversationId) === String(autoManageThreadId));
-    if (!match) return;
-    openManageThread(match);
-    onAutoManageThreadHandled?.();
+    if (!autoManageThreadId) return;
+    const match = (threads || []).find(t => String(t.conversationId) === String(autoManageThreadId));
+    if (match) {
+      openManageThread(match);
+      onAutoManageThreadHandled?.();
+      return;
+    }
+    if (threadsLoading) return;
+    let cancelled = false;
+    messageApi.getOneThreadForAdmin(autoManageThreadId)
+      .then(thread => { if (!cancelled) openManageThread(thread); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) onAutoManageThreadHandled?.(); });
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoManageThreadId, threads]);
+  }, [autoManageThreadId, threads, threadsLoading]);
 
   const handleRemoveThreadParticipant = async (conversationId, userId) => {
     try {
@@ -614,11 +702,25 @@ export default function GroupManager({
               previously let rows scroll up OVER this header). */}
           <StickyTop>
             <SearchWrap style={isSuperAdmin ? { margin: '16px 12px 8px 12px' } : undefined}>
-              <SearchInput
-                placeholder="Search threads by subject…"
-                value={threadSearch}
-                onChange={e => setThreadSearch(e.target.value)}
-              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ flex: 1 }}>
+                  <SearchInput
+                    placeholder="Search threads by subject…"
+                    value={threadSearch}
+                    onChange={e => setThreadSearch(e.target.value)}
+                  />
+                </div>
+                {threads.length > 0 && (
+                  <FilterToggle open={showThreadControls} onClick={() => setShowThreadControls(v => !v)}
+                    active={false} title="Sort" />
+                )}
+              </div>
+              {showThreadControls && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                  <SortSelect value="recent" onChange={() => {}} dir={threadSortDir} onToggleDir={toggleThreadSortDir}
+                    options={[{ value: 'recent', label: threadSortDir === 'desc' ? 'Newest first' : 'Oldest first' }]} />
+                </div>
+              )}
             </SearchWrap>
           </StickyTop>
 
@@ -626,16 +728,11 @@ export default function GroupManager({
             <div style={{ padding: '8px 12px' }}>
             {threadsLoading && <LoaderWrap><Spinner /></LoaderWrap>}
 
-            {!threadsLoading && threads.filter(t => t.convType === 'cc').length === 0 && (
-              <ListEmptyMsg>No shared threads yet.</ListEmptyMsg>
+            {!threadsLoading && sortedThreads.length === 0 && (
+              <ListEmptyMsg>{threadSearch.trim() ? 'No results found.' : 'No shared threads yet.'}</ListEmptyMsg>
             )}
 
-            {(threads || [])
-              .filter(t => {
-                if (t.convType !== 'cc') return false;
-                if (!threadSearch.trim()) return true;
-                return (t.subject || '').toLowerCase().includes(threadSearch.toLowerCase());
-              })
+            {sortedThreads
               .map(t => {
                 const isDisabled = Boolean(t.isDisabled);
                 const timeLabel  = fmtTime(t.createdAt);
@@ -744,12 +841,33 @@ export default function GroupManager({
           )}
 
           <SearchWrap style={isSuperAdmin ? { margin: '16px 12px 8px 12px' } : undefined}>
-            <SearchInput
-              type="text"
-              placeholder="Search groups by name…"
-              value={groupSearch}
-              onChange={e => setGroupSearch(e.target.value)}
-            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ flex: 1 }}>
+                <SearchInput
+                  type="text"
+                  placeholder="Search groups by name…"
+                  value={groupSearch}
+                  onChange={e => setGroupSearch(e.target.value)}
+                />
+              </div>
+              {groups.length > 0 && (
+                <FilterToggle open={showGroupControls} onClick={() => setShowGroupControls(v => !v)}
+                  active={!!groupFilters.unreadOnly} title="Sort & filter" />
+              )}
+            </div>
+            {showGroupControls && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                <SortSelect value="recent" onChange={() => {}} dir={groupSortDir} onToggleDir={toggleGroupSortDir}
+                  options={[{ value: 'recent', label: groupSortDir === 'desc' ? 'Newest first' : 'Oldest first' }]} />
+                {!isSuperAdmin && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={!!groupFilters.unreadOnly}
+                      onChange={e => setGroupFilter('unreadOnly', e.target.checked || null)} />
+                    Unread only
+                  </label>
+                )}
+              </div>
+            )}
           </SearchWrap>
         </StickyTop>
 
@@ -757,24 +875,15 @@ export default function GroupManager({
           <div style={{ padding: '8px 12px' }}>
           {loading && <LoaderWrap><Spinner /></LoaderWrap>}
 
-          {!loading && groups.length === 0 && (
-            <ListEmptyMsg>No groups yet.{!isSuperAdmin && ' Create one above.'}</ListEmptyMsg>
+          {!loading && sortedGroups.length === 0 && (
+            <ListEmptyMsg>
+              {groupSearch.trim() || groupFilters.unreadOnly
+                ? 'No results found.'
+                : <>No groups yet.{!isSuperAdmin && ' Create one above.'}</>}
+            </ListEmptyMsg>
           )}
 
-          {[...groups]
-            .filter(g =>
-              !groupSearch.trim() ||
-              (g.groupName || '').toLowerCase().includes(groupSearch.toLowerCase())
-            )
-            .sort((a, b) => {
-              // Disabled groups sink to the bottom
-              const aOff = Boolean(a.isDisabled);
-              const bOff = Boolean(b.isDisabled);
-              if (aOff !== bOff) return aOff ? 1 : -1;
-              const ta = groupConvMap[String(a.groupId)]?.latestAt || a.createdAt || '';
-              const tb = groupConvMap[String(b.groupId)]?.latestAt || b.createdAt || '';
-              return tb < ta ? -1 : tb > ta ? 1 : 0;
-            })
+          {sortedGroups
             .map(g => {
               const isDisabled = Boolean(g.isDisabled);
               const conv       = groupConvMap[String(g.groupId)];

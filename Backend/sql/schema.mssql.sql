@@ -579,6 +579,55 @@ ALTER TABLE dbo.pm_audit_log WITH NOCHECK ADD CONSTRAINT CK_pm_audit_log_entity_
     CHECK (entity_type IN ('project','phase','activity','task'));
 
 -- ────────────────────────────────────────────────────────────
+-- pm_project_insights — per-project OVERRIDES to the Analytics catalog's
+-- default visibility (see insightsService.js's CATALOG, each entry marked
+-- `default: true/false`). A project with no rows here shows exactly the
+-- catalog's own defaults (the original fixed sections — Progress by Phase,
+-- Task Status, etc.) with the optional ones (Cumulative Flow, Cycle Time,
+-- etc.) hidden. A row EITHER hides a default OR shows an optional — the
+-- `visible` bit is what makes both directions the same mechanism, so
+-- removing a "default" section and re-adding an "optional" one go through
+-- identical code, and a removed default reappears in the "+ Add Insight"
+-- picker exactly like any other not-currently-visible catalog entry.
+-- Nothing about an insight's actual DATA lives here — every widget is
+-- computed fresh on read, same "never stored" philosophy as progress/delay
+-- elsewhere in this module.
+-- ────────────────────────────────────────────────────────────
+IF OBJECT_ID('dbo.pm_project_insights', 'U') IS NULL
+CREATE TABLE dbo.pm_project_insights (
+    id            int IDENTITY(1,1) NOT NULL,
+    project_id    int NOT NULL,
+    insight_type  varchar(40) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    visible       bit NOT NULL,
+    display_order int DEFAULT 0 NOT NULL,
+    changed_by    uniqueidentifier NULL,
+    changed_at    datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_pm_project_insights PRIMARY KEY (id),
+    CONSTRAINT FK_pm_project_insights_project FOREIGN KEY (project_id) REFERENCES dbo.pm_projects(project_id) ON DELETE CASCADE,
+    CONSTRAINT FK_pm_project_insights_user FOREIGN KEY (changed_by) REFERENCES dbo.auth_users(user_id),
+    CONSTRAINT UQ_pm_project_insights UNIQUE (project_id, insight_type)
+);
+
+-- Migration for an already-created pm_project_insights table from before
+-- the `visible` bit existed (back when a row's mere presence meant "added",
+-- with no way to represent "hide a default"). Existing rows under that old
+-- model always meant "shown", so they backfill to visible=1. Each step is
+-- guarded so this is safe to run against either the old shape, the new
+-- shape, or a table that doesn't exist yet at all.
+IF OBJECT_ID('dbo.pm_project_insights', 'U') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_project_insights') AND name = 'visible')
+ALTER TABLE dbo.pm_project_insights ADD visible bit NOT NULL CONSTRAINT DF_pm_project_insights_visible DEFAULT 1;
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_project_insights') AND name = 'added_by')
+   AND NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_project_insights') AND name = 'changed_by')
+EXEC sp_rename 'dbo.pm_project_insights.added_by', 'changed_by', 'COLUMN';
+
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_project_insights') AND name = 'added_at')
+   AND NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_project_insights') AND name = 'changed_at')
+EXEC sp_rename 'dbo.pm_project_insights.added_at', 'changed_at', 'COLUMN';
+
+
+-- ────────────────────────────────────────────────────────────
 -- Indexes (mirrors the PostgreSQL schema's index section)
 -- ────────────────────────────────────────────────────────────
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_pm_phases_project')
@@ -1110,13 +1159,18 @@ CREATE TABLE dbo.pm_project_templates (
 
 IF OBJECT_ID('dbo.pm_template_phases', 'U') IS NULL
 CREATE TABLE dbo.pm_template_phases (
-    template_phase_id int IDENTITY(1,1) NOT NULL,
-    template_id       int NOT NULL,
-    name              nvarchar(200) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
-    description       nvarchar(max) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
-    display_order     int NOT NULL DEFAULT 0,
-    start_offset_days int NOT NULL DEFAULT 0,
-    duration_days     int NOT NULL,
+    template_phase_id   int IDENTITY(1,1) NOT NULL,
+    template_id         int NOT NULL,
+    name                nvarchar(200) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    description         nvarchar(max) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+    display_order       int NOT NULL DEFAULT 0,
+    start_offset_days   int NOT NULL DEFAULT 0,
+    duration_days       int NOT NULL,
+    -- Whether instantiateTemplate wires this phase to depend on the
+    -- previous phase in display_order (see the module comment above and
+    -- templateService.js). Admin-editable per phase so a chain link can be
+    -- removed without disabling auto-chaining for the whole template.
+    depends_on_previous bit NOT NULL DEFAULT 1,
     CONSTRAINT PK_pm_template_phases PRIMARY KEY (template_phase_id),
     CONSTRAINT FK_pm_template_phases_template FOREIGN KEY (template_id) REFERENCES dbo.pm_project_templates(template_id) ON DELETE CASCADE
 );
@@ -1130,6 +1184,9 @@ CREATE TABLE dbo.pm_template_activities (
     display_order         int NOT NULL DEFAULT 0,
     start_offset_days     int NOT NULL DEFAULT 0,
     duration_days         int NOT NULL,
+    -- Same per-item override as pm_template_phases.depends_on_previous, one
+    -- level down (depends on the previous Activity within the same Phase).
+    depends_on_previous   bit NOT NULL DEFAULT 1,
     CONSTRAINT PK_pm_template_activities PRIMARY KEY (template_activity_id),
     CONSTRAINT FK_pm_template_activities_phase FOREIGN KEY (template_phase_id) REFERENCES dbo.pm_template_phases(template_phase_id) ON DELETE CASCADE
 );
@@ -1143,7 +1200,36 @@ CREATE TABLE dbo.pm_template_tasks (
     display_order         int NOT NULL DEFAULT 0,
     priority              varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT 'Medium' NOT NULL,
     due_offset_days       int NOT NULL,
+    -- Unlike pm_template_phases/pm_template_activities.depends_on_previous
+    -- below, tasks were NEVER auto-chained by instantiateTemplate — every
+    -- template task has always been created independent of its siblings.
+    -- Defaults to 0 (off) so this stays an OPT-IN per task rather than
+    -- silently making every existing template's tasks start blocking each
+    -- other the moment this column exists.
+    depends_on_previous   bit NOT NULL DEFAULT 0,
     CONSTRAINT PK_pm_template_tasks PRIMARY KEY (template_task_id),
     CONSTRAINT FK_pm_template_tasks_activity FOREIGN KEY (template_activity_id) REFERENCES dbo.pm_template_activities(template_activity_id) ON DELETE CASCADE
 );
+
+-- ────────────────────────────────────────────────────────────
+-- pm_template_phases/pm_template_activities.depends_on_previous — lets an
+-- admin turn OFF the auto-chain link to the previous sibling for one
+-- specific phase/activity in a template, instead of it being an
+-- unconditional, all-or-nothing sequential chain (see templateService.js's
+-- instantiateTemplate). Defaults to 1 (existing behavior unchanged) for
+-- both new installs (in the CREATE TABLE above) and pre-existing databases
+-- (this migration, for installs that already had these tables).
+--
+-- pm_template_tasks.depends_on_previous is the mirror-image default (0/off)
+-- — see the column comment above for why: it's introducing chaining that
+-- never existed, not exposing an opt-out from chaining that always did.
+-- ────────────────────────────────────────────────────────────
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_template_phases') AND name = 'depends_on_previous')
+    ALTER TABLE dbo.pm_template_phases ADD depends_on_previous BIT NOT NULL DEFAULT 1;
+
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_template_activities') AND name = 'depends_on_previous')
+    ALTER TABLE dbo.pm_template_activities ADD depends_on_previous BIT NOT NULL DEFAULT 1;
+
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_template_tasks') AND name = 'depends_on_previous')
+    ALTER TABLE dbo.pm_template_tasks ADD depends_on_previous BIT NOT NULL DEFAULT 0;
  

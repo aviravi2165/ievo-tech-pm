@@ -27,10 +27,11 @@ const DONE_STATUS = 'Complete';
 
 // ── Fetch tasks ───────────────────────────────────────────────────────────────
 
-async function getTasksForActivity(activityId) {
+async function getTasksForActivity(activityId, userId) {
   const pool = await getPool();
   const result = await pool.request()
     .input('activityId', sql.Int, activityId)
+    .input('userId', sql.UniqueIdentifier, userId)
     .query(`
       SELECT t.task_id       AS taskId,
              t.activity_id  AS activityId,
@@ -42,6 +43,21 @@ async function getTasksForActivity(activityId) {
              pa.status AS parentActivityStatus, pph.status AS parentPhaseStatus,
              t.is_active AS ownIsActive, pa.is_active AS parentActivityActive, pph.is_active AS parentPhaseActive,
              pproj.is_active AS parentProjectActive,
+             ptt.conversation_id AS chatConversationId,
+             -- Unread dot for the row's own chat icon — see the matching
+             -- comment in activityService.getActivitiesForPhase for why
+             -- this is separate from (and broader than) the global unread
+             -- badge: scoped to this one thread, and counts system
+             -- messages too.
+             CAST(CASE WHEN ptt.conversation_id IS NOT NULL AND EXISTS (
+               SELECT 1 FROM comm_messages cm
+               LEFT JOIN comm_participants cp ON cp.conversation_id = cm.conversation_id AND cp.user_id = @userId
+               WHERE cm.conversation_id = ptt.conversation_id
+                 AND cm.is_deleted = 0
+                 AND (cm.sender_id IS NULL OR cm.sender_id <> @userId)
+                 AND cm.sent_at > COALESCE(cp.joined_at, '1753-01-01')
+                 AND NOT EXISTS (SELECT 1 FROM comm_read_receipts rr WHERE rr.message_id = cm.message_id AND rr.user_id = @userId)
+             ) THEN 1 ELSE 0 END AS BIT) AS hasUnreadChat,
              CASE WHEN t.due_date < CAST(GETDATE() AS DATE) AND t.status <> 'Complete'
                   THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS isOverdue,
              -- Accepted assignees (confirmed participants)
@@ -78,6 +94,7 @@ async function getTasksForActivity(activityId) {
       INNER JOIN pm_activities pa ON pa.activity_id = t.activity_id
       INNER JOIN pm_phases     pph ON pph.phase_id  = pa.phase_id
       INNER JOIN pm_projects   pproj ON pproj.project_id = pph.project_id
+      LEFT JOIN pm_task_threads ptt ON ptt.task_id = t.task_id
       WHERE t.activity_id = @activityId AND t.is_deleted = 0
       ORDER BY t.is_active DESC, t.created_at
     `);
@@ -727,6 +744,40 @@ async function deleteTask(taskId, projectId, userId) {
 
 async function reactivateTask(taskId, projectId, userId) {
   const pool = await getPool();
+
+  // Same gap as activityService.reactivateActivity / phaseService.reactivatePhase:
+  // the Reactivate button reads as available whenever the Task's CASCADED
+  // isActive is false, which also fires when only an ancestor Activity/
+  // Phase/Project is inactive and this Task's own row was never touched.
+  // Flipping pm_tasks.is_active=1 in that case is a silent no-op — the Task
+  // reads inactive again on the very next fetch because the ancestor still
+  // is — so tell the user where to actually act instead of letting the
+  // click appear to do nothing.
+  if (!(await isInactive('task', taskId))) {
+    const parentResult = await pool.request()
+      .input('taskId', sql.Int, taskId)
+      .query(`
+        SELECT a.activity_id AS activityId, ph.phase_id AS phaseId
+        FROM pm_tasks t
+        INNER JOIN pm_activities a  ON a.activity_id = t.activity_id
+        INNER JOIN pm_phases     ph ON ph.phase_id   = a.phase_id
+        WHERE t.task_id=@taskId
+      `);
+    const { activityId, phaseId } = parentResult.recordset[0] || {};
+    if (await isInactive('activity', activityId)) {
+      const e = new Error("This Task is inactive because its Activity is inactive — reactivate the Activity instead.");
+      e.statusCode = 409; throw e;
+    }
+    if (await isInactive('phase', phaseId)) {
+      const e = new Error("This Task is inactive because its Phase is inactive — reactivate the Phase instead.");
+      e.statusCode = 409; throw e;
+    }
+    if (await isInactive('project', projectId)) {
+      const e = new Error("This Task is inactive because its Project is inactive — reactivate the Project instead.");
+      e.statusCode = 409; throw e;
+    }
+  }
+
   await pool.request()
     .input('taskId', sql.Int, taskId)
     .query(`UPDATE pm_tasks SET is_active=1 WHERE task_id=@taskId`);
@@ -746,10 +797,27 @@ async function hardDeleteTask(taskId, projectId, userId) {
   const pool = await getPool();
   const taskResult = await pool.request()
     .input('taskId', sql.Int, taskId)
-    .query(`SELECT is_active AS isActive FROM pm_tasks WHERE task_id=@taskId AND is_deleted=0`);
+    .query(`
+      SELECT t.is_active AS ownActive, a.is_active AS activityActive,
+             ph.is_active AS phaseActive, pr.is_active AS projectActive
+      FROM pm_tasks t
+      INNER JOIN pm_activities a  ON a.activity_id = t.activity_id
+      INNER JOIN pm_phases     ph ON ph.phase_id   = a.phase_id
+      INNER JOIN pm_projects   pr ON pr.project_id = ph.project_id
+      WHERE t.task_id=@taskId AND t.is_deleted=0
+    `);
   const task = taskResult.recordset[0];
   if (!task) { const e = new Error('Task not found'); e.statusCode = 404; throw e; }
-  if (task.isActive) {
+  // Mirrors the CASCADED isActive the Task list already shows (see
+  // getTasksForActivity's `isActive: !cascadeInactive`) — a Task reading
+  // Inactive there because its Activity/Phase/Project is inactive, even
+  // though the Task's own row was never explicitly deactivated, satisfies
+  // this guard too. Checking only the Task's own column disagreed with
+  // what the user was just shown, producing "Deactivate this Task before
+  // permanently deleting it" on a task that already visibly reads Inactive.
+  const isActive = task.ownActive !== false && task.activityActive !== false &&
+    task.phaseActive !== false && task.projectActive !== false;
+  if (isActive) {
     const e = new Error('Deactivate this Task before permanently deleting it.');
     e.statusCode = 409; throw e;
   }

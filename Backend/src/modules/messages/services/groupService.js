@@ -125,7 +125,18 @@ async function listGroupsForUser(userId) {
             WHERE gm2.group_id = g.group_id
           ) AS memberCount
         FROM comm_groups g
-        WHERE g.is_active = 1
+        -- Excludes PM Activity chat groups (auto-created by
+        -- pmChatService.ensureActivityThread, linked via pm_activity_threads)
+        -- from the Groups tab — same reasoning as getInbox excluding PM Task
+        -- threads: these are auto-managed per-Activity threads, not groups a
+        -- person created, and with many activities per project they drowned
+        -- out real groups. Still fully reachable via ChatButton.js on the
+        -- Activity itself, which opens the conversation directly and never
+        -- goes through this list. Applies to the admin branch too — an admin
+        -- moderating "Groups" shouldn't have to wade through PM noise either.
+        LEFT JOIN comm_conversations gac ON gac.group_id = g.group_id AND gac.conv_type = 'group_thread'
+        LEFT JOIN pm_activity_threads pat ON pat.conversation_id = gac.conversation_id
+        WHERE g.is_active = 1 AND pat.conversation_id IS NULL
         ORDER BY g.is_disabled ASC, g.created_at ASC
       `);
     return result.recordset;
@@ -159,12 +170,58 @@ async function listGroupsForUser(userId) {
         ON gm.group_id = g.group_id AND gm.user_id = @userId
       LEFT JOIN comm_group_hidden gh
         ON gh.group_id = g.group_id AND gh.user_id = @userId
+      -- Excludes PM Activity chat groups — see the admin branch above for
+      -- the full comment; same join/exclusion applied here too.
+      LEFT JOIN comm_conversations gac ON gac.group_id = g.group_id AND gac.conv_type = 'group_thread'
+      LEFT JOIN pm_activity_threads pat ON pat.conversation_id = gac.conversation_id
       WHERE g.is_active = 1
         AND gh.user_id IS NULL
+        AND pat.conversation_id IS NULL
         AND (g.created_by = @userId OR gm.user_id IS NOT NULL)
       ORDER BY g.is_disabled ASC, g.created_at ASC
     `);
   return result.recordset;
+}
+
+// Super-admin single-group lookup by id, deliberately NOT going through the
+// same exclusion filter listGroupsForUser applies (PM Activity chat groups
+// are hidden from the LIST there so they don't drown out real groups — but
+// that's a list-browsing concern, not an access one). ChatButton.js still
+// needs to land an admin on this exact group's moderation panel when they
+// click the chat icon on an Activity, even though it'll never show up by
+// scrolling the Groups tab. 404s if not found so the caller can react.
+async function getGroupForAdmin(groupId, userId) {
+  const pool = await getPool();
+  const meResult = await pool.request()
+    .input('userId', sql.UniqueIdentifier, userId)
+    .query(`SELECT user_type AS userType FROM auth_users WHERE user_id = @userId`);
+  if (meResult.recordset[0]?.userType !== 'admin') {
+    const e = new Error('Only a super admin can view this'); e.statusCode = 403; throw e;
+  }
+  const result = await pool.request()
+    .input('groupId', sql.Int, groupId)
+    .query(`
+      SELECT
+        g.group_id                               AS groupId,
+        g.group_name                             AS groupName,
+        g.description                            AS description,
+        g.created_at                             AS createdAt,
+        g.created_by                             AS createdBy,
+        g.is_active                              AS isActive,
+        g.is_disabled                            AS isDisabled,
+        CAST(0 AS BIT)                           AS isAdmin,
+        CAST(1 AS BIT)                           AS isSuperAdmin,
+        CAST(0 AS BIT)                           AS isMember,
+        (
+          SELECT CAST(COUNT(*) AS INT)
+          FROM comm_group_members gm2
+          WHERE gm2.group_id = g.group_id
+        ) AS memberCount
+      FROM comm_groups g
+      WHERE g.group_id = @groupId
+    `);
+  if (!result.recordset.length) { const e = new Error('Group not found'); e.statusCode = 404; throw e; }
+  return result.recordset[0];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -767,6 +824,7 @@ async function updateGroup(groupId, userId, { groupName, description }) {
 
 module.exports = {
   listGroupsForUser,
+  getGroupForAdmin,
   createGroup,
   updateGroup,
   getGroupMembers,

@@ -1,9 +1,14 @@
 import styled from '@emotion/styled';
+import { LOGO_INDENT } from './AuthLayout.styles';
 
+// Indented to match LogoSub/Tagline above it — same wordmark-aligned left
+// edge for the whole text column, not flush against the icon's edge below
+// text that's already indented past it.
 export const FeatureList = styled.ul`
   list-style: none;
   padding: 0;
   margin: 0;
+  margin-left: ${LOGO_INDENT}px;
   display: flex;
   flex-direction: column;
   gap: 14px;

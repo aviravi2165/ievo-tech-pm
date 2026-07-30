@@ -2,8 +2,8 @@
 
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
-const { getProjectProgress, getProjectHasActiveWork, deriveProjectStatus } = require('./progressService');
-const { getProjectDelayDays } = require('./delayService');
+const { deriveProjectStatus, getProjectStats } = require('./progressService');
+const { getProjectDelayDays, getOverdueDays } = require('./delayService');
 const { isInactive } = require('./dependencyService');
 const pmChatService = require('./pmChatService');
 
@@ -68,8 +68,16 @@ async function listProjects(userId, isAdmin = false, opts = {}) {
              p.planned_start AS plannedStart, p.planned_end AS plannedEnd,
              p.created_at AS createdAt, pm.role AS myRole, p.is_active AS isActive,
              COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''), u.email) AS ownerName,
-             CASE WHEN p.planned_end < CAST(GETDATE() AS DATE) AND p.status NOT IN ('Completed','Cancelled')
-                  THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS isOverdue,
+             -- Raw "past its own planned_end" only — status exclusion
+             -- applied in JS below against the DERIVED status (see the
+             -- matching comment in activityService.getActivitiesForPhase).
+             -- 'Cancelled' is the one value deriveProjectStatus never
+             -- overwrites, so p.status NOT IN ('Cancelled') here would have
+             -- been safe on its own, but 'Completed' is exactly as
+             -- transient as Phase/Activity's — never reliably written back
+             -- to this column — so it needed the same fix.
+             CASE WHEN p.planned_end < CAST(GETDATE() AS DATE)
+                  THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS plannedEndPassed,
              (SELECT COUNT(*) FROM pm_phases ph WHERE ph.project_id=p.project_id AND ph.is_deleted=0) AS phaseCount,
              (SELECT COUNT(*) FROM pm_members WHERE project_id=p.project_id) AS memberCount
              ${paginated ? ', COUNT(*) OVER() AS totalCount' : ''}
@@ -106,9 +114,22 @@ async function listProjects(userId, isAdmin = false, opts = {}) {
   // SQL fetch itself (above) is what actually bounds this loop's size now —
   // a page of 25 always does 25 concurrent chains, not however many
   // projects exist in total.
+  //
+  // PERF, round 2: progress/hasActiveWork/hasTasks/phaseCount used to be 4
+  // SEPARATE calls, each independently re-walking the same phase→activity→
+  // task tree from scratch. getProjectStats does it all in one traversal —
+  // see its comment in progressService.js.
   await Promise.all(rows.map(async (p) => {
-    p.progress = await getProjectProgress(p.projectId);
-    p.status = deriveProjectStatus(p.progress, p.status, await getProjectHasActiveWork(p.projectId));
+    const stats = await getProjectStats(p.projectId);
+    p.progress = stats.progress;
+    p.status = deriveProjectStatus(p.progress, p.status, stats.hasActiveWork);
+    // Gated on actually having a task somewhere underneath it — see the
+    // matching comment in activityService.getActivitiesForPhase. emptyState
+    // is NOT date-gated, unlike isOverdue — see phaseService's own comment.
+    p.isOverdue = Boolean(p.plannedEndPassed) && p.status !== 'Completed' && p.status !== 'Cancelled' && stats.hasTasks;
+    p.overdueDays = p.isOverdue ? getOverdueDays(p.plannedEnd) : 0;
+    p.emptyState = stats.phaseCount === 0 ? 'noPhases' : (stats.hasTasks ? null : 'noTasks');
+    delete p.plannedEndPassed;
   }));
   return paginated ? { items: rows, total, page, pageSize } : rows;
 }
@@ -125,8 +146,11 @@ async function getProject(projectId, userId, isAdmin = false) {
              p.dept_id AS deptId, p.created_at AS createdAt, p.modified_at AS modifiedAt,
              pm.role AS myRole, p.is_active AS isActive,
              COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''), u.email) AS ownerName,
-             CASE WHEN p.planned_end < CAST(GETDATE() AS DATE) AND p.status NOT IN ('Completed','Cancelled')
-                  THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS isOverdue
+             -- Raw "past its own planned_end" only — status exclusion
+             -- applied in JS below, once proj.status is the DERIVED value
+             -- (see getProjects above for why).
+             CASE WHEN p.planned_end < CAST(GETDATE() AS DATE)
+                  THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS plannedEndPassed
       FROM pm_projects p
       ${joinClause}
       LEFT JOIN auth_users u ON u.user_id=p.owner_id
@@ -144,8 +168,15 @@ async function getProject(projectId, userId, isAdmin = false) {
       FROM pm_members m LEFT JOIN auth_users u ON u.user_id=m.user_id
       WHERE m.project_id=@projectId ORDER BY m.role, u.first_name
     `);
-  const progress = await getProjectProgress(projectId);
-  proj.status = deriveProjectStatus(progress, proj.status, await getProjectHasActiveWork(projectId));
+  // getProjectStats collapses progress/hasActiveWork/hasTasks/phaseCount
+  // into one traversal — see listProjects's identical PERF note above.
+  const stats = await getProjectStats(projectId);
+  const progress = stats.progress;
+  proj.status = deriveProjectStatus(progress, proj.status, stats.hasActiveWork);
+  proj.isOverdue = Boolean(proj.plannedEndPassed) && proj.status !== 'Completed' && proj.status !== 'Cancelled' && stats.hasTasks;
+  proj.overdueDays = proj.isOverdue ? getOverdueDays(proj.plannedEnd) : 0;
+  proj.emptyState = stats.phaseCount === 0 ? 'noPhases' : (stats.hasTasks ? null : 'noTasks');
+  delete proj.plannedEndPassed;
   const delayDays = (proj.status === 'Completed' || proj.status === 'Cancelled')
     ? 0
     : await getProjectDelayDays(projectId, proj.plannedEnd);
@@ -252,6 +283,7 @@ async function deleteProject(projectId, userId) {
       .input('projectId', sql.Int, projectId)
       .query(`UPDATE pm_projects SET is_active=0, modified_at=SYSDATETIMEOFFSET() WHERE project_id=@projectId`);
     await audit.log({ entityType:'project', entityId:projectId, projectId, userId, action:'deactivated' });
+    await pmChatService.setActivityThreadsDisabledForProject(projectId, true);
     return { action: 'deactivated' };
   }
 
@@ -268,6 +300,12 @@ async function reactivateProject(projectId, userId) {
     .input('projectId', sql.Int, projectId)
     .query(`UPDATE pm_projects SET is_active=1, modified_at=SYSDATETIMEOFFSET() WHERE project_id=@projectId`);
   await audit.log({ entityType:'project', entityId:projectId, projectId, userId, action:'reactivated' });
+  // Bring every Activity chat group under this Project back out of the
+  // reply-only state deleteProject's deactivate branch put them in — this
+  // is the only level where a chat group can have been auto-disabled by a
+  // deactivation the Activity/Phase's own is_active row never recorded, so
+  // it's also the only level that needs to walk back down to undo it.
+  await pmChatService.setActivityThreadsDisabledForProject(projectId, false);
 }
 
 // ── Flat member list (used by project header + progress sidebar) ──────────────

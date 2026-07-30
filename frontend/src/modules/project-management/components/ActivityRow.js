@@ -3,7 +3,8 @@ import { useTheme } from '@emotion/react';
 import { ChevronRight, ArrowRight, RotateCcw, Trash2, Lock, Users } from 'lucide-react';
 import StatusBadge, { InactiveBadge } from './StatusBadge';
 import ProgressBar from './ProgressBar';
-import DelayBadge from './DelayBadge';
+import ScheduleBadge from './ScheduleBadge';
+import EmptyStateHint from './EmptyStateHint';
 import TaskItem from './TaskItem';
 import UserSearchInput from './UserSearchInput';
 import ChatButton from './ChatButton';
@@ -241,19 +242,22 @@ export default function ActivityRow({
     .map(m => ({ userId: m.userId, name: m.name, email: m.email }))
     .filter(p => !explicitManagerIds.has(String(p.userId)) && !inheritedManagerIds.has(String(p.userId)));
 
-  // Legacy/auto-added non-Manager rows merged into Assignees even with zero
-  // current tasks — same reasoning as PhasePanel.js's mergedPhaseAssignees.
-  const legacyAssigneeStubs = actMembers
-    .filter(m => m.role !== 'Manager')
-    .map(m => ({ userId: m.userId, name: m.name }));
+  // Assignees is strictly "who has an actual task here" — it used to also
+  // merge in any bare non-Manager pm_activity_members row (a "legacy
+  // stub"), even with zero tasks, which directly contradicted the section's
+  // own "(from tasks in this scope)" label: someone with a stray explicit
+  // Employee row and no tasks showed up as an "assignee" with none, which
+  // read as a bug (and often WAS one — see the createActivity fix above;
+  // an inherited Manager who picked up a stray explicit Employee row here
+  // showed up exactly this way). That row is still real access — just not
+  // an assignee fact — so it belongs in the Managers/quickAddPool accounting
+  // above, not here.
   const activityAssignees = useMemo(() => {
-    const map = new Map(aggregateAssignees(tasks).map(a => [String(a.userId), a]));
-    legacyAssigneeStubs.forEach(m => {
-      const key = String(m.userId);
-      if (!map.has(key)) map.set(key, { userId: m.userId, name: m.name, taskCount: 0 });
-    });
-    return [...map.values()].sort((a, b) => b.taskCount - a.taskCount);
-  }, [tasks, actMembers]);
+    // Deactivating ("deleting") a task doesn't remove its row, only flips
+    // isActive — without this filter, someone whose only task here just got
+    // deleted kept showing up in the Assignees tile until a hard-delete.
+    return aggregateAssignees(tasks.filter(t => t.isActive !== false));
+  }, [tasks]);
 
   // Task assignment's quick-pick used to only suggest actMembers (this
   // activity's own explicit rows) — someone with real access here via
@@ -294,7 +298,12 @@ export default function ActivityRow({
       setNewTaskName(''); setNewTaskDue(''); setNewTaskStart(''); setNewTaskDesc('');
       setTaskAssignees([]); setTaskAssignSearch(null); setNewTaskDeps([]);
       setPanel(null); setAddErrors({});
-      fetchTasks(); onRefetchProject?.();
+      // fetchTasks() only refreshes THIS Activity's own tasks — its
+      // .emptyState field lives one level up, in PhasePanel's `activities`
+      // list (from phaseApi.getActivities), which nothing here was
+      // refreshing. That's why "No tasks yet" kept showing until a full
+      // page reload happened to re-fetch it.
+      fetchTasks(); onRefetchPhase?.(); onRefetchProject?.();
     } catch (err) { showToast(apiErrorMessage(err, 'Failed to add task.')); }
     finally { setAddingTask(false); }
   };
@@ -433,7 +442,7 @@ export default function ActivityRow({
           title={(canEdit && !isInactive) ? 'Click to edit dates / description' : undefined}
         >
           <span style={{ fontSize:10, color:theme.colors.ash, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'100%' }}>{fmtRange(activity.plannedStart, activity.plannedEnd)}</span>
-          {activity.delayDays > 0 && <DelayBadge days={activity.delayDays} label="Late by" />}
+          <ScheduleBadge isOverdue={activity.isOverdue} overdueDays={activity.overdueDays} delayDays={activity.delayDays} delayLabel="Late by" />
         </div>
 
         {/* Grid column 4: Progress — BUG-030, same fix as PhasePanel.js's
@@ -443,46 +452,61 @@ export default function ActivityRow({
         </div>
 
         {/* Grid column 5: Status */}
-        <div style={{ overflow:'hidden', display:'flex', justifyContent:'center' }}>
+        <div style={{ overflow:'hidden', display:'flex', flexDirection:'column', alignItems:'center', gap:2 }}>
           <StatusBadge status={activity.status} />
+          <EmptyStateHint emptyState={activity.emptyState} theme={theme} />
         </div>
 
-        {/* Grid column 6 (max-content): actions — always visible. "Edit"
-            icon removed: clicking the Dates cell above opens the same
-            panel. "Members" icon was ALSO removed earlier in favor of
-            clicking the Manager cell text — that made adding a Manager/
-            Viewer here undiscoverable, so it's back as an explicit icon
-            alongside that click, not instead of it. */}
-        {canEdit && (
+        {/* Grid column 6 (max-content): actions. "Edit" icon removed:
+            clicking the Dates cell above opens the same panel. "Members"
+            icon was ALSO removed earlier in favor of clicking the Manager
+            cell text — that made adding a Manager/Viewer here
+            undiscoverable, so it's back as an explicit icon alongside that
+            click, not instead of it.
+            BUG: this whole block used to be gated on `canEdit` (Manager)
+            ONLY, which made `showChatButton`'s own more permissive check
+            (Manager OR an Employee/Member who's an activity participant —
+            see its definition above) completely unreachable: a regular
+            assigned team member could never see or open this activity's
+            chat at all, no matter how the unread state computed. The
+            Prerequisites/Reactivate/Delete actions stay Manager-only
+            (their own `canEdit` guard, unchanged); only the chat button's
+            visibility is no longer smuggled behind that same gate. */}
+        {(canEdit || showChatButton) && (
           <RowActions data-row-actions onClick={e => e.stopPropagation()}>
             {/* Members icon removed — redundant now that the Participants
                 cell (grid column 2) itself opens the same panel, viewable
                 by anyone and not just Managers. */}
             {showChatButton && (
               <span onClick={e => e.stopPropagation()}>
-                <ChatButton kind="activity" id={activity.activityId} compact />
+                <ChatButton kind="activity" id={activity.activityId} compact
+                  hasUnread={activity.hasUnreadChat} conversationId={activity.chatConversationId} />
               </span>
             )}
-            {!isInactive && otherActivities.length > 0 && (
-              <IconBtn active={panel === 'deps'} title="Prerequisites"
-                onClick={e => { setDepsAnchorEl(e.currentTarget); togglePanel('deps'); }} style={{ width:20, height:20 }}>
-                <ArrowRight size={14} strokeWidth={2} />
-              </IconBtn>
-            )}
-            <div style={{ width:1, height:16, background:theme.colors.border, margin:'0 1px', flexShrink:0 }} />
-            {isInactive ? (
+            {canEdit && (
               <>
-                <IconBtn title="Reactivate" onClick={handleReactivate} style={{ width:20, height:20 }}>
-                  <RotateCcw size={14} strokeWidth={2} />
-                </IconBtn>
-                <IconBtnDanger title="Delete permanently" onClick={handleHardDelete} style={{ width:20, height:20 }}>
-                  <Trash2 size={14} strokeWidth={2} />
-                </IconBtnDanger>
+                {!isInactive && otherActivities.length > 0 && (
+                  <IconBtn active={panel === 'deps'} title="Prerequisites"
+                    onClick={e => { setDepsAnchorEl(e.currentTarget); togglePanel('deps'); }} style={{ width:20, height:20 }}>
+                    <ArrowRight size={14} strokeWidth={2} />
+                  </IconBtn>
+                )}
+                <div style={{ width:1, height:16, background:theme.colors.border, margin:'0 1px', flexShrink:0 }} />
+                {isInactive ? (
+                  <>
+                    <IconBtn title="Reactivate" onClick={handleReactivate} style={{ width:20, height:20 }}>
+                      <RotateCcw size={14} strokeWidth={2} />
+                    </IconBtn>
+                    <IconBtnDanger title="Delete permanently" onClick={handleHardDelete} style={{ width:20, height:20 }}>
+                      <Trash2 size={14} strokeWidth={2} />
+                    </IconBtnDanger>
+                  </>
+                ) : (
+                  <IconBtnDanger title="Delete" onClick={handleDelete} style={{ width:20, height:20 }}>
+                    <Trash2 size={14} strokeWidth={2} />
+                  </IconBtnDanger>
+                )}
               </>
-            ) : (
-              <IconBtnDanger title="Delete" onClick={handleDelete} style={{ width:20, height:20 }}>
-                <Trash2 size={14} strokeWidth={2} />
-              </IconBtnDanger>
             )}
           </RowActions>
         )}

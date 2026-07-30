@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { phaseApi, activityApi } from '../api/projectApi';
+import { phaseApi, activityApi, projectApi } from '../api/projectApi';
 
 const DONE_TASK = 'Complete';
 
@@ -17,16 +17,17 @@ function overdue(task) {
 // actually selected) and caches after the first load — switching tabs back
 // and forth doesn't re-fetch; use `refetch` to force a reload after data
 // changes elsewhere.
-export function useProjectAnalytics(phases, active) {
-  const [state, setState] = useState({ loading: false, error: '', activities: [], tasks: [] });
+export function useProjectAnalytics(projectId, phases, active, projectDates = {}) {
+  const [state, setState] = useState({ loading: false, error: '', activities: [], tasks: [], completions: {} });
   const loadedRef = useRef(false);
 
   const load = async () => {
     setState(s => ({ ...s, loading: true, error: '' }));
     try {
-      const actsByPhase = await Promise.all(
-        phases.map(p => phaseApi.getActivities(p.phaseId).catch(() => []))
-      );
+      const [actsByPhase, completionRows] = await Promise.all([
+        Promise.all(phases.map(p => phaseApi.getActivities(p.phaseId).catch(() => []))),
+        projectApi.getTaskCompletions(projectId).catch(() => []),
+      ]);
       const allActivities = actsByPhase.flatMap((acts, i) =>
         acts.map(a => ({ ...a, phaseId: phases[i].phaseId, phaseName: phases[i].name }))
       );
@@ -36,7 +37,12 @@ export function useProjectAnalytics(phases, active) {
       const allTasks = tasksByActivity.flatMap((tasks, i) =>
         tasks.map(t => ({ ...t, activityId: allActivities[i].activityId, activityName: allActivities[i].name, phaseName: allActivities[i].phaseName }))
       );
-      setState({ loading: false, error: '', activities: allActivities, tasks: allTasks });
+      // taskId -> completedAt, from the real status-change audit trail
+      // (see auditService.getTaskCompletionDates) — a task can only ever
+      // have one "most recent" Complete transition, so this is 1:1.
+      const completions = {};
+      completionRows.forEach(r => { completions[r.taskId] = r.completedAt; });
+      setState({ loading: false, error: '', activities: allActivities, tasks: allTasks, completions });
       loadedRef.current = true;
     } catch (err) {
       setState(s => ({ ...s, loading: false, error: 'Failed to load analytics data.' }));
@@ -52,7 +58,7 @@ export function useProjectAnalytics(phases, active) {
     // reference from useProject's polling/socket refetch.
   }, [active, phases.length]);
 
-  const { tasks, activities } = state;
+  const { tasks, activities, completions } = state;
 
   const totalTasks = tasks.length;
   const completeTasks = tasks.filter(t => t.status === DONE_TASK).length;
@@ -81,16 +87,13 @@ export function useProjectAnalytics(phases, active) {
   });
   const workload = [...workloadMap.values()].sort((a, b) => (b.active + b.overdue) - (a.active + a.overdue));
 
-  // Completions over the last 6 weeks, bucketed by week-of, from each
-  // task's own updatedAt-equivalent — tasks don't carry a completedAt
-  // field, so this uses dueDate-independent status alone: we can only
-  // bucket what we have, which is "currently Complete" tasks grouped by
-  // their due date as a proxy for when that slice of work was scheduled to
-  // land, not literally when it was marked done (no per-task completion
-  // timestamp exists in this data model — the Audit log has one, but only
-  // for entities whose history has already been fetched elsewhere, and
-  // fetching per-task history for every task here would be another N
-  // requests). Labelled accordingly in the UI so it isn't misread as exact.
+  // Completions over the last 6 weeks, bucketed by week-of — now from the
+  // real completedAt timestamp (most recent 'status_changed' → Complete
+  // audit row per task, see auditService.getTaskCompletionDates), not
+  // dueDate. dueDate was only ever a proxy because no one was tracking a
+  // real completion moment; the audit trail already had one all along.
+  // A completed task with no matching audit row (e.g. seeded/imported data
+  // predating this trail) falls back to dueDate so it isn't just dropped.
   const now = new Date();
   const weeks = Array.from({ length: 6 }, (_, i) => {
     const end = new Date(now); end.setDate(end.getDate() - (5 - i) * 7);
@@ -98,11 +101,74 @@ export function useProjectAnalytics(phases, active) {
     return { start, end, count: 0 };
   });
   tasks.forEach(t => {
-    if (t.status !== DONE_TASK || !t.dueDate) return;
-    const d = new Date(t.dueDate);
+    if (t.status !== DONE_TASK) return;
+    const completedAt = completions[t.taskId] || t.dueDate;
+    if (!completedAt) return;
+    const d = new Date(completedAt);
     const bucket = weeks.find(w => d >= w.start && d <= w.end);
     if (bucket) bucket.count += 1;
   });
+
+  // On-time vs late — completedAt vs dueDate for every Complete task that
+  // has both. Only meaningful with a real completedAt (comparing dueDate
+  // to itself is trivially "on time"), so tasks without an audit row are
+  // excluded here rather than falling back like the week-bucket chart does.
+  //
+  // totalLateDays feeds an "avg Nd late" figure alongside the Late count —
+  // this is the one place "how late" survives past completion. The live
+  // Overdue/Delayed badges on a Task/Activity/Phase/Project row intentionally
+  // go silent the moment something's marked Complete (nothing left to act
+  // on), so "was this late, and by how much" is a reporting question that
+  // belongs here, not a live warning that belongs on the row.
+  let onTimeCount = 0, lateCount = 0, totalLateDays = 0;
+  tasks.forEach(t => {
+    if (t.status !== DONE_TASK || !t.dueDate || !completions[t.taskId]) return;
+    const completedAt = new Date(completions[t.taskId]);
+    const dueDate = new Date(t.dueDate);
+    if (completedAt <= dueDate) {
+      onTimeCount += 1;
+    } else {
+      lateCount += 1;
+      totalLateDays += Math.round((completedAt - dueDate) / 86400000);
+    }
+  });
+  const avgLateDays = lateCount ? Math.round(totalLateDays / lateCount) : 0;
+
+  // Burn-up — cumulative Complete tasks over the project's full planned
+  // span (not just the last-6-weeks window the velocity bars above use),
+  // bucketed into a fixed number of points so the chart stays readable
+  // regardless of how long the project actually runs. "Ideal" is only
+  // drawn when both planned dates exist — a straight reference line from 0
+  // at plannedStart to totalTasks at plannedEnd; "Actual" is real
+  // cumulative completions to date, same completedAt-with-dueDate-fallback
+  // rule the weekly bars use.
+  const BURNUP_POINTS = 10;
+  const { plannedStart, plannedEnd } = projectDates;
+  let burnup = [];
+  const completionDates = tasks
+    .filter(t => t.status === DONE_TASK && (completions[t.taskId] || t.dueDate))
+    .map(t => new Date(completions[t.taskId] || t.dueDate))
+    .filter(d => !isNaN(d));
+  const earliestCompletion = completionDates.length ? new Date(Math.min(...completionDates)) : null;
+  const rangeStart = plannedStart ? new Date(plannedStart) : earliestCompletion;
+  const plannedEndDate = plannedEnd ? new Date(plannedEnd) : null;
+  const rangeEnd = plannedEndDate && plannedEndDate > now ? plannedEndDate : now;
+
+  if (rangeStart && rangeEnd > rangeStart && totalTasks > 0) {
+    const span = rangeEnd - rangeStart;
+    burnup = Array.from({ length: BURNUP_POINTS }, (_, i) => {
+      const date = new Date(rangeStart.getTime() + (span * i) / (BURNUP_POINTS - 1));
+      const actual = tasks.filter(t => {
+        if (t.status !== DONE_TASK) return false;
+        const completedAt = completions[t.taskId] || t.dueDate;
+        return completedAt && new Date(completedAt) <= date;
+      }).length;
+      const ideal = (plannedStart && plannedEndDate)
+        ? Math.round(totalTasks * Math.min(1, Math.max(0, (date - rangeStart) / (plannedEndDate - rangeStart))))
+        : null;
+      return { date, actual, ideal };
+    });
+  }
 
   return {
     loading: state.loading,
@@ -114,6 +180,8 @@ export function useProjectAnalytics(phases, active) {
       totalTasks, completeTasks, overdueTasks, blockedTasks,
       totalActivities: activities.length,
       statusCounts, priorityCounts, workload, weeks,
+      onTimeCount, lateCount, avgLateDays,
+      burnup,
     },
   };
 }

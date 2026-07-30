@@ -40,34 +40,10 @@ function AuthGate() {
     return <ForceChangePasswordPage />;
   }
 
-  // BUG-017: the app has no router — module switching is all in-memory
-  // state (CustomEvent('navigate-to-module')), so nothing ever inspected
-  // the actual URL. Any unknown path silently rendered the normal
-  // Dashboard with zero indication the URL was wrong. This is the one
-  // place that does check it — everything else about navigation stays
-  // exactly as it was.
-  if (window.location.pathname !== '/') {
-    return <NotFoundPage />;
-  }
-
   return (
     <SocketProvider token={token}>
       <AppShell currentUser={user} />
     </SocketProvider>
-  );
-}
-
-function NotFoundPage() {
-  return (
-    <div style={loadingStyles.root}>
-      <div style={{ ...loadingStyles.logo, fontSize: 28 }}>404</div>
-      <div style={{ color: theme.colors.ashLight, fontSize: 14, textAlign: 'center', maxWidth: 340 }}>
-        This page doesn't exist.
-      </div>
-      <a href="/" style={{ color: theme.colors.copper, fontSize: 13, fontWeight: 600, textDecoration: 'none' }}>
-        ← Back to Dashboard
-      </a>
-    </div>
   );
 }
 
