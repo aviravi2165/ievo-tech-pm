@@ -22,6 +22,19 @@
  * dependency graph. A project created from a template is a completely
  * ordinary, fully-editable project afterward; arbitrary dependencies are
  * edited there like any project today.
+ *
+ * Each phase/activity has its own `dependsOnPrevious` flag — an admin can
+ * turn off just ONE chain link (e.g. Phase 3 doesn't need to wait on Phase
+ * 2) without disabling auto-chaining for the whole template. The first item
+ * in any chain has no previous sibling anyway, so its own flag is moot; the
+ * flag matters for item i>0 and controls only the link between i and i-1,
+ * not the whole chain past that point.
+ *
+ * Tasks have the SAME `dependsOnPrevious` flag, but it defaults to false —
+ * unlike Phase/Activity, Tasks never auto-chained at all before this
+ * existed, so defaulting them to true would have silently introduced
+ * blocking behavior for every already-built template's tasks. It's opt-IN
+ * per task, not opt-out.
  */
 
 const { getPool, sql } = require('../../../config/db');
@@ -63,14 +76,16 @@ async function getTemplate(templateId) {
   const phasesResult = await pool.request()
     .input('templateId', sql.Int, templateId)
     .query(`SELECT template_phase_id AS templatePhaseId, name, description, display_order AS displayOrder,
-                   start_offset_days AS startOffsetDays, duration_days AS durationDays
+                   start_offset_days AS startOffsetDays, duration_days AS durationDays,
+                   depends_on_previous AS dependsOnPrevious
             FROM pm_template_phases WHERE template_id=@templateId ORDER BY display_order`);
 
   const activitiesResult = await pool.request()
     .input('templateId', sql.Int, templateId)
     .query(`SELECT ta.template_activity_id AS templateActivityId, ta.template_phase_id AS templatePhaseId,
                    ta.name, ta.description, ta.display_order AS displayOrder,
-                   ta.start_offset_days AS startOffsetDays, ta.duration_days AS durationDays
+                   ta.start_offset_days AS startOffsetDays, ta.duration_days AS durationDays,
+                   ta.depends_on_previous AS dependsOnPrevious
             FROM pm_template_activities ta
             INNER JOIN pm_template_phases tp ON tp.template_phase_id = ta.template_phase_id
             WHERE tp.template_id=@templateId ORDER BY ta.display_order`);
@@ -79,7 +94,8 @@ async function getTemplate(templateId) {
     .input('templateId', sql.Int, templateId)
     .query(`SELECT tt.template_task_id AS templateTaskId, tt.template_activity_id AS templateActivityId,
                    tt.name, tt.description, tt.display_order AS displayOrder,
-                   tt.priority, tt.due_offset_days AS dueOffsetDays
+                   tt.priority, tt.due_offset_days AS dueOffsetDays,
+                   tt.depends_on_previous AS dependsOnPrevious
             FROM pm_template_tasks tt
             INNER JOIN pm_template_activities ta ON ta.template_activity_id = tt.template_activity_id
             INNER JOIN pm_template_phases tp ON tp.template_phase_id = ta.template_phase_id
@@ -145,7 +161,7 @@ async function deleteTemplate(templateId) {
 // ── Template phase/activity/task CRUD (admin) ───────────────────────────────
 
 async function addTemplatePhase(templateId, body) {
-  const { name, description, startOffsetDays = 0, durationDays } = body;
+  const { name, description, startOffsetDays = 0, durationDays, dependsOnPrevious = true } = body;
   if (!name?.trim()) { const e = new Error('Phase name is required'); e.statusCode = 400; throw e; }
   if (!durationDays || durationDays < 1) { const e = new Error('Duration (days) is required'); e.statusCode = 400; throw e; }
   const pool = await getPool();
@@ -159,16 +175,17 @@ async function addTemplatePhase(templateId, body) {
     .input('displayOrder', sql.Int,              orderResult.recordset[0].nextOrder)
     .input('startOffsetDays', sql.Int,           startOffsetDays)
     .input('durationDays',    sql.Int,           durationDays)
+    .input('dependsOnPrevious', sql.Bit,         dependsOnPrevious ? 1 : 0)
     .query(`
-      INSERT INTO pm_template_phases (template_id, name, description, display_order, start_offset_days, duration_days)
+      INSERT INTO pm_template_phases (template_id, name, description, display_order, start_offset_days, duration_days, depends_on_previous)
       OUTPUT INSERTED.template_phase_id AS templatePhaseId
-      VALUES (@templateId, @name, @description, @displayOrder, @startOffsetDays, @durationDays)
+      VALUES (@templateId, @name, @description, @displayOrder, @startOffsetDays, @durationDays, @dependsOnPrevious)
     `);
   return result.recordset[0];
 }
 
 async function updateTemplatePhase(templatePhaseId, body) {
-  const { name, description, startOffsetDays, durationDays, displayOrder } = body;
+  const { name, description, startOffsetDays, durationDays, displayOrder, dependsOnPrevious } = body;
   const pool = await getPool();
   await pool.request()
     .input('id',               sql.Int,               templatePhaseId)
@@ -177,12 +194,14 @@ async function updateTemplatePhase(templatePhaseId, body) {
     .input('startOffsetDays',  sql.Int,               startOffsetDays ?? null)
     .input('durationDays',     sql.Int,               durationDays ?? null)
     .input('displayOrder',     sql.Int,               displayOrder ?? null)
+    .input('dependsOnPrevious', sql.Bit,              dependsOnPrevious === undefined ? null : (dependsOnPrevious ? 1 : 0))
     .query(`
       UPDATE pm_template_phases
       SET name = COALESCE(@name, name), description = @description,
           start_offset_days = COALESCE(@startOffsetDays, start_offset_days),
           duration_days = COALESCE(@durationDays, duration_days),
-          display_order = COALESCE(@displayOrder, display_order)
+          display_order = COALESCE(@displayOrder, display_order),
+          depends_on_previous = COALESCE(@dependsOnPrevious, depends_on_previous)
       WHERE template_phase_id = @id
     `);
 }
@@ -194,7 +213,7 @@ async function deleteTemplatePhase(templatePhaseId) {
 }
 
 async function addTemplateActivity(templatePhaseId, body) {
-  const { name, description, startOffsetDays = 0, durationDays } = body;
+  const { name, description, startOffsetDays = 0, durationDays, dependsOnPrevious = true } = body;
   if (!name?.trim()) { const e = new Error('Activity name is required'); e.statusCode = 400; throw e; }
   if (!durationDays || durationDays < 1) { const e = new Error('Duration (days) is required'); e.statusCode = 400; throw e; }
   const pool = await getPool();
@@ -208,16 +227,17 @@ async function addTemplateActivity(templatePhaseId, body) {
     .input('displayOrder',     sql.Int,               orderResult.recordset[0].nextOrder)
     .input('startOffsetDays',  sql.Int,               startOffsetDays)
     .input('durationDays',     sql.Int,               durationDays)
+    .input('dependsOnPrevious', sql.Bit,              dependsOnPrevious ? 1 : 0)
     .query(`
-      INSERT INTO pm_template_activities (template_phase_id, name, description, display_order, start_offset_days, duration_days)
+      INSERT INTO pm_template_activities (template_phase_id, name, description, display_order, start_offset_days, duration_days, depends_on_previous)
       OUTPUT INSERTED.template_activity_id AS templateActivityId
-      VALUES (@templatePhaseId, @name, @description, @displayOrder, @startOffsetDays, @durationDays)
+      VALUES (@templatePhaseId, @name, @description, @displayOrder, @startOffsetDays, @durationDays, @dependsOnPrevious)
     `);
   return result.recordset[0];
 }
 
 async function updateTemplateActivity(templateActivityId, body) {
-  const { name, description, startOffsetDays, durationDays, displayOrder } = body;
+  const { name, description, startOffsetDays, durationDays, displayOrder, dependsOnPrevious } = body;
   const pool = await getPool();
   await pool.request()
     .input('id',               sql.Int,               templateActivityId)
@@ -226,12 +246,14 @@ async function updateTemplateActivity(templateActivityId, body) {
     .input('startOffsetDays',  sql.Int,               startOffsetDays ?? null)
     .input('durationDays',     sql.Int,               durationDays ?? null)
     .input('displayOrder',     sql.Int,               displayOrder ?? null)
+    .input('dependsOnPrevious', sql.Bit,              dependsOnPrevious === undefined ? null : (dependsOnPrevious ? 1 : 0))
     .query(`
       UPDATE pm_template_activities
       SET name = COALESCE(@name, name), description = @description,
           start_offset_days = COALESCE(@startOffsetDays, start_offset_days),
           duration_days = COALESCE(@durationDays, duration_days),
-          display_order = COALESCE(@displayOrder, display_order)
+          display_order = COALESCE(@displayOrder, display_order),
+          depends_on_previous = COALESCE(@dependsOnPrevious, depends_on_previous)
       WHERE template_activity_id = @id
     `);
 }
@@ -243,7 +265,7 @@ async function deleteTemplateActivity(templateActivityId) {
 }
 
 async function addTemplateTask(templateActivityId, body) {
-  const { name, description, priority = 'Medium', dueOffsetDays } = body;
+  const { name, description, priority = 'Medium', dueOffsetDays, dependsOnPrevious = false } = body;
   if (!name?.trim()) { const e = new Error('Task name is required'); e.statusCode = 400; throw e; }
   if (dueOffsetDays === undefined || dueOffsetDays === null) { const e = new Error('Due offset (days) is required'); e.statusCode = 400; throw e; }
   const pool = await getPool();
@@ -257,16 +279,17 @@ async function addTemplateTask(templateActivityId, body) {
     .input('displayOrder',        sql.Int,               orderResult.recordset[0].nextOrder)
     .input('priority',            sql.VarChar(20),       priority)
     .input('dueOffsetDays',       sql.Int,               dueOffsetDays)
+    .input('dependsOnPrevious',   sql.Bit,               dependsOnPrevious ? 1 : 0)
     .query(`
-      INSERT INTO pm_template_tasks (template_activity_id, name, description, display_order, priority, due_offset_days)
+      INSERT INTO pm_template_tasks (template_activity_id, name, description, display_order, priority, due_offset_days, depends_on_previous)
       OUTPUT INSERTED.template_task_id AS templateTaskId
-      VALUES (@templateActivityId, @name, @description, @displayOrder, @priority, @dueOffsetDays)
+      VALUES (@templateActivityId, @name, @description, @displayOrder, @priority, @dueOffsetDays, @dependsOnPrevious)
     `);
   return result.recordset[0];
 }
 
 async function updateTemplateTask(templateTaskId, body) {
-  const { name, description, priority, dueOffsetDays, displayOrder } = body;
+  const { name, description, priority, dueOffsetDays, displayOrder, dependsOnPrevious } = body;
   const pool = await getPool();
   await pool.request()
     .input('id',            sql.Int,               templateTaskId)
@@ -275,11 +298,13 @@ async function updateTemplateTask(templateTaskId, body) {
     .input('priority',      sql.VarChar(20),       priority ?? null)
     .input('dueOffsetDays', sql.Int,               dueOffsetDays ?? null)
     .input('displayOrder',  sql.Int,               displayOrder ?? null)
+    .input('dependsOnPrevious', sql.Bit,           dependsOnPrevious === undefined ? null : (dependsOnPrevious ? 1 : 0))
     .query(`
       UPDATE pm_template_tasks
       SET name = COALESCE(@name, name), description = @description,
           priority = COALESCE(@priority, priority),
           due_offset_days = COALESCE(@dueOffsetDays, due_offset_days),
+          depends_on_previous = COALESCE(@dependsOnPrevious, depends_on_previous),
           display_order = COALESCE(@displayOrder, display_order)
       WHERE template_task_id = @id
     `);
@@ -347,24 +372,37 @@ async function instantiateTemplate(templateId, projectId, userId) {
       });
       activityIds.push(activity.activityId);
 
+      const taskIds = [];
       for (const tplTask of tplActivity.tasks) {
         const dueDate = addDays(actStart, tplTask.dueOffsetDays);
-        await taskService.createTask(activity.activityId, projectId, userId, {
+        const task = await taskService.createTask(activity.activityId, projectId, userId, {
           name: tplTask.name, description: tplTask.description,
           priority: tplTask.priority, dueDate: toISODate(dueDate),
         });
+        taskIds.push(task.taskId);
+      }
+      // Task chaining defaults OFF (unlike Phase/Activity) — only wire a
+      // link where the template explicitly opted in for that Task. See the
+      // depends_on_previous column comment in schema.mssql.sql for why the
+      // default differs here.
+      for (let i = 1; i < taskIds.length; i++) {
+        if (!tplActivity.tasks[i].dependsOnPrevious) continue;
+        await taskService.addTaskDep(taskIds[i], taskIds[i - 1], projectId, userId);
       }
     }
     // Wire this phase's own Activity chain now that all of them (and their
-    // Tasks) exist.
+    // Tasks) exist — skipping any link an admin explicitly turned off for
+    // that specific Activity (dependsOnPrevious === false).
     for (let i = 1; i < activityIds.length; i++) {
+      if (tplPhase.activities[i].dependsOnPrevious === false) continue;
       await activityService.addActivityDep(activityIds[i], activityIds[i - 1], projectId, userId);
     }
   }
 
   // Wire the Phase chain now that every Phase (and everything under it)
-  // exists.
+  // exists — same per-item skip as the Activity chain above.
   for (let i = 1; i < phaseIds.length; i++) {
+    if (template.phases[i].dependsOnPrevious === false) continue;
     await phaseService.addPhaseDep(phaseIds[i], phaseIds[i - 1], projectId, userId);
   }
 }

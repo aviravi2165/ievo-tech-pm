@@ -1159,13 +1159,18 @@ CREATE TABLE dbo.pm_project_templates (
 
 IF OBJECT_ID('dbo.pm_template_phases', 'U') IS NULL
 CREATE TABLE dbo.pm_template_phases (
-    template_phase_id int IDENTITY(1,1) NOT NULL,
-    template_id       int NOT NULL,
-    name              nvarchar(200) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
-    description       nvarchar(max) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
-    display_order     int NOT NULL DEFAULT 0,
-    start_offset_days int NOT NULL DEFAULT 0,
-    duration_days     int NOT NULL,
+    template_phase_id   int IDENTITY(1,1) NOT NULL,
+    template_id         int NOT NULL,
+    name                nvarchar(200) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    description         nvarchar(max) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+    display_order       int NOT NULL DEFAULT 0,
+    start_offset_days   int NOT NULL DEFAULT 0,
+    duration_days       int NOT NULL,
+    -- Whether instantiateTemplate wires this phase to depend on the
+    -- previous phase in display_order (see the module comment above and
+    -- templateService.js). Admin-editable per phase so a chain link can be
+    -- removed without disabling auto-chaining for the whole template.
+    depends_on_previous bit NOT NULL DEFAULT 1,
     CONSTRAINT PK_pm_template_phases PRIMARY KEY (template_phase_id),
     CONSTRAINT FK_pm_template_phases_template FOREIGN KEY (template_id) REFERENCES dbo.pm_project_templates(template_id) ON DELETE CASCADE
 );
@@ -1179,6 +1184,9 @@ CREATE TABLE dbo.pm_template_activities (
     display_order         int NOT NULL DEFAULT 0,
     start_offset_days     int NOT NULL DEFAULT 0,
     duration_days         int NOT NULL,
+    -- Same per-item override as pm_template_phases.depends_on_previous, one
+    -- level down (depends on the previous Activity within the same Phase).
+    depends_on_previous   bit NOT NULL DEFAULT 1,
     CONSTRAINT PK_pm_template_activities PRIMARY KEY (template_activity_id),
     CONSTRAINT FK_pm_template_activities_phase FOREIGN KEY (template_phase_id) REFERENCES dbo.pm_template_phases(template_phase_id) ON DELETE CASCADE
 );
@@ -1192,7 +1200,36 @@ CREATE TABLE dbo.pm_template_tasks (
     display_order         int NOT NULL DEFAULT 0,
     priority              varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT 'Medium' NOT NULL,
     due_offset_days       int NOT NULL,
+    -- Unlike pm_template_phases/pm_template_activities.depends_on_previous
+    -- below, tasks were NEVER auto-chained by instantiateTemplate — every
+    -- template task has always been created independent of its siblings.
+    -- Defaults to 0 (off) so this stays an OPT-IN per task rather than
+    -- silently making every existing template's tasks start blocking each
+    -- other the moment this column exists.
+    depends_on_previous   bit NOT NULL DEFAULT 0,
     CONSTRAINT PK_pm_template_tasks PRIMARY KEY (template_task_id),
     CONSTRAINT FK_pm_template_tasks_activity FOREIGN KEY (template_activity_id) REFERENCES dbo.pm_template_activities(template_activity_id) ON DELETE CASCADE
 );
+
+-- ────────────────────────────────────────────────────────────
+-- pm_template_phases/pm_template_activities.depends_on_previous — lets an
+-- admin turn OFF the auto-chain link to the previous sibling for one
+-- specific phase/activity in a template, instead of it being an
+-- unconditional, all-or-nothing sequential chain (see templateService.js's
+-- instantiateTemplate). Defaults to 1 (existing behavior unchanged) for
+-- both new installs (in the CREATE TABLE above) and pre-existing databases
+-- (this migration, for installs that already had these tables).
+--
+-- pm_template_tasks.depends_on_previous is the mirror-image default (0/off)
+-- — see the column comment above for why: it's introducing chaining that
+-- never existed, not exposing an opt-out from chaining that always did.
+-- ────────────────────────────────────────────────────────────
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_template_phases') AND name = 'depends_on_previous')
+    ALTER TABLE dbo.pm_template_phases ADD depends_on_previous BIT NOT NULL DEFAULT 1;
+
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_template_activities') AND name = 'depends_on_previous')
+    ALTER TABLE dbo.pm_template_activities ADD depends_on_previous BIT NOT NULL DEFAULT 1;
+
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_template_tasks') AND name = 'depends_on_previous')
+    ALTER TABLE dbo.pm_template_tasks ADD depends_on_previous BIT NOT NULL DEFAULT 0;
  
