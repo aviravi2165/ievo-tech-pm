@@ -71,6 +71,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
   const [newActName,  setNewActName]  = useState('');
   const [newActStart, setNewActStart] = useState('');
   const [newActEnd,   setNewActEnd]   = useState('');
+  const [newActWeight, setNewActWeight] = useState('');
   const [actErrors,   setActErrors]   = useState({});
   const [addingAct,   setAddingAct]   = useState(false);
 
@@ -116,6 +117,19 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
   useEffect(() => { if (open) fetchActivities(); }, [open, fetchActivities]);
 
   const togglePanel = (p) => setPanel(v => v === p ? null : p);
+
+  // Weightage budget for this Phase — how much of the 100% total is already
+  // spoken for by its active Activities, and how much is left. Drives the
+  // "lock" on the Add Activity weightage field below: once remaining hits
+  // 0, no more weightage can be handed out until an existing Activity's
+  // share is lowered first. Only ACTIVE activities count (a deactivated
+  // Activity's old weightage shouldn't block new allocation), matching the
+  // is_active=1 filter the backend's own validation uses.
+  const phaseWeightSum = activities
+    .filter(a => a.isActive !== false)
+    .reduce((s, a) => s + (Number(a.weightage) || 0), 0);
+  const phaseWeightRemaining = Math.max(0, Math.round((100 - phaseWeightSum) * 100) / 100);
+  const weightageLocked = phaseWeightRemaining <= 0;
 
   // UI-only sort/filter over this phase's already-loaded activities list.
   const activityStatusOptions = [...new Set(activities.map(a => a.status).filter(Boolean))].map(s => ({ value: s, label: s }));
@@ -210,11 +224,20 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
   };
 
   const handleAddActivity = async () => {
+    if (weightageLocked) {
+      showToast("This phase is fully allocated (100%). Lower an existing activity's weightage before adding another activity.");
+      return;
+    }
     const errs = {};
     if (!newActName.trim()) errs.name  = 'Name required';
     if (!newActStart)       errs.start = 'Start date required';
     if (!newActEnd)         errs.end   = 'End date required';
+    if (newActWeight === '') errs.weight = 'Weightage is required';
+    if (newActWeight !== '' && Number(newActWeight) < 1) errs.weight = 'Weightage must be at least 1%';
     if (newActStart && newActEnd && newActEnd < newActStart) errs.end = 'End must be after start';
+    if (newActWeight !== '' && Number(newActWeight) > phaseWeightRemaining) {
+      errs.weight = `Only ${phaseWeightRemaining}% of this phase's weightage is left to assign`;
+    }
     if (Object.keys(errs).length) { setActErrors(errs); return; }
     if (addingAct) return;
     setAddingAct(true);
@@ -223,8 +246,9 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
         name:         newActName.trim(),
         plannedStart: newActStart,
         plannedEnd:   newActEnd,
+        weightage:    Number(newActWeight),
       });
-      setNewActName(''); setNewActStart(''); setNewActEnd(''); setActErrors({});
+      setNewActName(''); setNewActStart(''); setNewActEnd(''); setNewActWeight(''); setActErrors({});
       setPanel(null);
       // fetchActivities() refreshes the sibling activities' own .emptyState,
       // but this Phase's own .emptyState (noActivities -> null once it has
@@ -592,6 +616,11 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8, flexWrap:'wrap', gap:8 }}>
             <span style={{ fontSize:11, color:theme.colors.ash, textTransform:'uppercase', letterSpacing:'.06em' }}>
               Activities ({visibleActivities.length}{visibleActivities.length !== activities.length ? ` of ${activities.length}` : ''})
+              {phaseWeightSum > 0 && (
+                <span style={{ marginLeft:8, textTransform:'none', letterSpacing:'normal', color: weightageLocked ? theme.colors.copper : theme.colors.ash }}>
+                  · Weight {phaseWeightSum}%/100{weightageLocked ? ' (locked)' : ''}
+                </span>
+              )}
             </span>
             <div style={{ display:'flex', alignItems:'center', gap:6 }}>
               {activities.length > 0 && (
@@ -600,7 +629,9 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
               )}
               {canEdit && !isInactive && (
                 <BtnGhost style={{ padding:'4px 12px', fontSize:11 }}
-                  onClick={() => togglePanel('addact')}>
+                  onClick={() => togglePanel('addact')}
+                  disabled={weightageLocked}
+                  title={weightageLocked ? "This phase's 100% activity weightage is already allocated" : 'Add Activity'}>
                   + Add Activity
                 </BtnGhost>
               )}
@@ -648,8 +679,25 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
                   {actErrors.end && <span style={{ fontSize:10, color:theme.colors.danger }}>{actErrors.end}</span>}
                 </div>
               </div>
+              <div style={{ marginBottom:10 }}>
+                <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase', display:'block', marginBottom:3 }}>
+                  Weightage (% of phase) <span style={{ color:theme.colors.espresso }}>*</span>
+                </label>
+                <input type="number" min={1} max={phaseWeightRemaining} step="0.1"
+                  value={newActWeight}
+                  disabled={weightageLocked}
+                  onChange={e => { setNewActWeight(e.target.value); setActErrors(er => ({ ...er, weight: '' })); }}
+                  placeholder={weightageLocked ? 'Fully allocated' : `up to ${phaseWeightRemaining}`}
+                  style={{ width:120, background:theme.colors.mid, border:`1px solid ${actErrors.weight?theme.colors.danger:theme.colors.border}`, borderRadius:theme.radius.sm, padding:'6px 10px', color:theme.colors.onyx, fontSize:12, fontFamily:'inherit', outline:'none' }} />
+                {actErrors.weight && <div style={{ fontSize:10, color:theme.colors.danger, marginTop:3 }}>{actErrors.weight}</div>}
+                <div style={{ fontSize:10, color:theme.colors.ash, marginTop:3 }}>
+                  {weightageLocked
+                    ? "This phase's weightage is fully allocated (100%) — lower another activity's share first."
+                    : `Required. ${phaseWeightSum}% of 100% assigned so far, ${phaseWeightRemaining}% remaining.`}
+                </div>
+              </div>
               <div style={{ display:'flex', gap:6 }}>
-                <BtnPrimary style={{ fontSize:11, padding:'6px 16px' }} onClick={handleAddActivity} disabled={addingAct}>{addingAct ? 'Adding…' : 'Add'}</BtnPrimary>
+                <BtnPrimary style={{ fontSize:11, padding:'6px 16px' }} onClick={handleAddActivity} disabled={addingAct || weightageLocked}>{addingAct ? 'Adding…' : 'Add'}</BtnPrimary>
                 <BtnGhost style={{ fontSize:11, padding:'6px 12px' }} onClick={() => { setPanel(null); setActErrors({}); }}>Cancel</BtnGhost>
               </div>
             </EditPanel>

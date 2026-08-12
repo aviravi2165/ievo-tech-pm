@@ -251,6 +251,16 @@ export const DepBadge = styled.span`
   border-radius: 10px; padding: 1px 7px; background: ${t(th => th.colors.mid)};
 `;
 
+// ── Weightage badge — an Activity's share (%) of its Phase's progress.
+// Copper-tinted (not the neutral ash DepBadge uses) so it reads as a
+// distinct planning fact next to the name, not another dependency-style
+// annotation.
+export const WeightBadge = styled.span`
+  display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-weight: 700;
+  color: ${t(th => th.colors.copper)}; border: 1px solid ${t(th => th.colors.copper)}59;
+  border-radius: 10px; padding: 1px 7px; background: ${t(th => th.colors.copper)}14;
+`;
+
 // ── Buttons ────────────────────────────────────────────────────────────────────
 export const Btn = styled.button`
   padding: 4px 10px; border-radius: ${t(th => th.radius.sm)}; border: none;
