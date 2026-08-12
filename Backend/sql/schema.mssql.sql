@@ -1,10 +1,17 @@
--- [ievo-tech-pm].dbo.dept_master definition
+-- SET QUOTED_IDENTIFIER/ANSI_NULLS ON — required at the session level for
+-- the filtered indexes further down (e.g. "CREATE INDEX ... WHERE
+-- is_deleted = 0"); without this, a fresh sqlcmd/ODBC session whose default
+-- differs fails those CREATE INDEX statements with error 1934.
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+
+-- dbo.dept_master definition
 
 -- Drop table
 
--- DROP TABLE [ievo-tech-pm].dbo.dept_master;
+-- DROP TABLE dbo.dept_master;
 
-CREATE TABLE [ievo-tech-pm].dbo.dept_master (
+CREATE TABLE dbo.dept_master (
 	dept_id int IDENTITY(1,1) NOT NULL,
 	dept_name varchar(100) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
 	dept_code varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
@@ -16,13 +23,13 @@ CREATE TABLE [ievo-tech-pm].dbo.dept_master (
 );
 
 
--- [ievo-tech-pm].dbo.auth_users definition
+-- dbo.auth_users definition
 
 -- Drop table
 
--- DROP TABLE [ievo-tech-pm].dbo.auth_users;
+-- DROP TABLE dbo.auth_users;
 
-CREATE TABLE [ievo-tech-pm].dbo.auth_users (
+CREATE TABLE dbo.auth_users (
 	user_id uniqueidentifier DEFAULT newid() NOT NULL,
 	username varchar(50) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
 	password_hash nvarchar(MAX) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
@@ -44,18 +51,18 @@ CREATE TABLE [ievo-tech-pm].dbo.auth_users (
 	CONSTRAINT PK__auth_use__B9BE370F707337F1 PRIMARY KEY (user_id),
 	CONSTRAINT UQ__auth_use__AB6E6164B4F4B9A3 UNIQUE (email),
 	CONSTRAINT UQ__auth_use__F3DBC57266FA8CA0 UNIQUE (username),
-	CONSTRAINT FK_auth_users_dept FOREIGN KEY (dept_id) REFERENCES [ievo-tech-pm].dbo.dept_master(dept_id),
-	CONSTRAINT FK_auth_users_manager FOREIGN KEY (mgr_user_id) REFERENCES [ievo-tech-pm].dbo.auth_users(user_id)
+	CONSTRAINT FK_auth_users_dept FOREIGN KEY (dept_id) REFERENCES dbo.dept_master(dept_id),
+	CONSTRAINT FK_auth_users_manager FOREIGN KEY (mgr_user_id) REFERENCES dbo.auth_users(user_id)
 );
 
 
--- [ievo-tech-pm].dbo.comm_groups definition
+-- dbo.comm_groups definition
 
 -- Drop table
 
--- DROP TABLE [ievo-tech-pm].dbo.comm_groups;
+-- DROP TABLE dbo.comm_groups;
 
-CREATE TABLE [ievo-tech-pm].dbo.comm_groups (
+CREATE TABLE dbo.comm_groups (
 	group_id int IDENTITY(1,1) NOT NULL,
 	group_name nvarchar(150) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
 	description nvarchar(MAX) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
@@ -66,18 +73,18 @@ CREATE TABLE [ievo-tech-pm].dbo.comm_groups (
 	disabled_at datetimeoffset NULL,
 	disabled_by uniqueidentifier NULL,
 	CONSTRAINT PK__comm_gro__D57795A043EF4D2B PRIMARY KEY (group_id),
-	CONSTRAINT FK_comm_groups_createdby FOREIGN KEY (created_by) REFERENCES [ievo-tech-pm].dbo.auth_users(user_id),
-	CONSTRAINT FK_comm_groups_disabledby FOREIGN KEY (disabled_by) REFERENCES [ievo-tech-pm].dbo.auth_users(user_id)
+	CONSTRAINT FK_comm_groups_createdby FOREIGN KEY (created_by) REFERENCES dbo.auth_users(user_id),
+	CONSTRAINT FK_comm_groups_disabledby FOREIGN KEY (disabled_by) REFERENCES dbo.auth_users(user_id)
 );
 
 
--- [ievo-tech-pm].dbo.comm_conversations definition
+-- dbo.comm_conversations definition
 
 -- Drop table
 
--- DROP TABLE [ievo-tech-pm].dbo.comm_conversations;
+-- DROP TABLE dbo.comm_conversations;
 
-CREATE TABLE [ievo-tech-pm].dbo.comm_conversations (
+CREATE TABLE dbo.comm_conversations (
 	conversation_id int IDENTITY(1,1) NOT NULL,
 	subject nvarchar(300) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
 	allow_reply bit DEFAULT 1 NOT NULL,
@@ -91,56 +98,59 @@ CREATE TABLE [ievo-tech-pm].dbo.comm_conversations (
 	disabled_at datetimeoffset NULL,
 	disabled_by uniqueidentifier NULL,
 	CONSTRAINT PK__comm_con__311E7E9A3AD61852 PRIMARY KEY (conversation_id),
-	CONSTRAINT FK_comm_conv_createdby FOREIGN KEY (created_by) REFERENCES [ievo-tech-pm].dbo.auth_users(user_id),
-	CONSTRAINT FK_comm_conv_disabledby FOREIGN KEY (disabled_by) REFERENCES [ievo-tech-pm].dbo.auth_users(user_id),
-	CONSTRAINT FK_comm_conv_group FOREIGN KEY (group_id) REFERENCES [ievo-tech-pm].dbo.comm_groups(group_id)
+	CONSTRAINT FK_comm_conv_createdby FOREIGN KEY (created_by) REFERENCES dbo.auth_users(user_id),
+	CONSTRAINT FK_comm_conv_disabledby FOREIGN KEY (disabled_by) REFERENCES dbo.auth_users(user_id),
+	CONSTRAINT FK_comm_conv_group FOREIGN KEY (group_id) REFERENCES dbo.comm_groups(group_id)
 );
-ALTER TABLE [ievo-tech-pm].dbo.comm_conversations WITH NOCHECK ADD CONSTRAINT CK__comm_conv__conv___72C60C4A CHECK (([conv_type]='group_thread' OR [conv_type]='cc' OR [conv_type]='bcc'));
+ALTER TABLE dbo.comm_conversations WITH NOCHECK ADD CONSTRAINT CK__comm_conv__conv___72C60C4A CHECK (([conv_type]='group_thread' OR [conv_type]='cc' OR [conv_type]='bcc'));
 
 
--- [ievo-tech-pm].dbo.comm_group_hidden definition
+-- dbo.comm_group_hidden definition
 
 -- Drop table
 
--- DROP TABLE [ievo-tech-pm].dbo.comm_group_hidden;
+-- DROP TABLE dbo.comm_group_hidden;
 
-CREATE TABLE [ievo-tech-pm].dbo.comm_group_hidden (
+CREATE TABLE dbo.comm_group_hidden (
 	group_id int NOT NULL,
 	user_id uniqueidentifier NOT NULL,
 	hidden_at datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
 	CONSTRAINT PK_comm_group_hidden PRIMARY KEY (group_id,user_id),
-	CONSTRAINT FK_comm_group_hidden_group FOREIGN KEY (group_id) REFERENCES [ievo-tech-pm].dbo.comm_groups(group_id) ON DELETE CASCADE,
-	CONSTRAINT FK_comm_group_hidden_user FOREIGN KEY (user_id) REFERENCES [ievo-tech-pm].dbo.auth_users(user_id) ON DELETE CASCADE
+	CONSTRAINT FK_comm_group_hidden_group FOREIGN KEY (group_id) REFERENCES dbo.comm_groups(group_id) ON DELETE CASCADE,
+	CONSTRAINT FK_comm_group_hidden_user FOREIGN KEY (user_id) REFERENCES dbo.auth_users(user_id) ON DELETE CASCADE
 );
 
 
--- [ievo-tech-pm].dbo.comm_group_members definition
+-- dbo.comm_group_members definition
 
 -- Drop table
 
--- DROP TABLE [ievo-tech-pm].dbo.comm_group_members;
+-- DROP TABLE dbo.comm_group_members;
 
-CREATE TABLE [ievo-tech-pm].dbo.comm_group_members (
+CREATE TABLE dbo.comm_group_members (
 	group_id int NOT NULL,
 	user_id uniqueidentifier NOT NULL,
 	added_at datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
 	is_co_admin bit DEFAULT 0 NOT NULL,
 	CONSTRAINT PK_comm_group_members PRIMARY KEY (group_id,user_id),
-	CONSTRAINT FK_comm_group_members_group FOREIGN KEY (group_id) REFERENCES [ievo-tech-pm].dbo.comm_groups(group_id) ON DELETE CASCADE,
-	CONSTRAINT FK_comm_group_members_user FOREIGN KEY (user_id) REFERENCES [ievo-tech-pm].dbo.auth_users(user_id) ON DELETE CASCADE
+	CONSTRAINT FK_comm_group_members_group FOREIGN KEY (group_id) REFERENCES dbo.comm_groups(group_id) ON DELETE CASCADE,
+	CONSTRAINT FK_comm_group_members_user FOREIGN KEY (user_id) REFERENCES dbo.auth_users(user_id) ON DELETE CASCADE
 );
 
 
--- [ievo-tech-pm].dbo.comm_messages definition
+-- dbo.comm_messages definition
 
 -- Drop table
 
--- DROP TABLE [ievo-tech-pm].dbo.comm_messages;
+-- DROP TABLE dbo.comm_messages;
 
-CREATE TABLE [ievo-tech-pm].dbo.comm_messages (
+CREATE TABLE dbo.comm_messages (
 	message_id int IDENTITY(1,1) NOT NULL,
 	conversation_id int NOT NULL,
-	sender_id uniqueidentifier NOT NULL,
+	-- sender_id is nullable — a system message (e.g. the Activity Insights
+	-- cron post; see activityController's hasUnreadChat query, which checks
+	-- sender_id IS NULL) has no human sender.
+	sender_id uniqueidentifier NULL,
 	parent_message_id int NULL,
 	body_html nvarchar(MAX) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
 	is_deleted bit DEFAULT 0 NOT NULL,
@@ -148,22 +158,21 @@ CREATE TABLE [ievo-tech-pm].dbo.comm_messages (
 	is_edited BIT NOT NULL DEFAULT 0,
 	edited_at datetimeoffset NULL,
 	is_system BIT NOT NULL DEFAULT 0,
-	sender_id uniqueidentifier NULL,
 	CONSTRAINT PK__comm_mes__0BBF6EE68D1986E9 PRIMARY KEY (message_id),
-	CONSTRAINT FK__comm_mess__conve__04E4BC85 FOREIGN KEY (conversation_id) REFERENCES [ievo-tech-pm].dbo.comm_conversations(conversation_id),
-	CONSTRAINT FK__comm_mess__paren__06CD04F7 FOREIGN KEY (parent_message_id) REFERENCES [ievo-tech-pm].dbo.comm_messages(message_id),
-	CONSTRAINT FK__comm_mess__sende__05D8E0BE FOREIGN KEY (sender_id) REFERENCES [ievo-tech-pm].dbo.auth_users(user_id)
+	CONSTRAINT FK__comm_mess__conve__04E4BC85 FOREIGN KEY (conversation_id) REFERENCES dbo.comm_conversations(conversation_id),
+	CONSTRAINT FK__comm_mess__paren__06CD04F7 FOREIGN KEY (parent_message_id) REFERENCES dbo.comm_messages(message_id),
+	CONSTRAINT FK__comm_mess__sende__05D8E0BE FOREIGN KEY (sender_id) REFERENCES dbo.auth_users(user_id)
 );
 
  
 
--- [ievo-tech-pm].dbo.comm_participants definition
+-- dbo.comm_participants definition
 
 -- Drop table
 
--- DROP TABLE [ievo-tech-pm].dbo.comm_participants;
+-- DROP TABLE dbo.comm_participants;
 
-CREATE TABLE [ievo-tech-pm].dbo.comm_participants (
+CREATE TABLE dbo.comm_participants (
 	participant_id int IDENTITY(1,1) NOT NULL,
 	conversation_id int NOT NULL,
 	user_id uniqueidentifier NOT NULL,
@@ -174,35 +183,35 @@ CREATE TABLE [ievo-tech-pm].dbo.comm_participants (
 	rejoined_at DATETIMEOFFSET NULL,
 	CONSTRAINT PK__comm_par__4E0378061F7A913F PRIMARY KEY (participant_id),
 	CONSTRAINT UQ_comm_participants UNIQUE (conversation_id,user_id),
-	CONSTRAINT FK_comm_participants_conv FOREIGN KEY (conversation_id) REFERENCES [ievo-tech-pm].dbo.comm_conversations(conversation_id),
-	CONSTRAINT FK_comm_participants_user FOREIGN KEY (user_id) REFERENCES [ievo-tech-pm].dbo.auth_users(user_id)
+	CONSTRAINT FK_comm_participants_conv FOREIGN KEY (conversation_id) REFERENCES dbo.comm_conversations(conversation_id),
+	CONSTRAINT FK_comm_participants_user FOREIGN KEY (user_id) REFERENCES dbo.auth_users(user_id)
 );
-ALTER TABLE [ievo-tech-pm].dbo.comm_participants WITH NOCHECK ADD CONSTRAINT CK__comm_part__parti__7B5B524B CHECK (([participant_type]='bcc' OR [participant_type]='cc' OR [participant_type]='to'));
+ALTER TABLE dbo.comm_participants WITH NOCHECK ADD CONSTRAINT CK__comm_part__parti__7B5B524B CHECK (([participant_type]='bcc' OR [participant_type]='cc' OR [participant_type]='to'));
 
 
--- [ievo-tech-pm].dbo.comm_read_receipts definition
+-- dbo.comm_read_receipts definition
 
 -- Drop table
 
--- DROP TABLE [ievo-tech-pm].dbo.comm_read_receipts;
+-- DROP TABLE dbo.comm_read_receipts;
 
-CREATE TABLE [ievo-tech-pm].dbo.comm_read_receipts (
+CREATE TABLE dbo.comm_read_receipts (
 	message_id int NOT NULL,
 	user_id uniqueidentifier NOT NULL,
 	read_at datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
 	CONSTRAINT PK__comm_rea__E0248D96CF84064F PRIMARY KEY (message_id,user_id),
-	CONSTRAINT FK__comm_read__messa__10566F31 FOREIGN KEY (message_id) REFERENCES [ievo-tech-pm].dbo.comm_messages(message_id),
-	CONSTRAINT FK__comm_read__user___114A936A FOREIGN KEY (user_id) REFERENCES [ievo-tech-pm].dbo.auth_users(user_id)
+	CONSTRAINT FK__comm_read__messa__10566F31 FOREIGN KEY (message_id) REFERENCES dbo.comm_messages(message_id),
+	CONSTRAINT FK__comm_read__user___114A936A FOREIGN KEY (user_id) REFERENCES dbo.auth_users(user_id)
 );
 
 
--- [ievo-tech-pm].dbo.comm_attachments definition
+-- dbo.comm_attachments definition
 
 -- Drop table
 
--- DROP TABLE [ievo-tech-pm].dbo.comm_attachments;
+-- DROP TABLE dbo.comm_attachments;
 
-CREATE TABLE [ievo-tech-pm].dbo.comm_attachments (
+CREATE TABLE dbo.comm_attachments (
 	attachment_id int IDENTITY(1,1) NOT NULL,
 	message_id int NULL,
 	uploaded_by uniqueidentifier NOT NULL,
@@ -214,29 +223,29 @@ CREATE TABLE [ievo-tech-pm].dbo.comm_attachments (
 	is_deleted bit DEFAULT 0 NOT NULL,
 	uploaded_at datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
 	CONSTRAINT PK__comm_att__B74DF4E21DF3B6D0 PRIMARY KEY (attachment_id),
-	CONSTRAINT FK__comm_atta__messa__0B91BA14 FOREIGN KEY (message_id) REFERENCES [ievo-tech-pm].dbo.comm_messages(message_id),
-	CONSTRAINT FK__comm_atta__uploa__0C85DE4D FOREIGN KEY (uploaded_by) REFERENCES [ievo-tech-pm].dbo.auth_users(user_id)
+	CONSTRAINT FK__comm_atta__messa__0B91BA14 FOREIGN KEY (message_id) REFERENCES dbo.comm_messages(message_id),
+	CONSTRAINT FK__comm_atta__uploa__0C85DE4D FOREIGN KEY (uploaded_by) REFERENCES dbo.auth_users(user_id)
 );
 
 
--- [ievo-tech-pm].dbo.comm_conversation_hidden definition
+-- dbo.comm_conversation_hidden definition
 
 -- Drop table
 
--- DROP TABLE [ievo-tech-pm].dbo.comm_conversation_hidden;
+-- DROP TABLE dbo.comm_conversation_hidden;
 
-CREATE TABLE [ievo-tech-pm].dbo.comm_conversation_hidden (
+CREATE TABLE dbo.comm_conversation_hidden (
 	conversation_id int NOT NULL,
 	user_id uniqueidentifier NOT NULL,
 	hidden_at datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
 	CONSTRAINT PK__comm_con__DA859DEAA3E9F52E PRIMARY KEY (conversation_id,user_id),
-	CONSTRAINT FK__comm_conv__conve__151B244E FOREIGN KEY (conversation_id) REFERENCES [ievo-tech-pm].dbo.comm_conversations(conversation_id) ON DELETE CASCADE,
-	CONSTRAINT FK__comm_conv__user___160F4887 FOREIGN KEY (user_id) REFERENCES [ievo-tech-pm].dbo.auth_users(user_id) ON DELETE CASCADE
+	CONSTRAINT FK__comm_conv__conve__151B244E FOREIGN KEY (conversation_id) REFERENCES dbo.comm_conversations(conversation_id) ON DELETE CASCADE,
+	CONSTRAINT FK__comm_conv__user___160F4887 FOREIGN KEY (user_id) REFERENCES dbo.auth_users(user_id) ON DELETE CASCADE
 );
 
 
 -- Seed departments
-INSERT INTO [ievo-tech-pm].dbo.dept_master (dept_name, dept_code)
+INSERT INTO dbo.dept_master (dept_name, dept_code)
 SELECT v.dept_name, v.dept_code
 FROM (
     VALUES 
@@ -294,69 +303,79 @@ FROM (
 ) AS v(dept_name, dept_code)
 WHERE NOT EXISTS (
     SELECT 1 
-    FROM [ievo-tech-pm].dbo.dept_master d 
+    FROM dbo.dept_master d 
     WHERE d.dept_name = v.dept_name
 );
 
-SELECT * FROM [ievo-tech-pm].dbo.dept_master;
+SELECT * FROM dbo.dept_master;
 
 -- Test / seed users
-INSERT INTO [ievo-tech-pm].dbo.auth_users 
-(username, password_hash, first_name, last_name, email, user_type, is_active, allow_login, must_change_password)
-SELECT 
-    v.username, v.password_hash, v.first_name, v.last_name, v.email, v.user_type, v.is_active, v.allow_login, v.must_change_password
+-- NOTE: allow_login previously appeared in these INSERT column lists but
+-- was never a real column on dbo.auth_users (not in the CREATE TABLE above,
+-- not referenced anywhere in the backend) — a leftover from wherever this
+-- seed data was originally exported from. Dropped from the column list AND
+-- each VALUES tuple below so a fresh run of this script doesn't 500 on
+-- "Invalid column name 'allow_login'".
+INSERT INTO dbo.auth_users
+(username, password_hash, first_name, last_name, email, user_type, is_active, must_change_password)
+SELECT
+    v.username, v.password_hash, v.first_name, v.last_name, v.email, v.user_type, v.is_active, v.must_change_password
 FROM (
-    VALUES 
-    ('admin',    '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Admin',  'User', 'admin@ievo.in', 'admin',    1, 1, 0),
-    ('testuser', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Test',   'User', 'test@ievo.in',  'employee', 1, 1, 0),
-    ('md',       '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Senior', 'MD',   'md@ievo.in',    'viewer',   1, 1, 0)
-) AS v(username, password_hash, first_name, last_name, email, user_type, is_active, allow_login, must_change_password)
+    VALUES
+    ('admin',    '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Admin',  'User', 'admin@ievo.in', 'admin',    1, 0),
+    ('testuser', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Test',   'User', 'test@ievo.in',  'employee', 1, 0),
+    ('md',       '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Senior', 'MD',   'md@ievo.in',    'viewer',   1, 0)
+) AS v(username, password_hash, first_name, last_name, email, user_type, is_active, must_change_password)
 WHERE NOT EXISTS (
-    SELECT 1 
-    FROM [ievo-tech-pm].dbo.auth_users u 
+    SELECT 1
+    FROM dbo.auth_users u
     WHERE u.username = v.username
 );
-SELECT * FROM [ievo-tech-pm].dbo.auth_users;
+SELECT * FROM dbo.auth_users;
 
 
 
 
-INSERT INTO [ievo-tech-pm].dbo.auth_users 
-(username, password_hash, first_name, last_name, email, user_type, is_active, allow_login, must_change_password)
-SELECT 
-    v.username, v.password_hash, v.first_name, v.last_name, v.email, v.user_type, v.is_active, v.allow_login, v.must_change_password
+INSERT INTO dbo.auth_users
+(username, password_hash, first_name, last_name, email, user_type, is_active, must_change_password)
+SELECT
+    v.username, v.password_hash, v.first_name, v.last_name, v.email, v.user_type, v.is_active, v.must_change_password
 FROM (
-    VALUES 
-    ('Yash_Suthar', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Yash', 'Suthar', 'yash.suthar@ievo.co.in', 'employee', 1, 1, 0),
-    ('Ali_Atif', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Ali', 'Atif', 'ali.atif@ievo.co.in', 'employee', 1, 1, 0),
-    ('Jatin_K', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Jatin', 'K', 'jatin.kumawat105204@gmail.com', 'employee', 1, 1, 0),
-    ('Ravi_Asari', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Ravi', 'Asari', 'ravi.asari@ievo.co.in', 'employee', 1, 1, 1)
-) AS v(username, password_hash, first_name, last_name, email, user_type, is_active, allow_login, must_change_password)
+    VALUES
+    ('Yash_Suthar', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Yash', 'Suthar', 'yash.suthar@ievo.co.in', 'employee', 1, 0),
+    ('Ali_Atif', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Ali', 'Atif', 'ali.atif@ievo.co.in', 'employee', 1, 0),
+    ('Jatin_K', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Jatin', 'K', 'jatin.kumawat105204@gmail.com', 'employee', 1, 0),
+    ('Ravi_Asari', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Ravi', 'Asari', 'ravi.asari@ievo.co.in', 'employee', 1, 1)
+) AS v(username, password_hash, first_name, last_name, email, user_type, is_active, must_change_password)
 WHERE NOT EXISTS (
-    SELECT 1 
-    FROM [ievo-tech-pm].dbo.auth_users u 
-    WHERE u.username = v.username
-);
-
-INSERT INTO [ievo-tech-pm].dbo.auth_users 
-(username, password_hash, first_name, last_name, email, user_type, is_active, allow_login, must_change_password)
-SELECT 
-    v.username, v.password_hash, v.first_name, v.last_name, v.email, v.user_type, v.is_active, v.allow_login, v.must_change_password
-FROM (
-    VALUES 
-    ('Testuser2', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Test', 'User2', 'testuser2@gmail.com', 'employee', 1, 1, 1)
-) AS v(username, password_hash, first_name, last_name, email, user_type, is_active, allow_login, must_change_password)
-WHERE NOT EXISTS (
-    SELECT 1 
-    FROM [ievo-tech-pm].dbo.auth_users u 
+    SELECT 1
+    FROM dbo.auth_users u
     WHERE u.username = v.username
 );
 
+INSERT INTO dbo.auth_users
+(username, password_hash, first_name, last_name, email, user_type, is_active, must_change_password)
+SELECT
+    v.username, v.password_hash, v.first_name, v.last_name, v.email, v.user_type, v.is_active, v.must_change_password
+FROM (
+    VALUES
+    ('Testuser2', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Test', 'User2', 'testuser2@gmail.com', 'employee', 1, 1)
+) AS v(username, password_hash, first_name, last_name, email, user_type, is_active, must_change_password)
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM dbo.auth_users u
+    WHERE u.username = v.username
+);
 
-SELECT p.user_id, u.username, p.participant_type, p.is_deleted
-FROM comm_participants p
-INNER JOIN auth_users u ON u.user_id = p.user_id
-WHERE p.conversation_id = <that_id>
+
+-- Scratch query removed here — it referenced an unfilled <that_id>
+-- placeholder and isn't valid SQL; leaving it in broke every fresh run of
+-- this script (a syntax error anywhere in a batch aborts the whole batch,
+-- so nothing above it executed either). Original, for reference:
+--   SELECT p.user_id, u.username, p.participant_type, p.is_deleted
+--   FROM comm_participants p
+--   INNER JOIN auth_users u ON u.user_id = p.user_id
+--   WHERE p.conversation_id = <some conversation id>
 
 
 -- ============================================================
@@ -489,6 +508,10 @@ CREATE TABLE dbo.pm_activities (
     status_override bit DEFAULT 0 NOT NULL,
     is_deleted      bit DEFAULT 0 NOT NULL,
     created_at      datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    -- weightage — this Activity's share (1-100) of its parent Phase's
+    -- progress. New activities always require a value; NULL is retained
+    -- only for legacy rows created before weightage existed.
+    weightage       decimal(5,2) NULL,
     CONSTRAINT PK_pm_activities PRIMARY KEY (activity_id),
     CONSTRAINT FK_pm_activities_phase FOREIGN KEY (phase_id) REFERENCES dbo.pm_phases(phase_id) ON DELETE CASCADE,
     CONSTRAINT FK_pm_activities_owner FOREIGN KEY (owner_id) REFERENCES dbo.auth_users(user_id),
@@ -1074,6 +1097,21 @@ IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_act
 
 IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_tasks') AND name = 'is_active')
     ALTER TABLE dbo.pm_tasks ADD is_active BIT NOT NULL DEFAULT 1;
+
+-- ────────────────────────────────────────────────────────────
+-- pm_activities.weightage — see the column comment on the CREATE TABLE
+-- above (this is the same column, added here for databases that already
+-- had pm_activities before this feature existed).
+-- ────────────────────────────────────────────────────────────
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_activities') AND name = 'weightage')
+    ALTER TABLE dbo.pm_activities ADD weightage decimal(5,2) NULL;
+-- 0% is not valid: it would allow unlimited zero-weight Activities. Convert
+-- any pre-existing 0 values to legacy NULL before strengthening the check.
+UPDATE dbo.pm_activities SET weightage = NULL WHERE weightage = 0;
+IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_activities_weightage')
+    ALTER TABLE dbo.pm_activities DROP CONSTRAINT CK_pm_activities_weightage;
+ALTER TABLE dbo.pm_activities WITH CHECK ADD CONSTRAINT CK_pm_activities_weightage
+    CHECK (weightage IS NULL OR (weightage >= 1 AND weightage <= 100));
 -- ────────────────────────────────────────────────────────────
 -- pm_tasks.start_date — explicit planned start, distinct from created_at
 -- (when the row was inserted) and due_date (when it's due). The Timeline

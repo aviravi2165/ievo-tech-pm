@@ -15,7 +15,7 @@ import { showToast, apiErrorMessage } from '../hooks/toastStore';
 import { GroupRow, RowActions, COL, TASK_GRID_COLS, TableHead, TableHeadCell } from '../styles/Table.styles';
 import { ActivityName, ActivityBody } from '../styles/ActivityRow.styles';
 import {
-  DepBadge, IconBtn, IconBtnDanger, EditPanelTitle, BtnPrimary, BtnGhost, TaskList,
+  DepBadge, WeightBadge, IconBtn, IconBtnDanger, EditPanelTitle, BtnPrimary, BtnGhost, TaskList,
 } from '../styles/shared.styles';
 import { useSortFilter } from '../../shared/hooks/useSortFilter';
 import { SortSelect, FilterSelect, FilterToggle } from '../../shared/components/TableControls';
@@ -76,6 +76,7 @@ export default function ActivityRow({
   const [editStart,  setEditStart]  = useState(toInput(activity.plannedStart));
   const [editEnd,    setEditEnd]    = useState(toInput(activity.plannedEnd));
   const [editDesc,   setEditDesc]   = useState(activity.description || '');
+  const [editWeight, setEditWeight] = useState(activity.weightage ?? '');
   const [editSaving, setEditSaving] = useState(false);
   const [editErrors, setEditErrors] = useState({});
   // Edit-activity popup — same floating-popup treatment as Participants/
@@ -119,7 +120,19 @@ export default function ActivityRow({
     setEditStart(toInput(activity.plannedStart));
     setEditEnd(toInput(activity.plannedEnd));
     setEditDesc(activity.description || '');
-  }, [activity.plannedStart, activity.plannedEnd, activity.description]);
+    setEditWeight(activity.weightage ?? '');
+  }, [activity.plannedStart, activity.plannedEnd, activity.description, activity.weightage]);
+
+  // How much of the parent Phase's 100% weightage budget is available for
+  // THIS activity — every other active activity's share is already spoken
+  // for, so this activity's own current share is added back into the pool
+  // it can choose from (raising it doesn't "use" budget it already has).
+  const weightBudget = useMemo(() => {
+    const othersSum = allActivities
+      .filter(a => a.activityId !== activity.activityId && a.isActive !== false)
+      .reduce((s, a) => s + (Number(a.weightage) || 0), 0);
+    return Math.max(0, Math.round((100 - othersSum) * 100) / 100);
+  }, [allActivities, activity.activityId]);
 
   // ── Fetch tasks ─────────────────────────────────────────────────────────────
   const fetchTasks = useCallback(async () => {
@@ -176,6 +189,11 @@ export default function ActivityRow({
     if (!editStart) errs.start = 'Start date required';
     if (!editEnd)   errs.end   = 'End date required';
     if (editStart && editEnd && editEnd < editStart) errs.end = 'End must be after start';
+    if (editWeight === '') errs.weight = 'Weightage is required';
+    if (editWeight !== '' && Number(editWeight) < 1) errs.weight = 'Weightage must be at least 1%';
+    if (editWeight !== '' && Number(editWeight) > weightBudget) {
+      errs.weight = `Only ${weightBudget}% of this phase's weightage is available`;
+    }
     if (Object.keys(errs).length) { setEditErrors(errs); return; }
     setEditSaving(true);
     try {
@@ -183,6 +201,7 @@ export default function ActivityRow({
         plannedStart: editStart || null,
         plannedEnd:   editEnd   || null,
         description:  editDesc  || null,
+        weightage:    Number(editWeight),
         // ownerId is no longer user-editable — Activity Managers are set
         // via the Participants tab now. Passed through unchanged so the
         // backend's owner_id fallback (used only when an activity has no
@@ -378,6 +397,23 @@ export default function ActivityRow({
             </DepBadge>
           )}
 
+          {activity.weightage != null && (
+            <WeightBadge title="Share of this phase's progress" style={{ flexShrink:0 }}>
+              {activity.weightage}%
+            </WeightBadge>
+          )}
+
+          {canEdit && !isInactive && (
+            <BtnGhost
+              type="button"
+              title="Edit activity dates, description, and weightage"
+              onClick={e => { e.stopPropagation(); togglePanel('edit'); }}
+              style={{ flexShrink:0, padding:'2px 8px', fontSize:10 }}
+            >
+              Edit
+            </BtnGhost>
+          )}
+
           {isInactive && <InactiveBadge />}
         </div>
 
@@ -430,8 +466,8 @@ export default function ActivityRow({
 
         {/* Grid column 3: Dates — the actual planned date range AND the
             delay warning together, not one replacing the other. Clicking
-            it opens the same edit panel (dates + description) the old
-            dedicated "Edit" pencil icon opened — Activity has no separate
+            it also opens the edit panel; the visible Edit button beside the
+            activity name is the discoverable primary action. Activity has no separate
             rename capability, so this IS the activity's one real edit
             surface. No Owner field here anymore — Activity Managers are
             set via the Participants tab; owner_id is a legacy column the
@@ -546,6 +582,21 @@ export default function ActivityRow({
             <textarea value={editDesc} onChange={e => setEditDesc(e.target.value)}
               placeholder="Describe the activity's goal…" rows={2}
               style={{ width: '100%', background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '7px 10px', color: theme.colors.onyx, fontSize: 12, fontFamily: 'inherit', outline: 'none', resize: 'vertical' }} />
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ fontSize: 10, color: theme.colors.ash, fontWeight: 600, textTransform: 'uppercase', display: 'block', marginBottom: 3 }}>
+              Weightage (% of phase) <span style={{ color: theme.colors.espresso }}>*</span>
+            </label>
+            <input type="number" min={1} max={weightBudget} step="0.1"
+              value={editWeight}
+              disabled={weightBudget <= 0 && editWeight === ''}
+              onChange={e => { setEditWeight(e.target.value); setEditErrors(er => ({ ...er, weight: '' })); }}
+              placeholder={weightBudget <= 0 && editWeight === '' ? 'Fully allocated' : `up to ${weightBudget}`}
+              style={{ width: 120, background: theme.colors.mid, border: `1px solid ${editErrors.weight ? theme.colors.danger : theme.colors.border}`, borderRadius: theme.radius.sm, padding: '6px 10px', color: theme.colors.onyx, fontSize: 12, fontFamily: 'inherit', outline: 'none' }} />
+            {editErrors.weight && <div style={{ fontSize: 10, color: theme.colors.danger, marginTop: 3 }}>{editErrors.weight}</div>}
+            <div style={{ fontSize: 10, color: theme.colors.ash, marginTop: 3 }}>
+              Required. Phase progress always uses activity weightage.
+            </div>
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
             <BtnPrimary style={{ fontSize: 11, padding: '6px 16px' }} onClick={handleEditSave} disabled={editSaving}>{editSaving ? '…' : 'Save'}</BtnPrimary>

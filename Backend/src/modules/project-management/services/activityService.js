@@ -13,6 +13,45 @@ function parseIdList(val) {
   return String(val).split(',').filter(Boolean).map(Number);
 }
 
+// ── Weightage ────────────────────────────────────────────────────────────────
+//
+// Each Activity's weightage is its share (0-100) of its parent Phase's
+// progress (see progressService, which only switches a Phase to weighted
+// averaging once its active Activities' weightages sum to 100). The 100%
+// budget is enforced here, at write time, on every create/update — this is
+// the "lock" the total at 100% requirement: once a Phase's active Activities
+// already account for 100%, no further weightage can be assigned to a new
+// or existing Activity without first freeing up room on another one.
+async function getPhaseWeightageTotal(phaseId, excludeActivityId = null) {
+  const pool = await getPool();
+  const req = pool.request().input('phaseId', sql.Int, phaseId);
+  let excludeClause = '';
+  if (excludeActivityId) {
+    req.input('excludeActivityId', sql.Int, excludeActivityId);
+    excludeClause = 'AND activity_id <> @excludeActivityId';
+  }
+  const result = await req.query(`
+    SELECT COALESCE(SUM(weightage), 0) AS total
+    FROM pm_activities
+    WHERE phase_id=@phaseId AND is_deleted=0 AND is_active=1 ${excludeClause}
+  `);
+  return Number(result.recordset[0]?.total || 0);
+}
+
+async function validateActivityWeightage(phaseId, weightage, excludeActivityId = null) {
+  const w = Number(weightage);
+  if (Number.isNaN(w) || w < 1 || w > 100) {
+    const e = new Error('Weightage must be a number between 1 and 100'); e.statusCode = 400; throw e;
+  }
+  const existingTotal = await getPhaseWeightageTotal(phaseId, excludeActivityId);
+  const projected = Math.round((existingTotal + w) * 100) / 100;
+  if (projected > 100.001) {
+    const remaining = Math.max(0, Math.round((100 - existingTotal) * 100) / 100);
+    const e = new Error(`Total activity weightage for this phase can't exceed 100% — ${existingTotal}% already assigned, ${remaining}% remaining.`);
+    e.statusCode = 400; throw e;
+  }
+}
+
 // ── Fetch activities ──────────────────────────────────────────────────────────
 
 // userId — the REQUESTING user, used to compute their effective role per
@@ -31,6 +70,7 @@ async function getActivitiesForPhase(phaseId, userId, isAdmin = false) {
              a.planned_start AS plannedStart,
              a.planned_end   AS plannedEnd,
              a.status, a.status_override AS statusOverride,
+             a.weightage,
              a.created_at    AS createdAt,
              parentProj.project_id AS projectId,
              parentPh.status AS parentPhaseStatus,
@@ -264,9 +304,23 @@ async function removeActivityMember(activityId, targetUserId, actorUserId, proje
 // ── Create activity (optionally seed initial activity members) ─────────────────
 
 async function createActivity(phaseId, projectId, userId, body) {
-  const { name, description, plannedStart, plannedEnd, ownerId, displayOrder, memberIds = [] } = body;
+  const { name, description, plannedStart, plannedEnd, ownerId, displayOrder, memberIds = [], weightage } = body;
   if (!name?.trim()) { const e = new Error('Activity name required'); e.statusCode = 400; throw e; }
   if (name.trim().length > 200) { const e = new Error('Activity name must be 200 characters or fewer'); e.statusCode = 400; throw e; }
+  if (weightage === undefined || weightage === null || weightage === '') {
+    const e = new Error('Activity weightage is required'); e.statusCode = 400; throw e;
+  }
+
+  // A fully allocated Phase is closed to additional Activities altogether.
+  // Checking this independently of the submitted weightage prevents callers
+  // from bypassing the 100% lock by creating an Activity with weightage=null.
+  const assignedWeightage = await getPhaseWeightageTotal(phaseId);
+  if (assignedWeightage >= 99.999) {
+    const e = new Error("This Phase's activity weightage is fully allocated (100%). Lower an existing Activity's weightage before adding another Activity.");
+    e.statusCode = 409; throw e;
+  }
+
+  await validateActivityWeightage(phaseId, weightage);
 
   if (await isBlocked('phase', phaseId)) {
     const e = new Error('This Phase is blocked by an unresolved dependency — resolve it before adding activities.');
@@ -311,12 +365,14 @@ async function createActivity(phaseId, projectId, userId, body) {
       .input('plannedEnd',   sql.Date,             plannedEnd   || null)
       .input('ownerId',      sql.UniqueIdentifier, ownerId      || null)
       .input('displayOrder', sql.Int,              displayOrder ?? null)
+      .input('weightage',    sql.Decimal(5, 2),    (weightage === undefined || weightage === null || weightage === '') ? null : Number(weightage))
       .query(`
-        INSERT INTO pm_activities (phase_id, name, description, planned_start, planned_end, owner_id, display_order)
+        INSERT INTO pm_activities (phase_id, name, description, planned_start, planned_end, owner_id, display_order, weightage)
         OUTPUT INSERTED.activity_id AS activityId, INSERTED.name, INSERTED.status
         VALUES (
           @phaseId, @name, @description, @plannedStart, @plannedEnd, @ownerId,
-          COALESCE(@displayOrder, (SELECT COALESCE(MAX(display_order),0)+10 FROM pm_activities WHERE phase_id=@phaseId AND is_deleted=0))
+          COALESCE(@displayOrder, (SELECT COALESCE(MAX(display_order),0)+10 FROM pm_activities WHERE phase_id=@phaseId AND is_deleted=0)),
+          @weightage
         )
       `);
     row = result.recordset[0];
@@ -394,12 +450,23 @@ const ACTIVITY_FIELD_TYPES = {
   planned_end:   sql.Date,
   owner_id:      sql.UniqueIdentifier,
   display_order: sql.Int,
+  weightage:     sql.Decimal(5, 2),
 };
 
 async function updateActivity(activityId, projectId, userId, body) {
   if (await isInactive('activity', activityId) || await isInactive('project', projectId)) {
     const e = new Error('This Activity is inactive — reactivate it before making changes.');
     e.statusCode = 409; throw e;
+  }
+  if (body.weightage === null || body.weightage === '') {
+    const e = new Error('Activity weightage is required'); e.statusCode = 400; throw e;
+  }
+  if (body.weightage !== undefined) {
+    const pool0b = await getPool();
+    const phRes = await pool0b.request().input('activityId', sql.Int, activityId)
+      .query(`SELECT phase_id AS phaseId FROM pm_activities WHERE activity_id=@activityId`);
+    const phId = phRes.recordset[0]?.phaseId;
+    await validateActivityWeightage(phId, body.weightage, activityId);
   }
   if (body.plannedStart !== undefined && body.plannedStart) {
     const pool0 = await getPool();
@@ -434,6 +501,7 @@ async function updateActivity(activityId, projectId, userId, body) {
   if (body.plannedEnd   !== undefined) fields.planned_end   = body.plannedEnd;
   if (body.ownerId      !== undefined) fields.owner_id      = body.ownerId;
   if (body.displayOrder !== undefined) fields.display_order = body.displayOrder;
+  if (body.weightage    !== undefined) fields.weightage     = Number(body.weightage);
   const keys = Object.keys(fields);
   if (!keys.length) return {};
 

@@ -363,12 +363,20 @@ async function instantiateTemplate(templateId, projectId, userId) {
     phaseIds.push(phase.phaseId);
 
     const activityIds = [];
-    for (const tplActivity of tplPhase.activities) {
+    const activityCount = tplPhase.activities.length;
+    for (const [activityIndex, tplActivity] of tplPhase.activities.entries()) {
       const actStart = addDays(phaseStart, tplActivity.startOffsetDays);
       const actEnd = addDays(actStart, tplActivity.durationDays);
+      // Templates predate required Activity weightage. Give each generated
+      // Activity an equal share, with the final Activity receiving any
+      // rounding remainder so the Phase totals exactly 100%.
+      const weightage = activityIndex === activityCount - 1
+        ? Math.round((100 - (Math.floor(10000 / activityCount) / 100) * (activityCount - 1)) * 100) / 100
+        : Math.floor(10000 / activityCount) / 100;
       const activity = await activityService.createActivity(phase.phaseId, projectId, userId, {
         name: tplActivity.name, description: tplActivity.description,
         plannedStart: toISODate(actStart), plannedEnd: toISODate(actEnd),
+        weightage,
       });
       activityIds.push(activity.activityId);
 

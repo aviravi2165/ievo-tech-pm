@@ -2,7 +2,8 @@
 
 /**
  * Progress computed on fetch — never stored (PRD §5.4)
- * Task Complete=100, else 0. Activity=avg tasks. Phase=avg activities. Project=avg phases.
+ * Task Complete=100, else 0. Activity=avg tasks. Phase=sum of completed
+ * Activity weightage. Project=avg phases.
  *
  * NOTE 1: this used to check task.status='Done', which stopped matching
  * anything the moment the task status vocabulary was migrated to
@@ -21,6 +22,21 @@
  * a child with nothing under it yet counts as 0%, not "not counted".
  */
 const { getPool, sql } = require('../../../config/db');
+
+/**
+ * A Phase always derives progress from Activity weightage, never from the
+ * number of Activities. The denominator is permanently 100: an unfinished
+ * 20%-weighted Activity contributes 0, while a completed 80%-weighted
+ * Activity contributes 80. This remains correct even while a manager is
+ * still allocating the Phase's last few percentage points.
+ */
+function weightedProgress(activities, scores) {
+  if (!activities.length) return 0;
+  const weighted = activities.reduce((sum, activity, index) => (
+    sum + scores[index] * (Number(activity.weightage) || 0) / 100
+  ), 0);
+  return Math.round(weighted);
+}
 
 async function getActivityProgress(activityId) {
   const pool = await getPool();
@@ -46,12 +62,11 @@ async function getPhaseProgress(phaseId) {
   const pool = await getPool();
   const result = await pool.request()
     .input('phaseId', sql.Int, phaseId)
-    .query(`SELECT activity_id AS activityId FROM pm_activities WHERE phase_id=@phaseId AND is_deleted=0`);
+    .query(`SELECT activity_id AS activityId, weightage FROM pm_activities WHERE phase_id=@phaseId AND is_deleted=0 AND is_active=1`);
   const activities = result.recordset;
   if (!activities.length) return 0;
   const scores = await Promise.all(activities.map(a => getActivityProgress(a.activityId)));
-  const sum = scores.reduce((s, v) => s + v, 0);
-  return Math.round(sum / activities.length);
+  return weightedProgress(activities, scores);
 }
 
 async function getProjectProgress(projectId) {
@@ -270,12 +285,12 @@ async function getPhaseStats(phaseId) {
   const pool = await getPool();
   const result = await pool.request()
     .input('phaseId', sql.Int, phaseId)
-    .query(`SELECT activity_id AS activityId, is_active AS isActive FROM pm_activities WHERE phase_id=@phaseId AND is_deleted=0`);
+    .query(`SELECT activity_id AS activityId, is_active AS isActive, weightage FROM pm_activities WHERE phase_id=@phaseId AND is_deleted=0 AND is_active=1`);
   const activities = result.recordset;
   if (!activities.length) return { progress: 0, hasActiveWork: false, hasTasks: false, activityCount: 0 };
 
   const statsList = await Promise.all(activities.map(a => getActivityStats(a.activityId)));
-  const progress = Math.round(statsList.reduce((s, v) => s + v.progress, 0) / activities.length);
+  const progress = weightedProgress(activities, statsList.map(s => s.progress));
   const hasActiveWork = statsList.some(s => s.hasActiveWork);
   // hasTasks/activityCount only count ACTIVE activities (a deactivated
   // Activity's tasks shouldn't mask the Phase reading as empty) — matches
