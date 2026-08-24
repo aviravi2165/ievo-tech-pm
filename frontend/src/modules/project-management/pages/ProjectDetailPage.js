@@ -47,6 +47,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
   const [newPhaseName, setNewPhaseName] = useState('');
   const [newPhaseStart, setNewPhaseStart] = useState('');
   const [newPhaseEnd,   setNewPhaseEnd]   = useState('');
+  const [newPhaseWeight, setNewPhaseWeight] = useState('');
   const [phaseErrors,   setPhaseErrors]   = useState({});
   const [addingPhase,   setAddingPhase]   = useState(false);
 
@@ -77,12 +78,31 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
     catch (err) { showToast(apiErrorMessage(err, 'Failed to reorder phase.')); }
   };
 
+  // Weightage budget for this Project — mirrors PhasePanel.js's
+  // phaseWeightSum/phaseWeightRemaining one level up. Only active Phases
+  // count toward the 100% total, matching the backend's own
+  // getProjectWeightageTotal filter.
+  const projectWeightSum = phases
+    .filter(p => p.isActive !== false)
+    .reduce((s, p) => s + (Number(p.weightage) || 0), 0);
+  const projectWeightRemaining = Math.max(0, Math.round((100 - projectWeightSum) * 100) / 100);
+  const projectWeightageLocked = projectWeightRemaining <= 0;
+
   const handleAddPhase = async () => {
+    if (projectWeightageLocked) {
+      showToast("This project's phase weightage is fully allocated (100%). Lower an existing phase's weightage before adding another phase.");
+      return;
+    }
     const errs = {};
     if (!newPhaseName.trim()) errs.name  = 'Name required';
     if (!newPhaseStart)       errs.start = 'Start date required';
     if (!newPhaseEnd)         errs.end   = 'End date required';
     if (newPhaseStart && newPhaseEnd && newPhaseEnd < newPhaseStart) errs.end = 'End must be after start';
+    if (newPhaseWeight === '') errs.weight = 'Weightage is required';
+    if (newPhaseWeight !== '' && Number(newPhaseWeight) < 1) errs.weight = 'Weightage must be at least 1%';
+    if (newPhaseWeight !== '' && Number(newPhaseWeight) > projectWeightRemaining) {
+      errs.weight = `Only ${projectWeightRemaining}% of this project's weightage is left to assign`;
+    }
     if (Object.keys(errs).length) { setPhaseErrors(errs); return; }
     if (addingPhase) return; // already in flight — the disabled button below should already stop this, but guard the handler itself too
     setAddingPhase(true);
@@ -91,8 +111,9 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
         name:         newPhaseName.trim(),
         plannedStart: newPhaseStart,
         plannedEnd:   newPhaseEnd,
+        weightage:    Number(newPhaseWeight),
       });
-      setNewPhaseName(''); setNewPhaseStart(''); setNewPhaseEnd('');
+      setNewPhaseName(''); setNewPhaseStart(''); setNewPhaseEnd(''); setNewPhaseWeight('');
       setShowAddPhase(false); setPhaseErrors({});
       refetch();
     } catch (err) { showToast(apiErrorMessage(err, 'Failed to add phase.')); }
@@ -308,8 +329,15 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
         {tab === 'Phases' && (
           <>
             {canEdit && !isProjectInactive && (
-              <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:4 }}>
-                <BtnPrimary onClick={() => setShowAddPhase(v => !v)}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4, flexWrap:'wrap', gap:8 }}>
+                {projectWeightSum > 0 ? (
+                  <span style={{ fontSize:11, color: projectWeightageLocked ? theme.colors.copper : theme.colors.ash }}>
+                    Weight {projectWeightSum}%/100{projectWeightageLocked ? ' (locked)' : ''}
+                  </span>
+                ) : <span />}
+                <BtnPrimary onClick={() => setShowAddPhase(v => !v)}
+                  disabled={!showAddPhase && projectWeightageLocked}
+                  title={(!showAddPhase && projectWeightageLocked) ? "This project's 100% phase weightage is already allocated" : undefined}>
                   {showAddPhase ? '✕ Cancel' : '+ Add Phase'}
                 </BtnPrimary>
               </div>
@@ -342,8 +370,25 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
                     {phaseErrors.end && <span style={{ fontSize:10, color:theme.colors.danger }}>{phaseErrors.end}</span>}
                   </div>
                 </div>
+                <div style={{ marginBottom:12 }}>
+                  <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase', display:'block', marginBottom:3 }}>
+                    Weightage (% of project) <span style={{ color:theme.colors.espresso }}>*</span>
+                  </label>
+                  <input type="number" min={1} max={projectWeightRemaining} step="0.1"
+                    value={newPhaseWeight}
+                    disabled={projectWeightageLocked}
+                    onChange={e => { setNewPhaseWeight(e.target.value); setPhaseErrors(er => ({ ...er, weight: '' })); }}
+                    placeholder={projectWeightageLocked ? 'Fully allocated' : `up to ${projectWeightRemaining}`}
+                    style={{ width:120, background:theme.colors.mid, border:`1px solid ${phaseErrors.weight?theme.colors.danger:theme.colors.border}`, borderRadius:theme.radius.sm, padding:'7px 10px', color:theme.colors.onyx, fontSize:12, fontFamily:'inherit', outline:'none' }} />
+                  {phaseErrors.weight && <div style={{ fontSize:11, color:theme.colors.danger, marginTop:3 }}>{phaseErrors.weight}</div>}
+                  <div style={{ fontSize:11, color:theme.colors.ash, marginTop:3 }}>
+                    {projectWeightageLocked
+                      ? "This project's weightage is fully allocated (100%) — lower another phase's share first."
+                      : `Required. ${projectWeightSum}% of 100% assigned so far, ${projectWeightRemaining}% remaining.`}
+                  </div>
+                </div>
                 <div style={{ display:'flex', gap:8 }}>
-                  <BtnPrimary onClick={handleAddPhase} disabled={addingPhase}>{addingPhase ? 'Adding…' : 'Add Phase'}</BtnPrimary>
+                  <BtnPrimary onClick={handleAddPhase} disabled={addingPhase || projectWeightageLocked}>{addingPhase ? 'Adding…' : 'Add Phase'}</BtnPrimary>
                   <BtnGhost onClick={() => { setShowAddPhase(false); setPhaseErrors({}); }}>Cancel</BtnGhost>
                 </div>
               </EditPanel>

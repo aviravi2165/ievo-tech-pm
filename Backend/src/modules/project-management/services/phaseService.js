@@ -13,6 +13,42 @@ function parseIdList(val) {
   return String(val).split(',').filter(Boolean).map(Number);
 }
 
+// ── Weightage ────────────────────────────────────────────────────────────────
+//
+// Mirrors activityService's Weightage section one level up: each Phase's
+// weightage is its share (1-100) of its parent Project's progress (see
+// progressService.weightedProgress). The 100% budget is enforced here, at
+// write time, on every create/update.
+async function getProjectWeightageTotal(projectId, excludePhaseId = null) {
+  const pool = await getPool();
+  const req = pool.request().input('projectId', sql.Int, projectId);
+  let excludeClause = '';
+  if (excludePhaseId) {
+    req.input('excludePhaseId', sql.Int, excludePhaseId);
+    excludeClause = 'AND phase_id <> @excludePhaseId';
+  }
+  const result = await req.query(`
+    SELECT COALESCE(SUM(weightage), 0) AS total
+    FROM pm_phases
+    WHERE project_id=@projectId AND is_deleted=0 AND is_active=1 ${excludeClause}
+  `);
+  return Number(result.recordset[0]?.total || 0);
+}
+
+async function validatePhaseWeightage(projectId, weightage, excludePhaseId = null) {
+  const w = Number(weightage);
+  if (Number.isNaN(w) || w < 1 || w > 100) {
+    const e = new Error('Weightage must be a number between 1 and 100'); e.statusCode = 400; throw e;
+  }
+  const existingTotal = await getProjectWeightageTotal(projectId, excludePhaseId);
+  const projected = Math.round((existingTotal + w) * 100) / 100;
+  if (projected > 100.001) {
+    const remaining = Math.max(0, Math.round((100 - existingTotal) * 100) / 100);
+    const e = new Error(`Total phase weightage for this project can't exceed 100% — ${existingTotal}% already assigned, ${remaining}% remaining.`);
+    e.statusCode = 400; throw e;
+  }
+}
+
 // userId is the REQUESTING user — used to compute their effective role on
 // each phase (explicit phase-level row, else inherited from their project
 // role; see roleService). Without this, the frontend had no way to know a
@@ -27,7 +63,7 @@ async function getPhasesForProject(projectId, userId, isAdmin = false) {
       SELECT ph.phase_id AS phaseId, ph.project_id AS projectId,
              ph.name, ph.description, ph.display_order AS displayOrder,
              ph.planned_start AS plannedStart, ph.planned_end AS plannedEnd,
-             ph.status, ph.status_override AS statusOverride, ph.created_at AS createdAt,
+             ph.status, ph.status_override AS statusOverride, ph.weightage, ph.created_at AS createdAt,
              ph.is_active AS ownIsActive, parentProj.is_active AS parentProjectActive,
              -- Raw "past its own planned_end" only — status exclusion
              -- applied in JS below against the DERIVED status; see the
@@ -109,9 +145,23 @@ async function getPhasesForProject(projectId, userId, isAdmin = false) {
 }
 
 async function createPhase(projectId, userId, body) {
-  const { name, description, plannedStart, plannedEnd, displayOrder } = body;
+  const { name, description, plannedStart, plannedEnd, displayOrder, weightage } = body;
   if (!name?.trim()) { const e = new Error('Phase name required'); e.statusCode = 400; throw e; }
   if (name.trim().length > 200) { const e = new Error('Phase name must be 200 characters or fewer'); e.statusCode = 400; throw e; }
+  if (weightage === undefined || weightage === null || weightage === '') {
+    const e = new Error('Phase weightage is required'); e.statusCode = 400; throw e;
+  }
+
+  // A fully allocated Project is closed to additional Phases altogether.
+  // Checking this independently of the submitted weightage prevents callers
+  // from bypassing the 100% lock by creating a Phase with weightage=null.
+  const assignedWeightage = await getProjectWeightageTotal(projectId);
+  if (assignedWeightage >= 99.999) {
+    const e = new Error("This Project's phase weightage is fully allocated (100%). Lower an existing Phase's weightage before adding another Phase.");
+    e.statusCode = 409; throw e;
+  }
+
+  await validatePhaseWeightage(projectId, weightage);
 
   if (await isInactive('project', projectId)) {
     const e = new Error('This Project is inactive — reactivate it before adding phases.');
@@ -154,10 +204,11 @@ async function createPhase(projectId, userId, body) {
     .input('plannedStart', sql.Date,              plannedStart || null)
     .input('plannedEnd',   sql.Date,              plannedEnd || null)
     .input('displayOrder', sql.Int,               nextOrder)
+    .input('weightage',    sql.Decimal(5, 2),     Number(weightage))
     .query(`
-      INSERT INTO pm_phases (project_id,name,description,planned_start,planned_end,display_order)
+      INSERT INTO pm_phases (project_id,name,description,planned_start,planned_end,display_order,weightage)
       OUTPUT INSERTED.phase_id AS phaseId, INSERTED.name, INSERTED.status, INSERTED.display_order AS displayOrder
-      VALUES (@projectId,@name,@description,@plannedStart,@plannedEnd,@displayOrder)
+      VALUES (@projectId,@name,@description,@plannedStart,@plannedEnd,@displayOrder,@weightage)
     `);
   const row = result.recordset[0];
   await audit.log({ entityType:'phase', entityId:row.phaseId, projectId, userId, action:'created', fieldChanged:'name', newValue:name.trim() });
@@ -170,12 +221,19 @@ const PHASE_FIELD_TYPES = {
   planned_start: sql.Date,
   planned_end:   sql.Date,
   display_order: sql.Int,
+  weightage:     sql.Decimal(5, 2),
 };
 
 async function updatePhase(phaseId, projectId, userId, body) {
   if (await isInactive('phase', phaseId) || await isInactive('project', projectId)) {
     const e = new Error('This Phase is inactive — reactivate it before making changes.');
     e.statusCode = 409; throw e;
+  }
+  if (body.weightage === null || body.weightage === '') {
+    const e = new Error('Phase weightage is required'); e.statusCode = 400; throw e;
+  }
+  if (body.weightage !== undefined) {
+    await validatePhaseWeightage(projectId, body.weightage, phaseId);
   }
   if (body.plannedStart !== undefined && body.plannedStart) {
     const pool0 = await getPool();
@@ -209,6 +267,7 @@ async function updatePhase(phaseId, projectId, userId, body) {
   if (body.plannedStart !== undefined) fields.planned_start = body.plannedStart;
   if (body.plannedEnd   !== undefined) fields.planned_end   = body.plannedEnd;
   if (body.displayOrder !== undefined) fields.display_order = body.displayOrder;
+  if (body.weightage    !== undefined) fields.weightage     = Number(body.weightage);
   const keys = Object.keys(fields);
   if (!keys.length) return {};
 
