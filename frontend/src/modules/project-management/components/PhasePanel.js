@@ -404,6 +404,23 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
             </WeightBadge>
           )}
 
+          {/* Explicit Edit button — same treatment as ActivityRow.js's Edit
+              button next to the activity name. Clicking the Dates cell
+              (grid column 3) already opens this same popup; this makes
+              editing the phase's weightage (not just its dates) directly
+              discoverable from the name cluster too, not only via a click
+              target elsewhere in the row. */}
+          {canEdit && !isInactive && (
+            <BtnGhost
+              type="button"
+              title="Edit phase dates and weightage"
+              onClick={e => { e.stopPropagation(); togglePanel('dates'); }}
+              style={{ flexShrink:0, padding:'2px 8px', fontSize:10 }}
+            >
+              Edit
+            </BtnGhost>
+          )}
+
           {/* Reorder — only when canEdit. */}
           {canEdit && onReorder && !isInactive && (
             <div style={{ display:'flex', gap:2, flexShrink:0 }} onClick={e => e.stopPropagation()}>
