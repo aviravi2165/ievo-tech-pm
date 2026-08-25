@@ -368,6 +368,23 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
                 {task.weightage}%
               </WeightBadge>
             )}
+
+            {/* Explicit Edit button — same treatment as ActivityRow.js's
+                and PhasePanel.js's Edit buttons. The Due Date cell and the
+                weight badge above already open this same 'date' panel; this
+                is a third, unambiguous entry point next to the name itself
+                for direct discoverability, matching the other two levels. */}
+            {canManager && !isInactive && (
+              <BtnGhost
+                type="button"
+                title="Edit dates and weightage"
+                onClick={e => { e.stopPropagation(); togglePanel('date'); }}
+                style={{ flexShrink: 0, padding: '2px 8px', fontSize: 10 }}
+              >
+                Edit
+              </BtnGhost>
+            )}
+
             {task.estimatedHours && <span style={{ fontSize: 10, color: theme.colors.ashLight, flexShrink: 0 }}>{task.estimatedHours}h</span>}
           </Cell>
         )}
