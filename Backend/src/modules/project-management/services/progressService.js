@@ -2,8 +2,9 @@
 
 /**
  * Progress computed on fetch — never stored (PRD §5.4)
- * Task Complete=100, else 0. Activity=avg tasks. Phase=sum of completed
- * Activity weightage. Project=sum of completed Phase weightage.
+ * Task Complete=100, else 0. Activity=sum of completed Task weightage.
+ * Phase=sum of completed Activity weightage. Project=sum of completed
+ * Phase weightage.
  *
  * NOTE 1: this used to check task.status='Done', which stopped matching
  * anything the moment the task status vocabulary was migrated to
@@ -42,11 +43,11 @@ async function getActivityProgress(activityId) {
   const pool = await getPool();
   const result = await pool.request()
     .input('activityId', sql.Int, activityId)
-    .query(`
-      SELECT ROUND(AVG(CASE WHEN status='Complete' THEN 100.0 ELSE 0 END), 0) AS progress
-      FROM pm_tasks WHERE activity_id=@activityId AND is_deleted=0
-    `);
-  return parseInt(result.recordset[0]?.progress || 0, 10);
+    .query(`SELECT task_id AS taskId, status, weightage FROM pm_tasks WHERE activity_id=@activityId AND is_deleted=0 AND is_active=1`);
+  const tasks = result.recordset;
+  if (!tasks.length) return 0;
+  const scores = tasks.map(t => t.status === 'Complete' ? 100 : 0);
+  return weightedProgress(tasks, scores);
 }
 
 // PERF: these were sequential `for...await` loops — each activity/phase
@@ -265,18 +266,14 @@ async function getActivityStats(activityId) {
   const pool = await getPool();
   const result = await pool.request()
     .input('activityId', sql.Int, activityId)
-    .query(`
-      SELECT
-        ROUND(AVG(CASE WHEN status='Complete' THEN 100.0 ELSE 0 END), 0) AS progress,
-        CAST(CASE WHEN SUM(CASE WHEN status='Ongoing' THEN 1 ELSE 0 END) > 0 THEN 1 ELSE 0 END AS BIT) AS hasActiveWork,
-        CAST(CASE WHEN SUM(CASE WHEN is_active=1 THEN 1 ELSE 0 END) > 0 THEN 1 ELSE 0 END AS BIT) AS hasTasks
-      FROM pm_tasks WHERE activity_id=@activityId AND is_deleted=0
-    `);
-  const row = result.recordset[0] || {};
+    .query(`SELECT task_id AS taskId, status, weightage FROM pm_tasks WHERE activity_id=@activityId AND is_deleted=0 AND is_active=1`);
+  const tasks = result.recordset;
+  if (!tasks.length) return { progress: 0, hasActiveWork: false, hasTasks: false };
+  const scores = tasks.map(t => t.status === 'Complete' ? 100 : 0);
   return {
-    progress: parseInt(row.progress || 0, 10),
-    hasActiveWork: Boolean(row.hasActiveWork),
-    hasTasks: Boolean(row.hasTasks),
+    progress: weightedProgress(tasks, scores),
+    hasActiveWork: tasks.some(t => t.status === 'Ongoing'),
+    hasTasks: true,
   };
 }
 
