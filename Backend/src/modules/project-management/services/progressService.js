@@ -3,7 +3,7 @@
 /**
  * Progress computed on fetch — never stored (PRD §5.4)
  * Task Complete=100, else 0. Activity=avg tasks. Phase=sum of completed
- * Activity weightage. Project=avg phases.
+ * Activity weightage. Project=sum of completed Phase weightage.
  *
  * NOTE 1: this used to check task.status='Done', which stopped matching
  * anything the moment the task status vocabulary was migrated to
@@ -73,12 +73,11 @@ async function getProjectProgress(projectId) {
   const pool = await getPool();
   const result = await pool.request()
     .input('projectId', sql.Int, projectId)
-    .query(`SELECT phase_id AS phaseId FROM pm_phases WHERE project_id=@projectId AND is_deleted=0`);
+    .query(`SELECT phase_id AS phaseId, weightage FROM pm_phases WHERE project_id=@projectId AND is_deleted=0 AND is_active=1`);
   const phases = result.recordset;
   if (!phases.length) return 0;
   const scores = await Promise.all(phases.map(ph => getPhaseProgress(ph.phaseId)));
-  const sum = scores.reduce((s, v) => s + v, 0);
-  return Math.round(sum / phases.length);
+  return weightedProgress(phases, scores);
 }
 
 /**
@@ -312,12 +311,12 @@ async function getProjectStats(projectId) {
   const pool = await getPool();
   const result = await pool.request()
     .input('projectId', sql.Int, projectId)
-    .query(`SELECT phase_id AS phaseId, is_active AS isActive FROM pm_phases WHERE project_id=@projectId AND is_deleted=0`);
+    .query(`SELECT phase_id AS phaseId, is_active AS isActive, weightage FROM pm_phases WHERE project_id=@projectId AND is_deleted=0 AND is_active=1`);
   const phases = result.recordset;
   if (!phases.length) return { progress: 0, hasActiveWork: false, hasTasks: false, phaseCount: 0 };
 
   const statsList = await Promise.all(phases.map(ph => getPhaseStats(ph.phaseId)));
-  const progress = Math.round(statsList.reduce((s, v) => s + v.progress, 0) / phases.length);
+  const progress = weightedProgress(phases, statsList.map(s => s.progress));
   const hasActiveWork = statsList.some(s => s.hasActiveWork);
   // Same active-only filter for hasTasks/phaseCount, all-phases for
   // progress/hasActiveWork — matches getProjectHasTasks/getProjectPhaseCount

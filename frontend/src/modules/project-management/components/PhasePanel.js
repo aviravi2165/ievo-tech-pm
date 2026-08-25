@@ -13,7 +13,7 @@ import { showToast, apiErrorMessage } from '../hooks/toastStore';
 import { GroupRow, RowActions, GROUP_COL, TableHead, TableHeadCell } from '../styles/Table.styles';
 import { PhaseName, PhaseBody } from '../styles/PhasePanel.styles';
 import {
-  DepBadge, IconBtn, IconBtnDanger, EditPanel, EditPanelTitle, BtnPrimary, BtnGhost,
+  DepBadge, WeightBadge, IconBtn, IconBtnDanger, EditPanel, EditPanelTitle, BtnPrimary, BtnGhost,
 } from '../styles/shared.styles';
 import { useSortFilter } from '../../shared/hooks/useSortFilter';
 import { SortSelect, FilterSelect, FilterToggle } from '../../shared/components/TableControls';
@@ -64,6 +64,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
   // Date edit
   const [editStart,   setEditStart]   = useState(toInput(phase.plannedStart));
   const [editEnd,     setEditEnd]     = useState(toInput(phase.plannedEnd));
+  const [editWeight,  setEditWeight]  = useState(phase.weightage ?? '');
   const [dateErrors,  setDateErrors]  = useState({});
   const [dateSaving,  setDateSaving]  = useState(false);
 
@@ -105,7 +106,19 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
   useEffect(() => {
     setEditStart(toInput(phase.plannedStart));
     setEditEnd(toInput(phase.plannedEnd));
-  }, [phase.plannedStart, phase.plannedEnd]);
+    setEditWeight(phase.weightage ?? '');
+  }, [phase.plannedStart, phase.plannedEnd, phase.weightage]);
+
+  // How much of the Project's 100% weightage budget is available for THIS
+  // phase — mirrors ActivityRow.js's weightBudget one level up. Every other
+  // active Phase's share is already spoken for, so this Phase's own current
+  // share is added back into the pool it can choose from.
+  const phaseWeightBudget = (() => {
+    const othersSum = allPhases
+      .filter(p => p.phaseId !== phase.phaseId && p.isActive !== false)
+      .reduce((s, p) => s + (Number(p.weightage) || 0), 0);
+    return Math.max(0, Math.round((100 - othersSum) * 100) / 100);
+  })();
 
   const fetchActivities = useCallback(async () => {
     if (!hasLoadedActivitiesRef.current) setLoading(true);
@@ -213,13 +226,18 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
     if (!editStart) errs.start = 'Start date required';
     if (!editEnd)   errs.end   = 'End date required';
     if (editStart && editEnd && editEnd < editStart) errs.end = 'End must be after start';
+    if (editWeight === '') errs.weight = 'Weightage is required';
+    if (editWeight !== '' && Number(editWeight) < 1) errs.weight = 'Weightage must be at least 1%';
+    if (editWeight !== '' && Number(editWeight) > phaseWeightBudget) {
+      errs.weight = `Only ${phaseWeightBudget}% of this project's weightage is available`;
+    }
     if (Object.keys(errs).length) { setDateErrors(errs); return; }
     setDateSaving(true);
     try {
-      await phaseApi.update(phase.phaseId, { plannedStart: editStart, plannedEnd: editEnd });
+      await phaseApi.update(phase.phaseId, { plannedStart: editStart, plannedEnd: editEnd, weightage: Number(editWeight) });
       onRefetchProject?.();
       setPanel(null); setDateErrors({});
-    } catch (err) { showToast(apiErrorMessage(err, 'Failed to save phase dates.')); }
+    } catch (err) { showToast(apiErrorMessage(err, 'Failed to save phase.')); }
     finally { setDateSaving(false); }
   };
 
@@ -380,6 +398,29 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
             </DepBadge>
           )}
 
+          {phase.weightage != null && (
+            <WeightBadge title="Share of this project's progress" style={{ flexShrink:0 }}>
+              {phase.weightage}%
+            </WeightBadge>
+          )}
+
+          {/* Explicit Edit button — same treatment as ActivityRow.js's Edit
+              button next to the activity name. Clicking the Dates cell
+              (grid column 3) already opens this same popup; this makes
+              editing the phase's weightage (not just its dates) directly
+              discoverable from the name cluster too, not only via a click
+              target elsewhere in the row. */}
+          {canEdit && !isInactive && (
+            <BtnGhost
+              type="button"
+              title="Edit phase dates and weightage"
+              onClick={e => { e.stopPropagation(); togglePanel('dates'); }}
+              style={{ flexShrink:0, padding:'2px 8px', fontSize:10 }}
+            >
+              Edit
+            </BtnGhost>
+          )}
+
           {/* Reorder — only when canEdit. */}
           {canEdit && onReorder && !isInactive && (
             <div style={{ display:'flex', gap:2, flexShrink:0 }} onClick={e => e.stopPropagation()}>
@@ -448,7 +489,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
             icon opened. */}
         <div ref={datesRef} style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:2, overflow:'hidden', cursor: canEdit && !isInactive ? 'pointer' : 'default' }}
           onClick={(canEdit && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('dates'); } : undefined}
-          title={(canEdit && !isInactive) ? 'Click to edit dates' : undefined}
+          title={(canEdit && !isInactive) ? 'Click to edit dates / weightage' : undefined}
         >
           <span style={{ fontSize:10, color:theme.colors.ash, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'100%' }}>{dateRange}</span>
           <ScheduleBadge isOverdue={phase.isOverdue} overdueDays={phase.overdueDays} delayDays={phase.delayDays} delayLabel="Late by" />
@@ -520,10 +561,10 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
           overflowY: 'visible',
         }}>
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 10 }}>
-            <EditPanelTitle style={{ marginBottom:0 }}>Phase Dates</EditPanelTitle>
+            <EditPanelTitle style={{ marginBottom:0 }}>Edit Phase</EditPanelTitle>
             <BtnGhost onClick={() => { setPanel(null); setDateErrors({}); }} style={{ fontSize:11, padding:'2px 8px' }}>✕</BtnGhost>
           </div>
-          <div style={{ display:'flex', gap:12, flexWrap:'wrap', alignItems:'flex-end' }}>
+          <div style={{ display:'flex', gap:12, flexWrap:'wrap', alignItems:'flex-end', marginBottom:10 }}>
             <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
               <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase' }}>Start Date <span style={{ color:theme.colors.espresso }}>*</span></label>
               <input type="date" value={editStart} onChange={e => { setEditStart(e.target.value); setDateErrors(er=>({...er,start:''})); }}
@@ -537,6 +578,23 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
                 style={{ background:theme.colors.mid, border:`1px solid ${dateErrors.end?theme.colors.danger:theme.colors.border}`, borderRadius:theme.radius.sm, padding:'6px 10px', color:theme.colors.onyx, fontSize:12, fontFamily:'inherit', outline:'none' }} />
               {dateErrors.end && <span style={{ fontSize:10, color:theme.colors.danger }}>{dateErrors.end}</span>}
             </div>
+          </div>
+          <div style={{ marginBottom:10 }}>
+            <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase', display:'block', marginBottom:3 }}>
+              Weightage (% of project) <span style={{ color:theme.colors.espresso }}>*</span>
+            </label>
+            <input type="number" min={1} max={phaseWeightBudget} step="0.1"
+              value={editWeight}
+              disabled={phaseWeightBudget <= 0 && editWeight === ''}
+              onChange={e => { setEditWeight(e.target.value); setDateErrors(er => ({ ...er, weight: '' })); }}
+              placeholder={phaseWeightBudget <= 0 && editWeight === '' ? 'Fully allocated' : `up to ${phaseWeightBudget}`}
+              style={{ width:120, background:theme.colors.mid, border:`1px solid ${dateErrors.weight?theme.colors.danger:theme.colors.border}`, borderRadius:theme.radius.sm, padding:'6px 10px', color:theme.colors.onyx, fontSize:12, fontFamily:'inherit', outline:'none' }} />
+            {dateErrors.weight && <div style={{ fontSize:10, color:theme.colors.danger, marginTop:3 }}>{dateErrors.weight}</div>}
+            <div style={{ fontSize:10, color:theme.colors.ash, marginTop:3 }}>
+              Required. Project progress always uses phase weightage.
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:8 }}>
             <BtnPrimary style={{ padding:'7px 16px' }} onClick={handleDateSave} disabled={dateSaving}>{dateSaving?'…':'Save'}</BtnPrimary>
             <BtnGhost style={{ padding:'7px 12px' }} onClick={() => { setPanel(null); setDateErrors({}); }}>Cancel</BtnGhost>
           </div>

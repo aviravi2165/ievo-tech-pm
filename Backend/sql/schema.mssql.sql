@@ -453,6 +453,11 @@ CREATE TABLE dbo.pm_phases (
     status_override bit DEFAULT 0 NOT NULL,
     is_deleted      bit DEFAULT 0 NOT NULL,
     created_at      datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    -- weightage — this Phase's share (0-100) of its parent Project's
+    -- progress. Same contract as pm_activities.weightage: required going
+    -- forward, and a Project's progress is always the weighted sum of its
+    -- Phases' own progress (see progressService.weightedProgress).
+    weightage       decimal(5,2) NULL,
     CONSTRAINT PK_pm_phases PRIMARY KEY (phase_id),
     CONSTRAINT FK_pm_phases_project FOREIGN KEY (project_id) REFERENCES dbo.pm_projects(project_id) ON DELETE CASCADE,
     CONSTRAINT FK_pm_phases_dept    FOREIGN KEY (dept_id)    REFERENCES dbo.dept_master(dept_id)
@@ -1111,6 +1116,21 @@ UPDATE dbo.pm_activities SET weightage = NULL WHERE weightage = 0;
 IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_activities_weightage')
     ALTER TABLE dbo.pm_activities DROP CONSTRAINT CK_pm_activities_weightage;
 ALTER TABLE dbo.pm_activities WITH CHECK ADD CONSTRAINT CK_pm_activities_weightage
+    CHECK (weightage IS NULL OR (weightage >= 1 AND weightage <= 100));
+
+-- ────────────────────────────────────────────────────────────
+-- pm_phases.weightage — see the column comment on the CREATE TABLE above
+-- (this is the same column, added here for databases that already had
+-- pm_phases before this feature existed). Same contract as
+-- pm_activities.weightage above, one level up: a Phase's share (1-100) of
+-- its Project's progress.
+-- ────────────────────────────────────────────────────────────
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_phases') AND name = 'weightage')
+    ALTER TABLE dbo.pm_phases ADD weightage decimal(5,2) NULL;
+UPDATE dbo.pm_phases SET weightage = NULL WHERE weightage = 0;
+IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_phases_weightage')
+    ALTER TABLE dbo.pm_phases DROP CONSTRAINT CK_pm_phases_weightage;
+ALTER TABLE dbo.pm_phases WITH CHECK ADD CONSTRAINT CK_pm_phases_weightage
     CHECK (weightage IS NULL OR (weightage >= 1 AND weightage <= 100));
 -- ────────────────────────────────────────────────────────────
 -- pm_tasks.start_date — explicit planned start, distinct from created_at
