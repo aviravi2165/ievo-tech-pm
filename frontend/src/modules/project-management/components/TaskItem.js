@@ -10,7 +10,7 @@ import { showToast, apiErrorMessage } from '../hooks/toastStore';
 import { TaskTableRow, Cell, COL, Assignees, Avatar, RowActions } from '../styles/Table.styles';
 import { TaskName } from '../styles/TaskItem.styles';
 import {
-  DepBadge, IconBtn, IconBtnDanger, BtnPrimary, BtnGhost, SubPanel, SubPanelTitle, SubPanelHint,
+  DepBadge, WeightBadge, IconBtn, IconBtnDanger, BtnPrimary, BtnGhost, SubPanel, SubPanelTitle, SubPanelHint,
   MemberRow, LateTag, DueSoonTag,
 } from '../styles/shared.styles';
 import FloatingPopover from '../../shared/components/FloatingPopover';
@@ -161,7 +161,9 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
   const [editingName,  setEditingName]  = useState(false);
   const [editDue,      setEditDue]      = useState(toInput(task.dueDate));
   const [editStart,    setEditStart]    = useState(toInput(task.startDate));
+  const [editWeight,   setEditWeight]   = useState(task.weightage ?? '');
   const [dateError,    setDateError]    = useState('');
+  const [weightError,  setWeightError]  = useState('');
   const [editDesc,     setEditDesc]     = useState(task.description || '');
   const [depError,     setDepError]     = useState('');
   const [assignSearch, setAssignSearch] = useState(null);
@@ -183,6 +185,18 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
   useEffect(() => { setEditDue(toInput(task.dueDate)); }, [task.dueDate]);
   useEffect(() => { setEditStart(toInput(task.startDate)); }, [task.startDate]);
   useEffect(() => { setEditDesc(task.description || ''); }, [task.description]);
+  useEffect(() => { setEditWeight(task.weightage ?? ''); }, [task.weightage]);
+
+  // How much of the parent Activity's 100% weightage budget is available
+  // for THIS task — same pattern as ActivityRow.js's weightBudget one level
+  // up. Every other active Task's share is already spoken for, so this
+  // task's own current share is added back into the pool it can choose from.
+  const weightBudget = (() => {
+    const othersSum = allTasks
+      .filter(t => t.taskId !== task.taskId && t.isActive !== false)
+      .reduce((s, t) => s + (Number(t.weightage) || 0), 0);
+    return Math.max(0, Math.round((100 - othersSum) * 100) / 100);
+  })();
 
   const togglePanel = (p) => {
     setPanel(v => v === p ? null : p);
@@ -210,12 +224,15 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
     catch (err) { showToast(apiErrorMessage(err, 'Failed to rename task.')); }
   };
 
-  // ── Due date save ──────────────────────────────────────────────────────────
+  // ── Due date / weightage save ────────────────────────────────────────────
   const handleDueSave = async () => {
     if (!editDue) return;
-    setDateError('');
+    setDateError(''); setWeightError('');
+    if (editWeight === '') { setWeightError('Weightage is required'); return; }
+    if (Number(editWeight) < 1) { setWeightError('Weightage must be at least 1%'); return; }
+    if (Number(editWeight) > weightBudget) { setWeightError(`Only ${weightBudget}% of this activity's weightage is available`); return; }
     try {
-      await taskApi.update(task.taskId, { startDate: editStart || null, dueDate: editDue });
+      await taskApi.update(task.taskId, { startDate: editStart || null, dueDate: editDue, weightage: Number(editWeight) });
       onRefetch?.(); setPanel(null);
     }
     catch (err) { setDateError(apiErrorMessage(err, 'Failed to update dates.')); }
@@ -337,6 +354,37 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
                 {task.dependsOn.length}
               </DepBadge>
             )}
+            {task.weightage != null && (
+              // Clickable, same convention as DepBadge just above — opens
+              // the same Dates & Weightage popup the Due Date cell opens
+              // (still visually anchored there via dateRef), giving a
+              // second, more discoverable entry point right next to the
+              // name, same as ActivityRow.js/PhasePanel.js's explicit Edit
+              // buttons one level up.
+              <WeightBadge
+                title="Share of this activity's progress — click to edit"
+                onClick={(canManager && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('date'); } : undefined}
+                style={{ cursor: (canManager && !isInactive) ? 'pointer' : 'default', flexShrink: 0 }}>
+                {task.weightage}%
+              </WeightBadge>
+            )}
+
+            {/* Explicit Edit button — same treatment as ActivityRow.js's
+                and PhasePanel.js's Edit buttons. The Due Date cell and the
+                weight badge above already open this same 'date' panel; this
+                is a third, unambiguous entry point next to the name itself
+                for direct discoverability, matching the other two levels. */}
+            {canManager && !isInactive && (
+              <BtnGhost
+                type="button"
+                title="Edit dates and weightage"
+                onClick={e => { e.stopPropagation(); togglePanel('date'); }}
+                style={{ flexShrink: 0, padding: '2px 8px', fontSize: 10 }}
+              >
+                Edit
+              </BtnGhost>
+            )}
+
             {task.estimatedHours && <span style={{ fontSize: 10, color: theme.colors.ashLight, flexShrink: 0 }}>{task.estimatedHours}h</span>}
           </Cell>
         )}
@@ -465,10 +513,10 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
         </SubPanel>
       )}
 
-      {/* ── Start / Due date popup — floating popover, same treatment as
-          Phase/Activity Dependencies. Manager-only (see the Due date cell
-          above). ── */}
-      <FloatingPopover anchorRef={dateRef} open={panel === 'date' && canManager} onClose={() => { setPanel(null); setDateError(''); }} width={320}>
+      {/* ── Start / Due date + weightage popup — floating popover, same
+          treatment as Phase/Activity Dependencies. Manager-only (see the
+          Due date cell above). ── */}
+      <FloatingPopover anchorRef={dateRef} open={panel === 'date' && canManager} onClose={() => { setPanel(null); setDateError(''); setWeightError(''); }} width={320}>
         <div onClick={e => e.stopPropagation()} style={{
           background: theme.colors.greige, border: `1px solid ${theme.colors.border}`,
           borderTop: `2px solid ${theme.colors.espresso}`, borderRadius: theme.radius.sm,
@@ -476,10 +524,10 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
           overflowY: 'visible',
         }}>
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 8 }}>
-            <SubPanelTitle style={{ marginBottom: 0 }}>Dates</SubPanelTitle>
-            <BtnGhost onClick={() => { setPanel(null); setDateError(''); }} style={{ fontSize:11, padding:'2px 8px' }}>✕</BtnGhost>
+            <SubPanelTitle style={{ marginBottom: 0 }}>Dates &amp; Weightage</SubPanelTitle>
+            <BtnGhost onClick={() => { setPanel(null); setDateError(''); setWeightError(''); }} style={{ fontSize:11, padding:'2px 8px' }}>✕</BtnGhost>
           </div>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 10 }}>
             <div>
               <div style={{ fontSize: 10.5, color: theme.colors.ash, marginBottom: 3 }}>Start date</div>
               <input type="date" value={editStart} onChange={e => setEditStart(e.target.value)}
@@ -490,8 +538,20 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
               <input type="date" value={editDue} onChange={e => setEditDue(e.target.value)}
                 style={{ background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '6px 10px', color: theme.colors.onyx, fontSize: 12, outline: 'none', fontFamily: 'inherit' }} />
             </div>
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 10.5, color: theme.colors.ash, marginBottom: 3 }}>Weightage (% of activity) <span style={{ color: theme.colors.danger }}>*</span></div>
+            <input type="number" min={1} max={weightBudget} step="0.1"
+              value={editWeight}
+              disabled={weightBudget <= 0 && editWeight === ''}
+              onChange={e => { setEditWeight(e.target.value); setWeightError(''); }}
+              placeholder={weightBudget <= 0 && editWeight === '' ? 'Fully allocated' : `up to ${weightBudget}`}
+              style={{ width: 110, background: theme.colors.mid, border: `1px solid ${weightError ? theme.colors.danger : theme.colors.border}`, borderRadius: theme.radius.sm, padding: '6px 10px', color: theme.colors.onyx, fontSize: 12, outline: 'none', fontFamily: 'inherit' }} />
+            {weightError && <div style={{ color: theme.colors.danger, fontSize: 11, marginTop: 4 }}>{weightError}</div>}
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
             <BtnPrimary style={{ fontSize: 11, padding: '6px 14px' }} onClick={handleDueSave} disabled={!editDue}>Save</BtnPrimary>
-            <BtnGhost style={{ fontSize: 11, padding: '6px 10px' }} onClick={() => { setPanel(null); setDateError(''); }}>Cancel</BtnGhost>
+            <BtnGhost style={{ fontSize: 11, padding: '6px 10px' }} onClick={() => { setPanel(null); setDateError(''); setWeightError(''); }}>Cancel</BtnGhost>
           </div>
           {!editDue && <div style={{ color: theme.colors.danger, fontSize: 11, marginTop: 4 }}>Due date is required.</div>}
           {dateError && <div style={{ color: theme.colors.danger, fontSize: 11, marginTop: 4 }}>{dateError}</div>}

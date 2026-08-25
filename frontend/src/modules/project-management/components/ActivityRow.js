@@ -90,6 +90,7 @@ export default function ActivityRow({
   const [newTaskDue,   setNewTaskDue]   = useState('');
   const [newTaskStart, setNewTaskStart] = useState('');
   const [newTaskDesc,  setNewTaskDesc]  = useState('');
+  const [newTaskWeight, setNewTaskWeight] = useState('');
   const [newTaskDeps,  setNewTaskDeps]  = useState([]);
   const [taskAssignees, setTaskAssignees] = useState([]);
   const [taskAssignSearch, setTaskAssignSearch] = useState(null);
@@ -133,6 +134,16 @@ export default function ActivityRow({
       .reduce((s, a) => s + (Number(a.weightage) || 0), 0);
     return Math.max(0, Math.round((100 - othersSum) * 100) / 100);
   }, [allActivities, activity.activityId]);
+
+  // Weightage budget for this Activity's own Tasks — one level further down
+  // the same pattern as weightBudget above / PhasePanel.js's
+  // phaseWeightSum/phaseWeightRemaining. Only active Tasks count, matching
+  // the backend's own getActivityWeightageTotal filter.
+  const taskWeightSum = tasks
+    .filter(t => t.isActive !== false)
+    .reduce((s, t) => s + (Number(t.weightage) || 0), 0);
+  const taskWeightRemaining = Math.max(0, Math.round((100 - taskWeightSum) * 100) / 100);
+  const taskWeightageLocked = taskWeightRemaining <= 0;
 
   // ── Fetch tasks ─────────────────────────────────────────────────────────────
   const fetchTasks = useCallback(async () => {
@@ -299,9 +310,18 @@ export default function ActivityRow({
 
   // ── Add task ─────────────────────────────────────────────────────────────────
   const handleAddTask = async () => {
+    if (taskWeightageLocked) {
+      showToast("This activity's task weightage is fully allocated (100%). Lower an existing task's weightage before adding another task.");
+      return;
+    }
     const errs = {};
     if (!newTaskName.trim()) errs.name = 'Task name required';
     if (!newTaskDue)         errs.due  = 'Due date is required';
+    if (newTaskWeight === '') errs.weight = 'Weightage is required';
+    if (newTaskWeight !== '' && Number(newTaskWeight) < 1) errs.weight = 'Weightage must be at least 1%';
+    if (newTaskWeight !== '' && Number(newTaskWeight) > taskWeightRemaining) {
+      errs.weight = `Only ${taskWeightRemaining}% of this activity's weightage is left to assign`;
+    }
     if (Object.keys(errs).length) { setAddErrors(errs); return; }
     if (addingTask) return;
     setAddingTask(true);
@@ -312,9 +332,10 @@ export default function ActivityRow({
         startDate:   newTaskStart || null,
         dueDate:     newTaskDue,
         description: newTaskDesc || null,
+        weightage:   Number(newTaskWeight),
         assigneeIds: taskAssignees.map(a => a.userId),
       });
-      setNewTaskName(''); setNewTaskDue(''); setNewTaskStart(''); setNewTaskDesc('');
+      setNewTaskName(''); setNewTaskDue(''); setNewTaskStart(''); setNewTaskDesc(''); setNewTaskWeight('');
       setTaskAssignees([]); setTaskAssignSearch(null); setNewTaskDeps([]);
       setPanel(null); setAddErrors({});
       // fetchTasks() only refreshes THIS Activity's own tasks — its
@@ -694,6 +715,11 @@ export default function ActivityRow({
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '8px 0 6px', flexWrap: 'wrap', gap: 8 }}>
             <span style={{ fontSize: 11, color: theme.colors.ash, textTransform: 'uppercase', letterSpacing: '.06em' }}>
               Tasks ({visibleTasks.length}{visibleTasks.length !== tasks.length ? ` of ${tasks.length}` : ''})
+              {taskWeightSum > 0 && (
+                <span style={{ marginLeft: 8, textTransform: 'none', letterSpacing: 'normal', color: taskWeightageLocked ? theme.colors.copper : theme.colors.ash }}>
+                  · Weight {taskWeightSum}%/100{taskWeightageLocked ? ' (locked)' : ''}
+                </span>
+              )}
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               {tasks.length > 0 && (
@@ -702,7 +728,9 @@ export default function ActivityRow({
               )}
               {canEdit && !isBlocked && !isInactive && (
                 <BtnGhost style={{ padding: '4px 10px', fontSize: 11 }}
-                  onClick={() => togglePanel('addtask')}>
+                  onClick={() => togglePanel('addtask')}
+                  disabled={taskWeightageLocked}
+                  title={taskWeightageLocked ? "This activity's 100% task weightage is already allocated" : 'Add Task'}>
                   + Add Task
                 </BtnGhost>
               )}
@@ -757,6 +785,21 @@ export default function ActivityRow({
                     {PRIORITY_OPTS.map(p => <option key={p}>{p}</option>)}
                   </select>
                 </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <label style={{ fontSize: 10, color: theme.colors.ash, fontWeight: 600, textTransform: 'uppercase' }}>Weightage (%) *</label>
+                  <input type="number" min={1} max={taskWeightRemaining} step="0.1"
+                    value={newTaskWeight}
+                    disabled={taskWeightageLocked}
+                    onChange={e => { setNewTaskWeight(e.target.value); setAddErrors(er => ({ ...er, weight: '' })); }}
+                    placeholder={taskWeightageLocked ? 'Fully allocated' : `up to ${taskWeightRemaining}`}
+                    style={{ width: 90, background: theme.colors.mid, border: `1px solid ${addErrors.weight ? theme.colors.danger : theme.colors.border}`, borderRadius: theme.radius.sm, padding: '6px 10px', color: theme.colors.onyx, fontSize: 12, fontFamily: 'inherit', outline: 'none' }} />
+                  {addErrors.weight && <span style={{ fontSize: 10, color: theme.colors.danger }}>{addErrors.weight}</span>}
+                </div>
+              </div>
+              <div style={{ fontSize: 10, color: theme.colors.ash, marginTop: -4, marginBottom: 8 }}>
+                {taskWeightageLocked
+                  ? "This activity's weightage is fully allocated (100%) — lower another task's share first."
+                  : `${taskWeightSum}% of 100% assigned so far, ${taskWeightRemaining}% remaining.`}
               </div>
 
               {/* Assignee picker */}
@@ -816,7 +859,7 @@ export default function ActivityRow({
               </div>
 
               <div style={{ display: 'flex', gap: 6 }}>
-                <BtnPrimary style={{ fontSize: 11, padding: '6px 16px' }} onClick={handleAddTask} disabled={addingTask}>{addingTask ? 'Adding…' : 'Add Task'}</BtnPrimary>
+                <BtnPrimary style={{ fontSize: 11, padding: '6px 16px' }} onClick={handleAddTask} disabled={addingTask || taskWeightageLocked}>{addingTask ? 'Adding…' : 'Add Task'}</BtnPrimary>
                 <BtnGhost style={{ fontSize: 11, padding: '6px 10px' }} onClick={() => { setPanel(null); setAddErrors({}); }}>Cancel</BtnGhost>
               </div>
             </div>

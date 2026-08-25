@@ -21,6 +21,42 @@ function parseJsonArray(val) {
   try { return JSON.parse(val); } catch { return []; }
 }
 
+// ── Weightage ────────────────────────────────────────────────────────────────
+//
+// Mirrors activityService's/phaseService's Weightage sections, one more
+// level down: each Task's weightage is its share (1-100) of its parent
+// Activity's progress (see progressService.weightedProgress). The 100%
+// budget is enforced here, at write time, on every create/update.
+async function getActivityWeightageTotal(activityId, excludeTaskId = null) {
+  const pool = await getPool();
+  const req = pool.request().input('activityId', sql.Int, activityId);
+  let excludeClause = '';
+  if (excludeTaskId) {
+    req.input('excludeTaskId', sql.Int, excludeTaskId);
+    excludeClause = 'AND task_id <> @excludeTaskId';
+  }
+  const result = await req.query(`
+    SELECT COALESCE(SUM(weightage), 0) AS total
+    FROM pm_tasks
+    WHERE activity_id=@activityId AND is_deleted=0 AND is_active=1 ${excludeClause}
+  `);
+  return Number(result.recordset[0]?.total || 0);
+}
+
+async function validateTaskWeightage(activityId, weightage, excludeTaskId = null) {
+  const w = Number(weightage);
+  if (Number.isNaN(w) || w < 1 || w > 100) {
+    const e = new Error('Weightage must be a number between 1 and 100'); e.statusCode = 400; throw e;
+  }
+  const existingTotal = await getActivityWeightageTotal(activityId, excludeTaskId);
+  const projected = Math.round((existingTotal + w) * 100) / 100;
+  if (projected > 100.001) {
+    const remaining = Math.max(0, Math.round((100 - existingTotal) * 100) / 100);
+    const e = new Error(`Total task weightage for this activity can't exceed 100% — ${existingTotal}% already assigned, ${remaining}% remaining.`);
+    e.statusCode = 400; throw e;
+  }
+}
+
 // Task statuses: To Do / Ongoing / Complete / Blocked
 // (In Progress → Ongoing, Done → Complete, In Review removed)
 const DONE_STATUS = 'Complete';
@@ -35,7 +71,7 @@ async function getTasksForActivity(activityId, userId) {
     .query(`
       SELECT t.task_id       AS taskId,
              t.activity_id  AS activityId,
-             t.name, t.description, t.priority, t.status,
+             t.name, t.description, t.priority, t.status, t.weightage,
              t.start_date    AS startDate,
              t.due_date      AS dueDate,
              t.estimated_hours AS estimatedHours,
@@ -138,9 +174,23 @@ async function getTasksForActivity(activityId, userId) {
 // acceptAssignmentRequest.
 
 async function createTask(activityId, projectId, userId, body) {
-  const { name, description, priority = 'Medium', startDate, dueDate, estimatedHours, assigneeIds = [] } = body;
+  const { name, description, priority = 'Medium', startDate, dueDate, estimatedHours, assigneeIds = [], weightage } = body;
   if (!name?.trim()) { const e = new Error('Task name required'); e.statusCode = 400; throw e; }
   if (name.trim().length > 200) { const e = new Error('Task name must be 200 characters or fewer'); e.statusCode = 400; throw e; }
+  if (weightage === undefined || weightage === null || weightage === '') {
+    const e = new Error('Task weightage is required'); e.statusCode = 400; throw e;
+  }
+
+  // A fully allocated Activity is closed to additional Tasks altogether.
+  // Checking this independently of the submitted weightage prevents callers
+  // from bypassing the 100% lock by creating a Task with weightage=null.
+  const assignedWeightage = await getActivityWeightageTotal(activityId);
+  if (assignedWeightage >= 99.999) {
+    const e = new Error("This Activity's task weightage is fully allocated (100%). Lower an existing Task's weightage before adding another Task.");
+    e.statusCode = 409; throw e;
+  }
+
+  await validateTaskWeightage(activityId, weightage);
 
   // Refuse to create work under something that's Blocked — this was
   // previously unenforced, so a Task could be added (and even marked
@@ -209,10 +259,11 @@ async function createTask(activityId, projectId, userId, body) {
       .input('dueDate',        sql.Date,             dueDate || null)
       .input('estimatedHours', sql.Decimal(5, 1),    estimatedHours || null)
       .input('userId',         sql.UniqueIdentifier, userId)
+      .input('weightage',      sql.Decimal(5, 2),    Number(weightage))
       .query(`
-        INSERT INTO pm_tasks (activity_id, name, description, priority, start_date, due_date, estimated_hours, created_by)
+        INSERT INTO pm_tasks (activity_id, name, description, priority, start_date, due_date, estimated_hours, created_by, weightage)
         OUTPUT INSERTED.task_id AS taskId, INSERTED.name, INSERTED.status
-        VALUES (@activityId, @name, @description, @priority, @startDate, @dueDate, @estimatedHours, @userId)
+        VALUES (@activityId, @name, @description, @priority, @startDate, @dueDate, @estimatedHours, @userId, @weightage)
       `);
     task = result.recordset[0];
 
@@ -451,12 +502,23 @@ const TASK_FIELD_TYPES = {
   start_date:      sql.Date,
   due_date:        sql.Date,
   estimated_hours: sql.Decimal(5, 1),
+  weightage:       sql.Decimal(5, 2),
 };
 
 async function updateTask(taskId, projectId, userId, body, isAdmin = false) {
   if (await isInactive('task', taskId) || await isInactive('project', projectId)) {
     const e = new Error('This Task is inactive — reactivate it before making changes.');
     e.statusCode = 409; throw e;
+  }
+  if (body.weightage === null || body.weightage === '') {
+    const e = new Error('Task weightage is required'); e.statusCode = 400; throw e;
+  }
+  if (body.weightage !== undefined) {
+    const pool0c = await getPool();
+    const actRes = await pool0c.request().input('taskId', sql.Int, taskId)
+      .query(`SELECT activity_id AS activityId FROM pm_tasks WHERE task_id=@taskId`);
+    const activityId = actRes.recordset[0]?.activityId;
+    await validateTaskWeightage(activityId, body.weightage, taskId);
   }
   // Description is view-only for assignees, editable only by a Manager
   // (Activity/Phase/Project, by the same effective-role hierarchy used
@@ -515,6 +577,7 @@ async function updateTask(taskId, projectId, userId, body, isAdmin = false) {
   if (body.startDate      !== undefined) fields.start_date      = body.startDate;
   if (body.dueDate        !== undefined) fields.due_date        = body.dueDate;
   if (body.estimatedHours !== undefined) fields.estimated_hours = body.estimatedHours;
+  if (body.weightage      !== undefined) fields.weightage       = Number(body.weightage);
   const keys = Object.keys(fields);
   if (keys.length) {
     const pool = await getPool();

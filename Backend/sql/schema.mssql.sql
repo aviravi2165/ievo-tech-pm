@@ -552,6 +552,12 @@ CREATE TABLE dbo.pm_tasks (
     is_deleted      bit DEFAULT 0 NOT NULL,
     created_by      uniqueidentifier NULL,
     created_at      datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    -- weightage — this Task's share (1-100) of its parent Activity's
+    -- progress. Same contract as pm_activities.weightage/pm_phases.weightage
+    -- one level up: required going forward, and an Activity's progress is
+    -- always the weighted sum of its Tasks' own completion state (see
+    -- progressService.weightedProgress).
+    weightage       decimal(5,2) NULL,
     CONSTRAINT PK_pm_tasks PRIMARY KEY (task_id),
     CONSTRAINT FK_pm_tasks_activity FOREIGN KEY (activity_id) REFERENCES dbo.pm_activities(activity_id) ON DELETE CASCADE,
     CONSTRAINT FK_pm_tasks_created  FOREIGN KEY (created_by)  REFERENCES dbo.auth_users(user_id)
@@ -1110,6 +1116,14 @@ IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_tas
 -- ────────────────────────────────────────────────────────────
 IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_activities') AND name = 'weightage')
     ALTER TABLE dbo.pm_activities ADD weightage decimal(5,2) NULL;
+-- GO — forces this ALTER to finish and actually run before the next batch
+-- is even compiled. Without it, a fresh run against a database that
+-- already has pm_activities (so this ALTER is the one that actually adds
+-- the column, not the CREATE TABLE above) fails the UPDATE below with
+-- "Invalid column name 'weightage'": SQL Server compiles an entire batch
+-- before executing any of it, so as far as compilation is concerned the
+-- column doesn't exist yet.
+GO
 -- 0% is not valid: it would allow unlimited zero-weight Activities. Convert
 -- any pre-existing 0 values to legacy NULL before strengthening the check.
 UPDATE dbo.pm_activities SET weightage = NULL WHERE weightage = 0;
@@ -1127,10 +1141,27 @@ ALTER TABLE dbo.pm_activities WITH CHECK ADD CONSTRAINT CK_pm_activities_weighta
 -- ────────────────────────────────────────────────────────────
 IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_phases') AND name = 'weightage')
     ALTER TABLE dbo.pm_phases ADD weightage decimal(5,2) NULL;
+GO -- same same-batch-visibility reason as pm_activities.weightage above
 UPDATE dbo.pm_phases SET weightage = NULL WHERE weightage = 0;
 IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_phases_weightage')
     ALTER TABLE dbo.pm_phases DROP CONSTRAINT CK_pm_phases_weightage;
 ALTER TABLE dbo.pm_phases WITH CHECK ADD CONSTRAINT CK_pm_phases_weightage
+    CHECK (weightage IS NULL OR (weightage >= 1 AND weightage <= 100));
+
+-- ────────────────────────────────────────────────────────────
+-- pm_tasks.weightage — see the column comment on the CREATE TABLE above
+-- (this is the same column, added here for databases that already had
+-- pm_tasks before this feature existed). Same contract as
+-- pm_activities.weightage/pm_phases.weightage, one level down: a Task's
+-- share (1-100) of its Activity's progress.
+-- ────────────────────────────────────────────────────────────
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_tasks') AND name = 'weightage')
+    ALTER TABLE dbo.pm_tasks ADD weightage decimal(5,2) NULL;
+GO -- same same-batch-visibility reason as pm_activities.weightage above
+UPDATE dbo.pm_tasks SET weightage = NULL WHERE weightage = 0;
+IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_tasks_weightage')
+    ALTER TABLE dbo.pm_tasks DROP CONSTRAINT CK_pm_tasks_weightage;
+ALTER TABLE dbo.pm_tasks WITH CHECK ADD CONSTRAINT CK_pm_tasks_weightage
     CHECK (weightage IS NULL OR (weightage >= 1 AND weightage <= 100));
 -- ────────────────────────────────────────────────────────────
 -- pm_tasks.start_date — explicit planned start, distinct from created_at
