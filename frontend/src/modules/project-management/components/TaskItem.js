@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTheme } from '@emotion/react';
 import { ArrowRight, FileText, RotateCcw, Trash2, AlertCircle, Clock } from 'lucide-react';
-import StatusBadge, { InactiveBadge } from './StatusBadge';
+import StatusBadge, { InactiveBadge, statusLabel } from './StatusBadge';
 import PriorityBadge from './PriorityBadge';
 import UserSearchInput from './UserSearchInput';
 import ChatButton from './ChatButton';
@@ -429,7 +429,12 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
           {canStatus && !isInactive && localStatus !== 'Blocked' ? (
             <select value={localStatus} onChange={handleStatusChange}
               style={{ width: '100%', background:theme.colors.mid, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm, color:theme.colors.onyx, fontSize:11, padding:'3px 6px', fontFamily:'inherit', outline:'none' }}>
-              {STATUS_OPTIONS.map(s => <option key={s}>{s}</option>)}
+              {/* value={s} is required here (not just relying on the option's
+                  text content) now that the displayed label can differ from
+                  the actual status value — without it, selecting "Not
+                  Started" would submit that display text as the status
+                  instead of the real 'To Do' value. */}
+              {STATUS_OPTIONS.map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
             </select>
           ) : (
             <span title={localStatus === 'Blocked' ? 'Waiting on a prerequisite task — resolve its dependencies to unblock automatically.' : undefined}>

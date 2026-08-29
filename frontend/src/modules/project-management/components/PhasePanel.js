@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTheme } from '@emotion/react';
 import { ChevronRight, ChevronUp, ChevronDown, ArrowRight, RotateCcw, Trash2, Users } from 'lucide-react';
-import StatusBadge, { InactiveBadge } from './StatusBadge';
+import StatusBadge, { InactiveBadge, statusLabel } from './StatusBadge';
 import ProgressBar from './ProgressBar';
 import ScheduleBadge from './ScheduleBadge';
 import EmptyStateHint from './EmptyStateHint';
@@ -145,7 +145,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
   const weightageLocked = phaseWeightRemaining <= 0;
 
   // UI-only sort/filter over this phase's already-loaded activities list.
-  const activityStatusOptions = [...new Set(activities.map(a => a.status).filter(Boolean))].map(s => ({ value: s, label: s }));
+  const activityStatusOptions = [...new Set(activities.map(a => a.status).filter(Boolean))].map(s => ({ value: s, label: statusLabel(s) }));
   const {
     items: visibleActivities, sortKey: actSortKey, setSortKey: setActSortKey,
     sortDir: actSortDir, toggleSortDir: toggleActSortDir, filters: actFilters, setFilter: setActFilter,
@@ -432,25 +432,26 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
           {isInactive && <InactiveBadge />}
         </div>
 
-        {/* Grid column 2: Participants — used to show manager names
-            in-cell directly (truncated, italic-vs-bold to distinguish
-            inherited from explicit); replaced with a plain icon + label
-            that opens ParticipantsPanel as a floating popup (matching the
-            Project-level popup's exact style), which does that
-            distinguishing with real section headers instead of font-style.
+        {/* Grid column 2: Participants — shows the Phase's actual Manager
+            name(s) directly in-cell (managerNames was already computed
+            server-side in phaseService.getPhasesForProject, just never
+            rendered), truncated with an ellipsis + full text in the title=
+            tooltip if it overflows the column. Clicking still opens the
+            same ParticipantsPanel floating popup (unchanged) — that's
+            where every participant is listed individually with real
+            section headers, and where any one of them can be managed.
             Viewable by anyone, editable (Managers section) by a Manager
             only. position:relative wrapper + participantsRef is what the
             click-outside-to-close effect above targets. */}
-        <div style={{ position: 'relative', display:'flex', justifyContent:'center' }} ref={participantsRef}>
-          {/* Icon only, centered — same centering technique as the Progress
-              column (already confirmed working: header text-align:center +
-              cell justifyContent:center within the same fixed-width grid
-              column, no offset math needed either side). */}
-          <div style={{ cursor: !isInactive ? 'pointer' : 'default', display:'flex', alignItems:'center', justifyContent:'center' }}
+        <div style={{ position: 'relative', display:'flex', justifyContent:'center', overflow:'hidden' }} ref={participantsRef}>
+          <div style={{ cursor: !isInactive ? 'pointer' : 'default', display:'flex', alignItems:'center', gap:5, overflow:'hidden', minWidth:0, maxWidth:'100%' }}
             onClick={!isInactive ? (e) => { e.stopPropagation(); togglePanel('members'); if (panel !== 'members') { fetchPhaseMembers(); fetchPhaseAssignees(); } } : undefined}
-            title={!isInactive ? 'View / manage participants' : undefined}
+            title={!isInactive ? (phase.managerNames || 'View / manage participants') : undefined}
           >
-            <Users size={14} strokeWidth={2} style={{ color: theme.colors.ash }} />
+            <Users size={13} strokeWidth={2} style={{ color: theme.colors.ash, flexShrink: 0 }} />
+            <span style={{ fontSize: 11, color: theme.colors.onyx, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+              {phase.managerNames || <span style={{ color: theme.colors.ashLight, fontStyle: 'italic' }}>None</span>}
+            </span>
           </div>
 
           <FloatingPopover anchorRef={participantsRef} open={panel === 'members'} width={360}>
@@ -792,7 +793,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
               {/* Centered — see the Phase header in ProjectDetailPage.js
                   for the reasoning. */}
               <TableHeadCell w={GROUP_COL.manager} center>Participants</TableHeadCell>
-              <TableHeadCell w={GROUP_COL.dates} center>Dates</TableHeadCell>
+              <TableHeadCell w={GROUP_COL.dates} center>Duration</TableHeadCell>
               <TableHeadCell w={GROUP_COL.progress} center>Progress</TableHeadCell>
               <TableHeadCell w={GROUP_COL.status} center>Status</TableHeadCell>
             </TableHead>

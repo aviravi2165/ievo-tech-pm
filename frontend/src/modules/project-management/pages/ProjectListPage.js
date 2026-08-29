@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useTheme } from '@emotion/react';
 import { FolderKanban, RotateCcw, Trash2 } from 'lucide-react';
-import StatusBadge, { InactiveBadge } from '../components/StatusBadge';
+import StatusBadge, { InactiveBadge, statusLabel } from '../components/StatusBadge';
 import EmptyStateHint from '../components/EmptyStateHint';
 import ProgressBar from '../components/ProgressBar';
 import OverdueBadge from '../components/OverdueBadge';
@@ -54,7 +54,7 @@ export default function ProjectListPage({ onSelectProject, onOpenTemplates }) {
   // server-side "Load more" pagination above is unaffected; sorting/
   // filtering just reorders/narrows whatever's already been fetched.
   const statusOptions = useMemo(() => (
-    [...new Set(projects.map(p => p.status).filter(Boolean))].map(s => ({ value: s, label: s }))
+    [...new Set(projects.map(p => p.status).filter(Boolean))].map(s => ({ value: s, label: statusLabel(s) }))
   ), [projects]);
 
   const { items: visibleProjects, sortKey, setSortKey, sortDir, toggleSortDir, filters, setFilter } = useSortFilter(projects, {
@@ -185,7 +185,7 @@ export default function ProjectListPage({ onSelectProject, onOpenTemplates }) {
             <TableHead cols={`minmax(120px, 1fr) ${COL.owner}px ${COL.dates}px ${COL.progress}px ${COL.status}px ${COL.role}px ${COL.actions}px`}>
               <TableHeadCell>Name</TableHeadCell>
               <TableHeadCell>Owner</TableHeadCell>
-              <TableHeadCell>Dates</TableHeadCell>
+              <TableHeadCell>Duration</TableHeadCell>
               <TableHeadCell center>Progress</TableHeadCell>
               <TableHeadCell center>Status</TableHeadCell>
               <TableHeadCell center>Role</TableHeadCell>

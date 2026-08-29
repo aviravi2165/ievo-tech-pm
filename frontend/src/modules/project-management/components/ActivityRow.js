@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useTheme } from '@emotion/react';
 import { ChevronRight, ArrowRight, RotateCcw, Trash2, Lock, Users } from 'lucide-react';
-import StatusBadge, { InactiveBadge } from './StatusBadge';
+import StatusBadge, { InactiveBadge, statusLabel } from './StatusBadge';
 import ProgressBar from './ProgressBar';
 import ScheduleBadge from './ScheduleBadge';
 import EmptyStateHint from './EmptyStateHint';
@@ -175,7 +175,7 @@ export default function ActivityRow({
   const togglePanel = (p) => setPanel(v => v === p ? null : p);
 
   // UI-only sort/filter over this activity's already-loaded tasks list.
-  const taskStatusOptions = [...new Set(tasks.map(t => t.status).filter(Boolean))].map(s => ({ value: s, label: s }));
+  const taskStatusOptions = [...new Set(tasks.map(t => t.status).filter(Boolean))].map(s => ({ value: s, label: statusLabel(s) }));
   const {
     items: visibleTasks, sortKey: taskSortKey, setSortKey: setTaskSortKey,
     sortDir: taskSortDir, toggleSortDir: toggleTaskSortDir, filters: taskFilters, setFilter: setTaskFilter,
@@ -438,22 +438,25 @@ export default function ActivityRow({
           {isInactive && <InactiveBadge />}
         </div>
 
-        {/* Grid column 2: Participants — used to show the inherited/explicit
-            manager names directly in-cell (truncated, italic-vs-bold to
-            distinguish inherited from explicit) — replaced entirely with a
-            plain icon + label that opens ParticipantsPanel as a floating
-            popup (matching the Project-level popup's style), which does
-            all of that distinguishing explicitly with real section headers
-            instead of font-style alone. Viewable by anyone (not just
-            canEdit) — the panel itself gates editing per role. */}
-        <div style={{ position: 'relative', display:'flex', justifyContent:'center' }} ref={participantsRef}>
-          {/* Icon only, centered — matches Progress's already-working
-              centering technique. */}
-          <div style={{ cursor: !isInactive ? 'pointer' : 'default', display:'flex', alignItems:'center', justifyContent:'center' }}
+        {/* Grid column 2: Participants — shows the Activity's actual
+            Manager name(s) directly in-cell (managerNames was already
+            computed server-side in activityService.getActivitiesForPhase,
+            just never rendered), truncated with an ellipsis + full text in
+            the title= tooltip if it overflows. Clicking still opens the
+            same ParticipantsPanel floating popup (unchanged) — that's
+            where every participant is listed individually with real
+            section headers, and where any one of them can be managed.
+            Viewable by anyone (not just canEdit) — the panel itself gates
+            editing per role. */}
+        <div style={{ position: 'relative', display:'flex', justifyContent:'center', overflow:'hidden' }} ref={participantsRef}>
+          <div style={{ cursor: !isInactive ? 'pointer' : 'default', display:'flex', alignItems:'center', gap:5, overflow:'hidden', minWidth:0, maxWidth:'100%' }}
             onClick={!isInactive ? (e) => { e.stopPropagation(); togglePanel('members'); if (panel !== 'members') { fetchMembers(); if (!hasLoadedTasksRef.current) fetchTasks(); } } : undefined}
-            title={!isInactive ? 'View / manage participants' : undefined}
+            title={!isInactive ? (activity.managerNames || 'View / manage participants') : undefined}
           >
-            <Users size={14} strokeWidth={2} style={{ color: theme.colors.ash }} />
+            <Users size={13} strokeWidth={2} style={{ color: theme.colors.ash, flexShrink: 0 }} />
+            <span style={{ fontSize: 11, color: theme.colors.onyx, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+              {activity.managerNames || <span style={{ color: theme.colors.ashLight, fontStyle: 'italic' }}>None</span>}
+            </span>
           </div>
 
           <FloatingPopover anchorRef={participantsRef} open={panel === 'members'} width={360}>

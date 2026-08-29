@@ -433,7 +433,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
                       (Progress). Name/Activity/Task stay left-aligned since
                       they carry the expand chevron. */}
                   <TableHeadCell w={GROUP_COL.manager} center>Participants</TableHeadCell>
-                  <TableHeadCell w={GROUP_COL.dates} center>Dates</TableHeadCell>
+                  <TableHeadCell w={GROUP_COL.dates} center>Duration</TableHeadCell>
                   {/* BUG-030: Progress used to be crammed inside the Name
                       cell's cluster with no header of its own — it now gets
                       a dedicated column matching Status and matching
