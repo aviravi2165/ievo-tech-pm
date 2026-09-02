@@ -377,6 +377,18 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
           </Cell>
         )}
 
+        {/* Weightage column — right after the Name (matches the Phase/
+            Activity tables). Clicking opens the Dates & Weightage popup,
+            Manager-only. */}
+        <Cell w={COL.weight} center
+          onClick={(canManager && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('date'); } : undefined}
+          style={{ cursor: (canManager && !isInactive) ? 'pointer' : 'default' }}
+          title={(canManager && !isInactive) ? 'Click to edit weightage' : undefined}>
+          {task.weightage != null
+            ? <WeightBadge>{task.weightage}%</WeightBadge>
+            : <span style={{ fontSize: 11, color: theme.colors.ashLight }}>—</span>}
+        </Cell>
+
         {/* Assignee column — clicking the avatar stack (however many
             assignees, pending or accepted) opens the same "manage
             assignees" panel the old dedicated "Assign" icon opened. One
@@ -411,17 +423,6 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
 
         {/* Priority column */}
         <Cell w={COL.priority} center><PriorityBadge priority={task.priority} /></Cell>
-
-        {/* Weightage column — its own column now (was an inline badge in the
-            name cell). Clicking opens the Dates & Weightage popup, Manager-only. */}
-        <Cell w={COL.weight} center
-          onClick={(canManager && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('date'); } : undefined}
-          style={{ cursor: (canManager && !isInactive) ? 'pointer' : 'default' }}
-          title={(canManager && !isInactive) ? 'Click to edit weightage' : undefined}>
-          {task.weightage != null
-            ? <WeightBadge>{task.weightage}%</WeightBadge>
-            : <span style={{ fontSize: 11, color: theme.colors.ashLight }}>—</span>}
-        </Cell>
 
         {/* Status column */}
         <Cell w={COL.status} center onClick={e => e.stopPropagation()}>

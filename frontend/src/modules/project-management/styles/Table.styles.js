@@ -89,8 +89,11 @@ export const GROUP_COL = {
 // to 0 and the Name column silently disappears instead of the Table's own
 // overflow-x:auto kicking in. The 120px floor forces horizontal scrolling
 // once things get that tight, instead of erasing the column.
-export const GROUP_GRID_COLS = `minmax(120px, 1fr) ${GROUP_COL.manager}px ${GROUP_COL.dates}px ${GROUP_COL.progress}px ${GROUP_COL.weight}px ${GROUP_COL.status}px 124px`;
-export const TASK_GRID_COLS  = `minmax(120px, 1fr) ${COL.assignee}px ${COL.due}px ${COL.priority}px ${COL.weight}px ${COL.status}px 124px`;
+// Column order (Phase/Activity): Name | Weightage | Duration | Progress | Status | Participants | Actions.
+// Weightage sits right after the name; Participants moved to the end.
+export const GROUP_GRID_COLS = `minmax(120px, 1fr) ${GROUP_COL.weight}px ${GROUP_COL.dates}px ${GROUP_COL.progress}px ${GROUP_COL.status}px ${GROUP_COL.manager}px 124px`;
+// Task columns kept in step: Weight also sits right after the name.
+export const TASK_GRID_COLS  = `minmax(120px, 1fr) ${COL.weight}px ${COL.assignee}px ${COL.due}px ${COL.priority}px ${COL.status}px 124px`;
 
 // flex-shrink: 0 — Table is rendered as a flex child of DetailBody
 // (display:flex; flex-direction:column). Without this, a flex child

@@ -440,17 +440,44 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
           {isInactive && <InactiveBadge />}
         </div>
 
-        {/* Grid column 2: Participants — shows the Phase's actual Manager
-            name(s) directly in-cell (managerNames was already computed
-            server-side in phaseService.getPhasesForProject, just never
-            rendered), truncated with an ellipsis + full text in the title=
-            tooltip if it overflows the column. Clicking still opens the
-            same ParticipantsPanel floating popup (unchanged) — that's
-            where every participant is listed individually with real
-            section headers, and where any one of them can be managed.
-            Viewable by anyone, editable (Managers section) by a Manager
-            only. position:relative wrapper + participantsRef is what the
-            click-outside-to-close effect above targets. */}
+        {/* Column 2: Weightage — right after the Name. Its own column now
+            (was an inline badge in the name cluster). Clicking it opens the
+            same Edit popup the Edit button opens, for Managers. */}
+        <div style={{ overflow:'hidden', display:'flex', justifyContent:'center', cursor: canEdit && !isInactive ? 'pointer' : 'default' }}
+          onClick={(canEdit && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('dates'); } : undefined}
+          title={(canEdit && !isInactive) ? 'Click to edit weightage' : undefined}>
+          {phase.weightage != null
+            ? <WeightBadge title="Share of this project's progress">{phase.weightage}%</WeightBadge>
+            : <span style={{ fontSize:11, color:theme.colors.ashLight }}>—</span>}
+        </div>
+
+        {/* Column 3: Duration — the actual planned date range AND the delay
+            warning together. Clicking it opens the Edit popup. */}
+        <div ref={datesRef} style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:2, overflow:'hidden', cursor: canEdit && !isInactive ? 'pointer' : 'default' }}
+          onClick={(canEdit && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('dates'); } : undefined}
+          title={(canEdit && !isInactive) ? 'Click to edit dates / weightage' : undefined}
+        >
+          <span style={{ fontSize:10, color:theme.colors.ash, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'100%' }}>{dateRange}</span>
+          <ScheduleBadge isOverdue={phase.isOverdue} overdueDays={phase.overdueDays} delayDays={phase.delayDays} delayLabel="Late by" />
+        </div>
+
+        {/* Column 4: Progress */}
+        <div style={{ overflow:'hidden', display:'flex', justifyContent:'center' }} onClick={e => e.stopPropagation()}>
+          <ProgressBar value={phase.progress || 0} />
+        </div>
+
+        {/* Column 5: Status */}
+        <div style={{ overflow:'hidden', display:'flex', flexDirection:'column', alignItems:'center', gap:2 }}>
+          <StatusBadge status={phase.status} />
+          <EmptyStateHint emptyState={phase.emptyState} theme={theme} />
+        </div>
+
+        {/* Column 6: Participants — moved to the end. Shows the Phase's
+            actual Manager name(s) in-cell (managerNames computed server-side
+            in phaseService.getPhasesForProject), truncated with the full
+            text in the title= tooltip. Clicking opens the ParticipantsPanel
+            popup where everyone is listed and any one can be managed.
+            Viewable by anyone, editable (Managers section) by a Manager only. */}
         <div style={{ position: 'relative', display:'flex', justifyContent:'center', overflow:'hidden' }} ref={participantsRef}>
           <div style={{ cursor: !isInactive ? 'pointer' : 'default', display:'flex', alignItems:'center', gap:5, overflow:'hidden', minWidth:0, maxWidth:'100%' }}
             onClick={!isInactive ? (e) => { e.stopPropagation(); togglePanel('members'); if (panel !== 'members') { fetchPhaseMembers(); fetchPhaseAssignees(); } } : undefined}
@@ -490,43 +517,6 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
               />
             </div>
           </FloatingPopover>
-        </div>
-
-        {/* Grid column 3: Dates — the actual planned date range AND the
-            delay warning together, not one replacing the other. Clicking
-            it opens the same edit panel the old dedicated "Edit dates"
-            icon opened. */}
-        <div ref={datesRef} style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:2, overflow:'hidden', cursor: canEdit && !isInactive ? 'pointer' : 'default' }}
-          onClick={(canEdit && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('dates'); } : undefined}
-          title={(canEdit && !isInactive) ? 'Click to edit dates / weightage' : undefined}
-        >
-          <span style={{ fontSize:10, color:theme.colors.ash, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'100%' }}>{dateRange}</span>
-          <ScheduleBadge isOverdue={phase.isOverdue} overdueDays={phase.overdueDays} delayDays={phase.delayDays} delayLabel="Late by" />
-        </div>
-
-        {/* Grid column 4: Progress — BUG-030: this used to be crammed into
-            the Name cluster (column 1); Status already had its own column,
-            Progress now matches it and ProjectListPage's own dedicated
-            Progress column. */}
-        <div style={{ overflow:'hidden', display:'flex', justifyContent:'center' }} onClick={e => e.stopPropagation()}>
-          <ProgressBar value={phase.progress || 0} />
-        </div>
-
-        {/* Grid column 5: Weightage — its own column now (was an inline
-            badge in the name cluster). Clicking it opens the same Edit
-            popup the Dates cell / Edit button open, for Managers. */}
-        <div style={{ overflow:'hidden', display:'flex', justifyContent:'center', cursor: canEdit && !isInactive ? 'pointer' : 'default' }}
-          onClick={(canEdit && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('dates'); } : undefined}
-          title={(canEdit && !isInactive) ? 'Click to edit weightage' : undefined}>
-          {phase.weightage != null
-            ? <WeightBadge title="Share of this project's progress">{phase.weightage}%</WeightBadge>
-            : <span style={{ fontSize:11, color:theme.colors.ashLight }}>—</span>}
-        </div>
-
-        {/* Grid column 6: Status */}
-        <div style={{ overflow:'hidden', display:'flex', flexDirection:'column', alignItems:'center', gap:2 }}>
-          <StatusBadge status={phase.status} />
-          <EmptyStateHint emptyState={phase.emptyState} theme={theme} />
         </div>
 
         {/* Grid column 6 (max-content track): action buttons — always
@@ -821,13 +811,13 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
                   Activity
                 </span>
               </TableHeadCell>
-              {/* Centered — see the Phase header in ProjectDetailPage.js
-                  for the reasoning. */}
-              <TableHeadCell w={GROUP_COL.manager} center>Participants</TableHeadCell>
+              {/* Order: Weightage | Duration | Progress | Status |
+                  Participants — see the Phase header in ProjectDetailPage.js. */}
+              <TableHeadCell w={GROUP_COL.weight} center>Weightage</TableHeadCell>
               <TableHeadCell w={GROUP_COL.dates} center>Duration</TableHeadCell>
               <TableHeadCell w={GROUP_COL.progress} center>Progress</TableHeadCell>
-              <TableHeadCell w={GROUP_COL.weight} center>Weightage</TableHeadCell>
               <TableHeadCell w={GROUP_COL.status} center>Status</TableHeadCell>
+              <TableHeadCell w={GROUP_COL.manager} center>Participants</TableHeadCell>
             </TableHead>
           )}
           {!loading && visibleActivities.map(act => (

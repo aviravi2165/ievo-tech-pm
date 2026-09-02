@@ -436,21 +436,16 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
                       Name
                     </span>
                   </TableHeadCell>
-                  {/* Participants/Dates/Status/Progress are all centered —
-                      header text-align:center + cell justifyContent:center
-                      within the same fixed-width grid column, the one
-                      technique that's actually held up under verification
-                      (Progress). Name/Activity/Task stay left-aligned since
+                  {/* Column order: Weightage | Duration | Progress | Status |
+                      Participants. All centered — header text-align:center +
+                      cell justifyContent:center within the same fixed-width
+                      grid column. Name/Activity/Task stay left-aligned since
                       they carry the expand chevron. */}
-                  <TableHeadCell w={GROUP_COL.manager} center>Participants</TableHeadCell>
-                  <TableHeadCell w={GROUP_COL.dates} center>Duration</TableHeadCell>
-                  {/* BUG-030: Progress used to be crammed inside the Name
-                      cell's cluster with no header of its own — it now gets
-                      a dedicated column matching Status and matching
-                      ProjectListPage's own Progress column. */}
-                  <TableHeadCell w={GROUP_COL.progress} center>Progress</TableHeadCell>
                   <TableHeadCell w={GROUP_COL.weight} center>Weightage</TableHeadCell>
+                  <TableHeadCell w={GROUP_COL.dates} center>Duration</TableHeadCell>
+                  <TableHeadCell w={GROUP_COL.progress} center>Progress</TableHeadCell>
                   <TableHeadCell w={GROUP_COL.status} center>Status</TableHeadCell>
+                  <TableHeadCell w={GROUP_COL.manager} center>Participants</TableHeadCell>
                   {/* No trailing spacer needed anymore — RowActions is
                       position:absolute now, so it never consumes flex
                       layout space and can't affect where these columns

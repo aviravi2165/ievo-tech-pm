@@ -439,16 +439,45 @@ export default function ActivityRow({
           {isInactive && <InactiveBadge />}
         </div>
 
-        {/* Grid column 2: Participants — shows the Activity's actual
-            Manager name(s) directly in-cell (managerNames was already
-            computed server-side in activityService.getActivitiesForPhase,
-            just never rendered), truncated with an ellipsis + full text in
-            the title= tooltip if it overflows. Clicking still opens the
-            same ParticipantsPanel floating popup (unchanged) — that's
-            where every participant is listed individually with real
-            section headers, and where any one of them can be managed.
-            Viewable by anyone (not just canEdit) — the panel itself gates
-            editing per role. */}
+        {/* Column 2: Weightage — right after the Name. Its own column now
+            (was an inline badge in the name cluster). Clicking opens the
+            Edit popup for Managers, same as the Edit button. */}
+        <div style={{ overflow:'hidden', display:'flex', justifyContent:'center', cursor: canEdit && !isInactive ? 'pointer' : 'default' }}
+          onClick={(canEdit && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('edit'); } : undefined}
+          title={(canEdit && !isInactive) ? 'Click to edit weightage' : undefined}>
+          {activity.weightage != null
+            ? <WeightBadge title="Share of this phase's progress">{activity.weightage}%</WeightBadge>
+            : <span style={{ fontSize:11, color:theme.colors.ashLight }}>—</span>}
+        </div>
+
+        {/* Column 3: Duration — the planned date range + delay warning.
+            Clicking opens the Edit popup (the Edit button by the name is the
+            discoverable primary action). */}
+        <div ref={editRef} style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:2, overflow:'hidden', cursor: canEdit && !isInactive ? 'pointer' : 'default' }}
+          onClick={(canEdit && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('edit'); } : undefined}
+          title={(canEdit && !isInactive) ? 'Click to edit dates / description' : undefined}
+        >
+          <span style={{ fontSize:10, color:theme.colors.ash, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'100%' }}>{fmtRange(activity.plannedStart, activity.plannedEnd)}</span>
+          <ScheduleBadge isOverdue={activity.isOverdue} overdueDays={activity.overdueDays} delayDays={activity.delayDays} delayLabel="Late by" />
+        </div>
+
+        {/* Column 4: Progress */}
+        <div style={{ overflow:'hidden', display:'flex', justifyContent:'center' }} onClick={e => e.stopPropagation()}>
+          <ProgressBar value={activity.progress || 0} />
+        </div>
+
+        {/* Column 5: Status */}
+        <div style={{ overflow:'hidden', display:'flex', flexDirection:'column', alignItems:'center', gap:2 }}>
+          <StatusBadge status={activity.status} />
+          <EmptyStateHint emptyState={activity.emptyState} theme={theme} />
+        </div>
+
+        {/* Column 6: Participants — moved to the end. Shows the Activity's
+            actual Manager name(s) in-cell (managerNames computed server-side
+            in activityService.getActivitiesForPhase), truncated with full
+            text in the title= tooltip. Clicking opens the ParticipantsPanel
+            popup where everyone is listed and any one can be managed.
+            Viewable by anyone (not just canEdit) — the panel gates editing per role. */}
         <div style={{ position: 'relative', display:'flex', justifyContent:'center', overflow:'hidden' }} ref={participantsRef}>
           <div style={{ cursor: !isInactive ? 'pointer' : 'default', display:'flex', alignItems:'center', gap:5, overflow:'hidden', minWidth:0, maxWidth:'100%' }}
             onClick={!isInactive ? (e) => { e.stopPropagation(); togglePanel('members'); if (panel !== 'members') { fetchMembers(); if (!hasLoadedTasksRef.current) fetchTasks(); } } : undefined}
@@ -487,46 +516,6 @@ export default function ActivityRow({
               />
             </div>
           </FloatingPopover>
-        </div>
-
-        {/* Grid column 3: Dates — the actual planned date range AND the
-            delay warning together, not one replacing the other. Clicking
-            it also opens the edit panel; the visible Edit button beside the
-            activity name is the discoverable primary action. Activity has no separate
-            rename capability, so this IS the activity's one real edit
-            surface. No Owner field here anymore — Activity Managers are
-            set via the Participants tab; owner_id is a legacy column the
-            backend only falls back to when an activity has no explicit
-            Manager at all, not something meant to be hand-edited. */}
-        <div ref={editRef} style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:2, overflow:'hidden', cursor: canEdit && !isInactive ? 'pointer' : 'default' }}
-          onClick={(canEdit && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('edit'); } : undefined}
-          title={(canEdit && !isInactive) ? 'Click to edit dates / description' : undefined}
-        >
-          <span style={{ fontSize:10, color:theme.colors.ash, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'100%' }}>{fmtRange(activity.plannedStart, activity.plannedEnd)}</span>
-          <ScheduleBadge isOverdue={activity.isOverdue} overdueDays={activity.overdueDays} delayDays={activity.delayDays} delayLabel="Late by" />
-        </div>
-
-        {/* Grid column 4: Progress — BUG-030, same fix as PhasePanel.js's
-            Phase rows: this used to be crammed into the Name cluster. */}
-        <div style={{ overflow:'hidden', display:'flex', justifyContent:'center' }} onClick={e => e.stopPropagation()}>
-          <ProgressBar value={activity.progress || 0} />
-        </div>
-
-        {/* Grid column 5: Weightage — its own column now (was an inline
-            badge in the name cluster). Clicking opens the Edit popup for
-            Managers, same as the Edit button. */}
-        <div style={{ overflow:'hidden', display:'flex', justifyContent:'center', cursor: canEdit && !isInactive ? 'pointer' : 'default' }}
-          onClick={(canEdit && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('edit'); } : undefined}
-          title={(canEdit && !isInactive) ? 'Click to edit weightage' : undefined}>
-          {activity.weightage != null
-            ? <WeightBadge title="Share of this phase's progress">{activity.weightage}%</WeightBadge>
-            : <span style={{ fontSize:11, color:theme.colors.ashLight }}>—</span>}
-        </div>
-
-        {/* Grid column 6: Status */}
-        <div style={{ overflow:'hidden', display:'flex', flexDirection:'column', alignItems:'center', gap:2 }}>
-          <StatusBadge status={activity.status} />
-          <EmptyStateHint emptyState={activity.emptyState} theme={theme} />
         </div>
 
         {/* Grid column 6 (max-content): actions. "Edit" icon removed:
@@ -904,10 +893,10 @@ export default function ActivityRow({
             {!loadingTasks && tasks.length > 0 && (
               <TableHead cols={TASK_GRID_COLS} style={{ marginBottom:2, borderRadius:6, paddingLeft:40, background:`linear-gradient(90deg, ${theme.colors.white} 0%, ${theme.colors.ash}30 100%)` }}>
                 <TableHeadCell>Task</TableHeadCell>
+                <TableHeadCell w={COL.weight} center>Weight</TableHeadCell>
                 <TableHeadCell w={COL.assignee} center>Assignee</TableHeadCell>
                 <TableHeadCell w={COL.due} center>Due Date</TableHeadCell>
                 <TableHeadCell w={COL.priority} center>Priority</TableHeadCell>
-                <TableHeadCell w={COL.weight} center>Weight</TableHeadCell>
                 <TableHeadCell w={COL.status} center>Status</TableHeadCell>
               </TableHead>
             )}
