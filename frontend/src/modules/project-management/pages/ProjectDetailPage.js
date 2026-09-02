@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTheme } from '@emotion/react';
-import { ChevronLeft, LayoutGrid, RotateCcw } from 'lucide-react';
+import { ChevronLeft, LayoutGrid, RotateCcw, Pencil } from 'lucide-react';
 import StatusBadge, { InactiveBadge } from '../components/StatusBadge';
 import EmptyStateHint from '../components/EmptyStateHint';
 import ProgressBar from '../components/ProgressBar';
@@ -11,6 +11,7 @@ import MemberManager from '../components/MemberManager';
 import ParticipantsPanel from '../components/ParticipantsPanel';
 import AuditLog from '../components/AuditLog';
 import ProjectAnalytics from '../components/ProjectAnalytics';
+import ProjectEditModal from '../components/ProjectEditModal';
 import { useProject } from '../hooks/useProject';
 import { useProjectAnalytics } from '../hooks/useProjectAnalytics';
 import { aggregateAssignees } from '../utils/aggregateAssignees';
@@ -43,6 +44,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
   const { project, phases, loading, error, refetch } = useProject(projectId);
   const [tab,          setTab]          = useState('Phases');
   const [showAddPhase, setShowAddPhase] = useState(false);
+  const [showEditProject, setShowEditProject] = useState(false);
   const [descExpanded, setDescExpanded] = useState(false);
   const [newPhaseName, setNewPhaseName] = useState('');
   const [newPhaseStart, setNewPhaseStart] = useState('');
@@ -244,6 +246,14 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
             <EmptyStateHint emptyState={project.emptyState} theme={theme} />
           </div>
           {isProjectInactive && <InactiveBadge />}
+          {/* Manager-only "edit everything" — name, description, dates, and
+              status, all in one modal (#4/#5). Hidden while the project is
+              inactive (reactivate first). */}
+          {canEdit && !isProjectInactive && (
+            <IconBtn title="Edit project (name, description, dates, status)" onClick={() => setShowEditProject(true)} style={{ width:26, height:26 }}>
+              <Pencil size={13} strokeWidth={2} />
+            </IconBtn>
+          )}
           {isProjectInactive && myRole === 'Manager' && (
             <IconBtn title="Reactivate project" onClick={handleReactivateProject} style={{ width:26, height:26 }}>
               <RotateCcw size={13} strokeWidth={2} />
@@ -491,6 +501,14 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
         {/* ── Audit tab — visible to all members ── */}
         {tab === 'Audit' && <AuditLog projectId={projectId} />}
       </DetailBody>
+
+      {showEditProject && (
+        <ProjectEditModal
+          project={project}
+          onClose={() => setShowEditProject(false)}
+          onSaved={() => { setShowEditProject(false); refetch(); }}
+        />
+      )}
     </Detail>
   );
 }

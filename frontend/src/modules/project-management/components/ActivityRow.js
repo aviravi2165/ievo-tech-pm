@@ -73,6 +73,7 @@ export default function ActivityRow({
   const [memberLoading,    setMemberLoading]    = useState(false);
 
   // Edit form
+  const [editName,   setEditName]   = useState(activity.name || '');
   const [editStart,  setEditStart]  = useState(toInput(activity.plannedStart));
   const [editEnd,    setEditEnd]    = useState(toInput(activity.plannedEnd));
   const [editDesc,   setEditDesc]   = useState(activity.description || '');
@@ -118,11 +119,12 @@ export default function ActivityRow({
   const showChatButton = canEdit || (canMember && (!open || isUserActivityMember));
 
   useEffect(() => {
+    setEditName(activity.name || '');
     setEditStart(toInput(activity.plannedStart));
     setEditEnd(toInput(activity.plannedEnd));
     setEditDesc(activity.description || '');
     setEditWeight(activity.weightage ?? '');
-  }, [activity.plannedStart, activity.plannedEnd, activity.description, activity.weightage]);
+  }, [activity.name, activity.plannedStart, activity.plannedEnd, activity.description, activity.weightage]);
 
   // How much of the parent Phase's 100% weightage budget is available for
   // THIS activity — every other active activity's share is already spoken
@@ -197,6 +199,7 @@ export default function ActivityRow({
   // ── Edit activity save ───────────────────────────────────────────────────────
   const handleEditSave = async () => {
     const errs = {};
+    if (!editName.trim()) errs.name = 'Name required';
     if (!editStart) errs.start = 'Start date required';
     if (!editEnd)   errs.end   = 'End date required';
     if (editStart && editEnd && editEnd < editStart) errs.end = 'End must be after start';
@@ -209,6 +212,7 @@ export default function ActivityRow({
     setEditSaving(true);
     try {
       await activityApi.update(activity.activityId, {
+        name:         editName.trim(),
         plannedStart: editStart || null,
         plannedEnd:   editEnd   || null,
         description:  editDesc  || null,
@@ -586,6 +590,12 @@ export default function ActivityRow({
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 8 }}>
             <EditPanelTitle>Edit Activity</EditPanelTitle>
             <BtnGhost onClick={() => { setPanel(null); setEditErrors({}); }} style={{ fontSize:11, padding:'2px 8px' }}>✕</BtnGhost>
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ fontSize: 10, color: theme.colors.ash, fontWeight: 600, textTransform: 'uppercase', display: 'block', marginBottom: 3 }}>Name *</label>
+            <input value={editName} onChange={e => { setEditName(e.target.value); setEditErrors(er => ({ ...er, name: '' })); }}
+              style={{ width: '100%', background: theme.colors.mid, border: `1px solid ${editErrors.name ? theme.colors.danger : theme.colors.border}`, borderRadius: theme.radius.sm, padding: '7px 10px', color: theme.colors.onyx, fontSize: 12, fontFamily: 'inherit', outline: 'none' }} />
+            {editErrors.name && <span style={{ fontSize: 10, color: theme.colors.danger }}>{editErrors.name}</span>}
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-start', marginBottom: 10 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>

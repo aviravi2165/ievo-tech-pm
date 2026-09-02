@@ -61,7 +61,9 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
   // Dates edit popup — single trigger (the Dates cell), so a plain ref works.
   const datesRef = useRef(null);
 
-  // Date edit
+  // Phase edit (name, description, dates, weightage)
+  const [editName,    setEditName]    = useState(phase.name || '');
+  const [editDesc,    setEditDesc]    = useState(phase.description || '');
   const [editStart,   setEditStart]   = useState(toInput(phase.plannedStart));
   const [editEnd,     setEditEnd]     = useState(toInput(phase.plannedEnd));
   const [editWeight,  setEditWeight]  = useState(phase.weightage ?? '');
@@ -104,10 +106,12 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
   const canEdit = phase.myRole === 'Manager';
 
   useEffect(() => {
+    setEditName(phase.name || '');
+    setEditDesc(phase.description || '');
     setEditStart(toInput(phase.plannedStart));
     setEditEnd(toInput(phase.plannedEnd));
     setEditWeight(phase.weightage ?? '');
-  }, [phase.plannedStart, phase.plannedEnd, phase.weightage]);
+  }, [phase.name, phase.description, phase.plannedStart, phase.plannedEnd, phase.weightage]);
 
   // How much of the Project's 100% weightage budget is available for THIS
   // phase — mirrors ActivityRow.js's weightBudget one level up. Every other
@@ -223,6 +227,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
 
   const handleDateSave = async () => {
     const errs = {};
+    if (!editName.trim()) errs.name = 'Name required';
     if (!editStart) errs.start = 'Start date required';
     if (!editEnd)   errs.end   = 'End date required';
     if (editStart && editEnd && editEnd < editStart) errs.end = 'End must be after start';
@@ -234,7 +239,13 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
     if (Object.keys(errs).length) { setDateErrors(errs); return; }
     setDateSaving(true);
     try {
-      await phaseApi.update(phase.phaseId, { plannedStart: editStart, plannedEnd: editEnd, weightage: Number(editWeight) });
+      await phaseApi.update(phase.phaseId, {
+        name: editName.trim(),
+        description: editDesc || null,
+        plannedStart: editStart,
+        plannedEnd: editEnd,
+        weightage: Number(editWeight),
+      });
       onRefetchProject?.();
       setPanel(null); setDateErrors({});
     } catch (err) { showToast(apiErrorMessage(err, 'Failed to save phase.')); }
@@ -564,6 +575,18 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 10 }}>
             <EditPanelTitle style={{ marginBottom:0 }}>Edit Phase</EditPanelTitle>
             <BtnGhost onClick={() => { setPanel(null); setDateErrors({}); }} style={{ fontSize:11, padding:'2px 8px' }}>✕</BtnGhost>
+          </div>
+          <div style={{ marginBottom:10 }}>
+            <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase', display:'block', marginBottom:3 }}>Name <span style={{ color:theme.colors.espresso }}>*</span></label>
+            <input value={editName} onChange={e => { setEditName(e.target.value); setDateErrors(er=>({...er,name:''})); }}
+              style={{ width:'100%', background:theme.colors.mid, border:`1px solid ${dateErrors.name?theme.colors.danger:theme.colors.border}`, borderRadius:theme.radius.sm, padding:'7px 10px', color:theme.colors.onyx, fontSize:12, fontFamily:'inherit', outline:'none' }} />
+            {dateErrors.name && <span style={{ fontSize:10, color:theme.colors.danger }}>{dateErrors.name}</span>}
+          </div>
+          <div style={{ marginBottom:10 }}>
+            <label style={{ fontSize:10, color:theme.colors.ash, fontWeight:600, textTransform:'uppercase', display:'block', marginBottom:3 }}>Description</label>
+            <textarea value={editDesc} onChange={e => setEditDesc(e.target.value)} rows={2}
+              placeholder="Describe this phase's goal…"
+              style={{ width:'100%', background:theme.colors.mid, border:`1px solid ${theme.colors.border}`, borderRadius:theme.radius.sm, padding:'7px 10px', color:theme.colors.onyx, fontSize:12, fontFamily:'inherit', outline:'none', resize:'vertical' }} />
           </div>
           <div style={{ display:'flex', gap:12, flexWrap:'wrap', alignItems:'flex-end', marginBottom:10 }}>
             <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
