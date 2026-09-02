@@ -403,7 +403,7 @@ CREATE TABLE dbo.pm_projects (
     description   nvarchar(MAX) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
     planned_start date NULL,
     planned_end   date NULL,
-    status        varchar(30)   COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT 'Planning' NOT NULL,
+    status        varchar(30)   COLLATE SQL_Latin1_General_CP1_CI_AS DEFAULT 'Active' NOT NULL,
     owner_id      uniqueidentifier NOT NULL,
     dept_id       int NULL,
     is_deleted    bit DEFAULT 0 NOT NULL,
@@ -415,9 +415,13 @@ CREATE TABLE dbo.pm_projects (
     CONSTRAINT FK_pm_projects_dept    FOREIGN KEY (dept_id)    REFERENCES dbo.dept_master(dept_id),
     CONSTRAINT FK_pm_projects_created FOREIGN KEY (created_by) REFERENCES dbo.auth_users(user_id)
 );
+-- New project status vocabulary: Active / Hold / Completed / Closed.
+-- ('Planning' folded into 'Active'; 'On Hold' -> 'Hold'; 'Cancelled' -> 'Closed'.)
+-- Fresh installs get the new set here; existing databases are migrated by the
+-- block further down (search "Project status vocabulary migration").
 IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_projects_status')
 ALTER TABLE dbo.pm_projects WITH NOCHECK ADD CONSTRAINT CK_pm_projects_status
-    CHECK (status IN ('Planning','Active','On Hold','Completed','Cancelled'));
+    CHECK (status IN ('Active','Hold','Completed','Closed'));
 
 -- ────────────────────────────────────────────────────────────
 -- pm_members
@@ -1163,6 +1167,30 @@ IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_tasks_weighta
     ALTER TABLE dbo.pm_tasks DROP CONSTRAINT CK_pm_tasks_weightage;
 ALTER TABLE dbo.pm_tasks WITH CHECK ADD CONSTRAINT CK_pm_tasks_weightage
     CHECK (weightage IS NULL OR (weightage >= 1 AND weightage <= 100));
+
+-- ────────────────────────────────────────────────────────────
+-- Project status vocabulary migration — existing databases still have the
+-- old CHECK constraint and old stored values (Planning/On Hold/Cancelled).
+-- Drop the old constraint, remap the stored values to the new vocabulary
+-- (Planning->Active, On Hold->Hold, Cancelled->Closed; Active/Completed
+-- unchanged), then re-add the constraint with the new allowed set. The GO
+-- after the DROP is required for the same reason as the weightage blocks:
+-- SQL Server validates the whole batch up front, and the WITH CHECK re-add
+-- would otherwise be validated against rows that haven't been remapped yet.
+-- ────────────────────────────────────────────────────────────
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_projects_status')
+    ALTER TABLE dbo.pm_projects DROP CONSTRAINT CK_pm_projects_status;
+GO
+UPDATE dbo.pm_projects SET status = 'Active' WHERE status = 'Planning';
+UPDATE dbo.pm_projects SET status = 'Hold'   WHERE status = 'On Hold';
+UPDATE dbo.pm_projects SET status = 'Closed' WHERE status = 'Cancelled';
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_projects_status')
+    ALTER TABLE dbo.pm_projects WITH CHECK ADD CONSTRAINT CK_pm_projects_status
+        CHECK (status IN ('Active','Hold','Completed','Closed'));
+GO
+
 -- ────────────────────────────────────────────────────────────
 -- pm_tasks.start_date — explicit planned start, distinct from created_at
 -- (when the row was inserted) and due_date (when it's due). The Timeline

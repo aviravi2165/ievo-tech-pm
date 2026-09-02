@@ -14,7 +14,10 @@ import { Wrap, Empty, BtnPrimary, BtnGhost, DepBadge, IconBtn, IconBtnDanger } f
 import { useSortFilter } from '../../shared/hooks/useSortFilter';
 import { SortSelect, FilterSelect, FilterToggle } from '../../shared/components/TableControls';
 
-const COL = { owner: 105, dates: 140, progress: 100, status: 96, role: 74, actions: 28 };
+// Role column removed (#6). Added a narrow serial-number column (#2) at the
+// front instead. dates widened slightly since it now carries a phrase
+// ("3 weeks left") rather than a raw date range.
+const COL = { sno: 40, owner: 105, dates: 120, progress: 100, status: 96, actions: 28 };
 
 function parseLocalDate(d) {
   if (!d) return null;
@@ -26,6 +29,25 @@ function fmtDate(d) {
   const dt = parseLocalDate(d);
   if (!dt) return '—';
   return dt.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+// Duration column (#3): show how much time is LEFT ("3 weeks left") instead
+// of the raw start→end range; the actual dates go in the hover tooltip.
+// Returns { text, colorKey } where colorKey names a theme.colors entry.
+// Edge cases: a Completed/Closed project shows that word (nothing "remains");
+// past its end date shows "Xw overdue" in red; under a week shows days.
+function durationInfo(plannedStart, plannedEnd, status) {
+  if (status === 'Completed') return { text: 'Completed', colorKey: 'ash' };
+  if (status === 'Closed')    return { text: 'Closed',    colorKey: 'ash' };
+  if (!plannedEnd)            return { text: '—',         colorKey: 'ashLight' };
+  const end = parseLocalDate(plannedEnd);
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const days = Math.round((end - now) / 86400000);
+  if (days < 0)   return { text: `${Math.ceil(Math.abs(days) / 7)}w overdue`, colorKey: 'danger' };
+  if (days === 0) return { text: 'Due today', colorKey: 'warning' };
+  if (days < 7)   return { text: `${days} day${days === 1 ? '' : 's'} left`, colorKey: 'ash' };
+  const weeks = Math.ceil(days / 7);
+  return { text: `${weeks} week${weeks === 1 ? '' : 's'} left`, colorKey: 'ash' };
 }
 
 export default function ProjectListPage({ onSelectProject, onOpenTemplates }) {
@@ -182,18 +204,24 @@ export default function ProjectListPage({ onSelectProject, onOpenTemplates }) {
                 fine, both layout modes agree on exact pixel widths for a
                 fixed-width column, they just need to be told the SAME
                 widths, which this cols string now does. */}
-            <TableHead cols={`minmax(120px, 1fr) ${COL.owner}px ${COL.dates}px ${COL.progress}px ${COL.status}px ${COL.role}px ${COL.actions}px`}>
+            <TableHead cols={`${COL.sno}px minmax(120px, 1fr) ${COL.owner}px ${COL.dates}px ${COL.progress}px ${COL.status}px ${COL.actions}px`}>
+              <TableHeadCell center>#</TableHeadCell>
               <TableHeadCell>Name</TableHeadCell>
               <TableHeadCell>Owner</TableHeadCell>
               <TableHeadCell>Duration</TableHeadCell>
               <TableHeadCell center>Progress</TableHeadCell>
               <TableHeadCell center>Status</TableHeadCell>
-              <TableHeadCell center>Role</TableHeadCell>
               <TableHeadCell />
             </TableHead>
 
-            {visibleProjects.map(p => (
+            {visibleProjects.map((p, i) => (
               <ListRow key={p.projectId} onClick={() => onSelectProject(p.projectId)} style={{ minHeight: 36, padding: '5px 10px' }}>
+                {/* Serial number (#2) — a plain 1-based index of the row's
+                    position in the currently-shown list. */}
+                <Cell w={COL.sno} center>
+                  <span style={{ fontSize: 10, color: theme.colors.ashLight, fontWeight: 600 }}>{i + 1}</span>
+                </Cell>
+
                 {/* Explicit 2-line stack (title row, meta row) rather than
                     packing name+badges+meta all inline on one line — an
                     unconstrained flex row of text spans doesn't reliably
@@ -219,9 +247,19 @@ export default function ProjectListPage({ onSelectProject, onOpenTemplates }) {
                 </Cell>
 
                 <Cell w={COL.dates}>
-                  <span style={{ fontSize: 9.5, color: theme.colors.ash, whiteSpace: 'nowrap' }}>
-                    {p.plannedStart ? `${fmtDate(p.plannedStart)} → ${fmtDate(p.plannedEnd)}` : '—'}
-                  </span>
+                  {(() => {
+                    const d = durationInfo(p.plannedStart, p.plannedEnd, p.status);
+                    // Tooltip carries the actual dates (the raw range that
+                    // used to be shown inline).
+                    const tip = p.plannedStart
+                      ? `${fmtDate(p.plannedStart)} → ${fmtDate(p.plannedEnd)}`
+                      : 'No dates set';
+                    return (
+                      <span title={tip} style={{ fontSize: 10.5, color: theme.colors[d.colorKey], fontWeight: d.colorKey === 'danger' ? 700 : 500, whiteSpace: 'nowrap' }}>
+                        {d.text}
+                      </span>
+                    );
+                  })()}
                 </Cell>
 
                 <Cell w={COL.progress} center>
@@ -231,10 +269,6 @@ export default function ProjectListPage({ onSelectProject, onOpenTemplates }) {
                 <Cell w={COL.status} center style={{ flexDirection: 'column', gap: 2 }}>
                   <StatusBadge status={p.status} />
                   <EmptyStateHint emptyState={p.emptyState} theme={theme} />
-                </Cell>
-
-                <Cell w={COL.role} center>
-                  <DepBadge as="span">{p.myRole}</DepBadge>
                 </Cell>
 
                 <Cell w={COL.actions} onClick={e => e.stopPropagation()}>

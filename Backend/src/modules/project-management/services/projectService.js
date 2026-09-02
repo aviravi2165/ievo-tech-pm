@@ -126,7 +126,7 @@ async function listProjects(userId, isAdmin = false, opts = {}) {
     // Gated on actually having a task somewhere underneath it — see the
     // matching comment in activityService.getActivitiesForPhase. emptyState
     // is NOT date-gated, unlike isOverdue — see phaseService's own comment.
-    p.isOverdue = Boolean(p.plannedEndPassed) && p.status !== 'Completed' && p.status !== 'Cancelled' && stats.hasTasks;
+    p.isOverdue = Boolean(p.plannedEndPassed) && p.status !== 'Completed' && p.status !== 'Closed' && stats.hasTasks;
     p.overdueDays = p.isOverdue ? getOverdueDays(p.plannedEnd) : 0;
     p.emptyState = stats.phaseCount === 0 ? 'noPhases' : (stats.hasTasks ? null : 'noTasks');
     delete p.plannedEndPassed;
@@ -173,11 +173,11 @@ async function getProject(projectId, userId, isAdmin = false) {
   const stats = await getProjectStats(projectId);
   const progress = stats.progress;
   proj.status = deriveProjectStatus(progress, proj.status, stats.hasActiveWork);
-  proj.isOverdue = Boolean(proj.plannedEndPassed) && proj.status !== 'Completed' && proj.status !== 'Cancelled' && stats.hasTasks;
+  proj.isOverdue = Boolean(proj.plannedEndPassed) && proj.status !== 'Completed' && proj.status !== 'Closed' && stats.hasTasks;
   proj.overdueDays = proj.isOverdue ? getOverdueDays(proj.plannedEnd) : 0;
   proj.emptyState = stats.phaseCount === 0 ? 'noPhases' : (stats.hasTasks ? null : 'noTasks');
   delete proj.plannedEndPassed;
-  const delayDays = (proj.status === 'Completed' || proj.status === 'Cancelled')
+  const delayDays = (proj.status === 'Completed' || proj.status === 'Closed')
     ? 0
     : await getProjectDelayDays(projectId, proj.plannedEnd);
   return { ...proj, members: membersResult.recordset, progress, delayDays };
@@ -233,6 +233,13 @@ async function updateProject(projectId, userId, body) {
   if (body.name !== undefined) {
     if (!body.name.trim()) { const e = new Error('Project name is required'); e.statusCode = 400; throw e; }
     if (body.name.trim().length > 200) { const e = new Error('Project name must be 200 characters or fewer'); e.statusCode = 400; throw e; }
+  }
+  // Only the manually-settable statuses can be written here. 'Completed' is
+  // automatic (deriveProjectStatus returns it at 100% progress), so it's not
+  // an accepted manual value — a Manager sets Active / Hold / Closed, and
+  // Completed shows on its own when the work is done.
+  if (body.status !== undefined && !['Active', 'Hold', 'Closed'].includes(body.status)) {
+    const e = new Error('Project status must be Active, Hold, or Closed.'); e.statusCode = 400; throw e;
   }
   if (body.plannedStart !== undefined || body.plannedEnd !== undefined) {
     const pool0 = await getPool();

@@ -152,21 +152,19 @@ function deriveStatus(progress, persistedStatus, hasActiveWork = false) {
 }
 
 /**
- * deriveProjectStatus — Project uses a different vocabulary than Phase/
- * Activity (Planning/Active/On Hold/Completed/Cancelled, not To Do/In
- * Progress/Blocked), and unlike Phase/Activity it previously wasn't
- * derived at all — 'status' was whatever was set at creation (always
- * 'Planning' by default) and nothing ever moved it, so a project stayed
- * "Planning" forever even once every task underneath was actively being
- * worked. 'On Hold' and 'Cancelled' are deliberate manual states (a
- * manager choosing to pause/cancel) and are preserved as-is, same as
- * 'Blocked' is preserved for Phase/Activity — everything else is derived
- * from progress/hasActiveWork exactly like Phase/Activity.
+ * deriveProjectStatus — Project vocabulary is now Active / Hold / Completed
+ * / Closed (the old 'Planning' state is gone, folded into Active; 'On Hold'
+ * renamed to 'Hold', 'Cancelled' to 'Closed'). 'Hold' and 'Closed' are
+ * deliberate manual states (a Manager choosing to pause or stop a project),
+ * so they're preserved as-is here — same way 'Blocked' is preserved for
+ * Phase/Activity. Everything else is automatic: 'Completed' at 100%,
+ * otherwise 'Active'. hasActiveWork is no longer needed to distinguish
+ * Active from Planning (there is no Planning), but the parameter is kept so
+ * existing call sites don't need to change.
  */
 function deriveProjectStatus(progress, persistedStatus, hasActiveWork = false) {
-  if (persistedStatus === 'On Hold' || persistedStatus === 'Cancelled') return persistedStatus;
+  if (persistedStatus === 'Hold' || persistedStatus === 'Closed') return persistedStatus;
   if (progress >= 100) return 'Completed';
-  if (progress <= 0 && !hasActiveWork) return 'Planning';
   return 'Active';
 }
 
