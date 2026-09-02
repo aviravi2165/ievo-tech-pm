@@ -71,11 +71,10 @@ async function listProjects(userId, isAdmin = false, opts = {}) {
              -- Raw "past its own planned_end" only — status exclusion
              -- applied in JS below against the DERIVED status (see the
              -- matching comment in activityService.getActivitiesForPhase).
-             -- 'Cancelled' is the one value deriveProjectStatus never
-             -- overwrites, so p.status NOT IN ('Cancelled') here would have
-             -- been safe on its own, but 'Completed' is exactly as
-             -- transient as Phase/Activity's — never reliably written back
-             -- to this column — so it needed the same fix.
+             -- 'Hold'/'Closed' are the values deriveProjectStatus preserves,
+             -- but 'Completed' is transient (never reliably written back to
+             -- this column), so the overdue exclusion has to run against the
+             -- derived status in JS, not this raw column.
              CASE WHEN p.planned_end < CAST(GETDATE() AS DATE)
                   THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS plannedEndPassed,
              (SELECT COUNT(*) FROM pm_phases ph WHERE ph.project_id=p.project_id AND ph.is_deleted=0) AS phaseCount,

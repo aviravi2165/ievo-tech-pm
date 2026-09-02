@@ -409,11 +409,8 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
             </DepBadge>
           )}
 
-          {phase.weightage != null && (
-            <WeightBadge title="Share of this project's progress" style={{ flexShrink:0 }}>
-              {phase.weightage}%
-            </WeightBadge>
-          )}
+          {/* Weightage moved out of the name cluster into its own column
+              (grid column 5) — see below. */}
 
           {/* Explicit Edit button — same treatment as ActivityRow.js's Edit
               button next to the activity name. Clicking the Dates cell
@@ -515,7 +512,18 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
           <ProgressBar value={phase.progress || 0} />
         </div>
 
-        {/* Grid column 5: Status */}
+        {/* Grid column 5: Weightage — its own column now (was an inline
+            badge in the name cluster). Clicking it opens the same Edit
+            popup the Dates cell / Edit button open, for Managers. */}
+        <div style={{ overflow:'hidden', display:'flex', justifyContent:'center', cursor: canEdit && !isInactive ? 'pointer' : 'default' }}
+          onClick={(canEdit && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('dates'); } : undefined}
+          title={(canEdit && !isInactive) ? 'Click to edit weightage' : undefined}>
+          {phase.weightage != null
+            ? <WeightBadge title="Share of this project's progress">{phase.weightage}%</WeightBadge>
+            : <span style={{ fontSize:11, color:theme.colors.ashLight }}>—</span>}
+        </div>
+
+        {/* Grid column 6: Status */}
         <div style={{ overflow:'hidden', display:'flex', flexDirection:'column', alignItems:'center', gap:2 }}>
           <StatusBadge status={phase.status} />
           <EmptyStateHint emptyState={phase.emptyState} theme={theme} />
@@ -818,6 +826,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
               <TableHeadCell w={GROUP_COL.manager} center>Participants</TableHeadCell>
               <TableHeadCell w={GROUP_COL.dates} center>Duration</TableHeadCell>
               <TableHeadCell w={GROUP_COL.progress} center>Progress</TableHeadCell>
+              <TableHeadCell w={GROUP_COL.weight} center>Weightage</TableHeadCell>
               <TableHeadCell w={GROUP_COL.status} center>Status</TableHeadCell>
             </TableHead>
           )}

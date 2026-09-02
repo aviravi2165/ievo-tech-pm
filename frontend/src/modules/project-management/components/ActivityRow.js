@@ -422,11 +422,8 @@ export default function ActivityRow({
             </DepBadge>
           )}
 
-          {activity.weightage != null && (
-            <WeightBadge title="Share of this phase's progress" style={{ flexShrink:0 }}>
-              {activity.weightage}%
-            </WeightBadge>
-          )}
+          {/* Weightage moved out of the name cluster into its own column
+              (grid column 5) — see below. */}
 
           {canEdit && !isInactive && (
             <BtnGhost
@@ -515,7 +512,18 @@ export default function ActivityRow({
           <ProgressBar value={activity.progress || 0} />
         </div>
 
-        {/* Grid column 5: Status */}
+        {/* Grid column 5: Weightage — its own column now (was an inline
+            badge in the name cluster). Clicking opens the Edit popup for
+            Managers, same as the Edit button. */}
+        <div style={{ overflow:'hidden', display:'flex', justifyContent:'center', cursor: canEdit && !isInactive ? 'pointer' : 'default' }}
+          onClick={(canEdit && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('edit'); } : undefined}
+          title={(canEdit && !isInactive) ? 'Click to edit weightage' : undefined}>
+          {activity.weightage != null
+            ? <WeightBadge title="Share of this phase's progress">{activity.weightage}%</WeightBadge>
+            : <span style={{ fontSize:11, color:theme.colors.ashLight }}>—</span>}
+        </div>
+
+        {/* Grid column 6: Status */}
         <div style={{ overflow:'hidden', display:'flex', flexDirection:'column', alignItems:'center', gap:2 }}>
           <StatusBadge status={activity.status} />
           <EmptyStateHint emptyState={activity.emptyState} theme={theme} />
@@ -899,6 +907,7 @@ export default function ActivityRow({
                 <TableHeadCell w={COL.assignee} center>Assignee</TableHeadCell>
                 <TableHeadCell w={COL.due} center>Due Date</TableHeadCell>
                 <TableHeadCell w={COL.priority} center>Priority</TableHeadCell>
+                <TableHeadCell w={COL.weight} center>Weight</TableHeadCell>
                 <TableHeadCell w={COL.status} center>Status</TableHeadCell>
               </TableHead>
             )}

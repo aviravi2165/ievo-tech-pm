@@ -449,6 +449,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
                       a dedicated column matching Status and matching
                       ProjectListPage's own Progress column. */}
                   <TableHeadCell w={GROUP_COL.progress} center>Progress</TableHeadCell>
+                  <TableHeadCell w={GROUP_COL.weight} center>Weightage</TableHeadCell>
                   <TableHeadCell w={GROUP_COL.status} center>Status</TableHeadCell>
                   {/* No trailing spacer needed anymore — RowActions is
                       position:absolute now, so it never consumes flex

@@ -354,20 +354,8 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
                 {task.dependsOn.length}
               </DepBadge>
             )}
-            {task.weightage != null && (
-              // Clickable, same convention as DepBadge just above — opens
-              // the same Dates & Weightage popup the Due Date cell opens
-              // (still visually anchored there via dateRef), giving a
-              // second, more discoverable entry point right next to the
-              // name, same as ActivityRow.js/PhasePanel.js's explicit Edit
-              // buttons one level up.
-              <WeightBadge
-                title="Share of this activity's progress — click to edit"
-                onClick={(canManager && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('date'); } : undefined}
-                style={{ cursor: (canManager && !isInactive) ? 'pointer' : 'default', flexShrink: 0 }}>
-                {task.weightage}%
-              </WeightBadge>
-            )}
+            {/* Weightage moved out of the name cell into its own column
+                (between Priority and Status) — see below. */}
 
             {/* Explicit Edit button — same treatment as ActivityRow.js's
                 and PhasePanel.js's Edit buttons. The Due Date cell and the
@@ -423,6 +411,17 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
 
         {/* Priority column */}
         <Cell w={COL.priority} center><PriorityBadge priority={task.priority} /></Cell>
+
+        {/* Weightage column — its own column now (was an inline badge in the
+            name cell). Clicking opens the Dates & Weightage popup, Manager-only. */}
+        <Cell w={COL.weight} center
+          onClick={(canManager && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('date'); } : undefined}
+          style={{ cursor: (canManager && !isInactive) ? 'pointer' : 'default' }}
+          title={(canManager && !isInactive) ? 'Click to edit weightage' : undefined}>
+          {task.weightage != null
+            ? <WeightBadge>{task.weightage}%</WeightBadge>
+            : <span style={{ fontSize: 11, color: theme.colors.ashLight }}>—</span>}
+        </Cell>
 
         {/* Status column */}
         <Cell w={COL.status} center onClick={e => e.stopPropagation()}>
