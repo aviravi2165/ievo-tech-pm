@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTheme } from '@emotion/react';
-import { ChevronLeft, LayoutGrid, RotateCcw, Pencil } from 'lucide-react';
+import { ChevronLeft, LayoutGrid, RotateCcw, Pencil, Trash2 } from 'lucide-react';
 import StatusBadge, { InactiveBadge } from '../components/StatusBadge';
 import EmptyStateHint from '../components/EmptyStateHint';
 import ProgressBar from '../components/ProgressBar';
@@ -22,7 +22,7 @@ import {
   Detail, DetailHeader, DetailTitle, DetailSub, DetailTabs, Tab, DetailBody,
 } from '../styles/ProjectDetailPage.styles';
 import {
-  Wrap, IconBtn, BtnPrimary, BtnGhost, EditPanel, EditPanelTitle, Empty, DepBadge, MemberRow,
+  Wrap, IconBtn, IconBtnDanger, BtnPrimary, BtnGhost, EditPanel, EditPanelTitle, Empty, DepBadge, MemberRow,
 } from '../styles/shared.styles';
 
 // Audit tab is visible to ALL members (Managers see full log, others read-only)
@@ -130,6 +130,24 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
   const handleReactivateProject = async () => {
     try { await projectApi.reactivate(projectId); refetch(); }
     catch (err) { showToast(apiErrorMessage(err, 'Failed to reactivate project.')); }
+  };
+
+  // Delete lives here (inside the project) now, not on the list. Manager-only:
+  // the button is gated on canEdit here, and the backend's DELETE /:id route
+  // is Manager-gated too (projectRoutes.js requireRole('Manager')). A project
+  // with phases under it deactivates instead of hard-deleting (preserving the
+  // data); an empty one is removed and we return to the list.
+  const handleDeleteProject = async () => {
+    if (!window.confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
+    try {
+      const { action } = await projectApi.delete(projectId);
+      if (action === 'deactivated') {
+        alert('This project still has phases — it was deactivated instead of deleted.');
+        refetch();
+      } else {
+        onBack();
+      }
+    } catch (err) { showToast(apiErrorMessage(err, 'Failed to delete project.')); }
   };
 
   // ── Project Managers (passed to ParticipantsPanel's Managers section) ─────────
@@ -253,6 +271,14 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
             <IconBtn title="Edit project (name, description, dates, status)" onClick={() => setShowEditProject(true)} style={{ width:26, height:26 }}>
               <Pencil size={13} strokeWidth={2} />
             </IconBtn>
+          )}
+          {/* Delete — Manager-only, lives inside the project now (moved off the
+              home list). Shown for an active project; an inactive one shows
+              Reactivate instead. */}
+          {canEdit && !isProjectInactive && (
+            <IconBtnDanger title="Delete project" onClick={handleDeleteProject} style={{ width:26, height:26 }}>
+              <Trash2 size={13} strokeWidth={2} />
+            </IconBtnDanger>
           )}
           {isProjectInactive && myRole === 'Manager' && (
             <IconBtn title="Reactivate project" onClick={handleReactivateProject} style={{ width:26, height:26 }}>

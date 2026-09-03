@@ -142,15 +142,8 @@ export default function ProjectListPage({ currentUser, onSelectProject, onOpenTe
   const canGroup = (p) => p.myRole === 'Manager'; // admins already read as Manager here
 
   // ── Project actions ─────────────────────────────────────────────────────────
-  const handleDelete = async (e, project) => {
-    e.stopPropagation();
-    if (!window.confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
-    try {
-      const { action } = await projectApi.delete(project.projectId);
-      if (action === 'deactivated') alert('This project still has phases — it was deactivated instead of deleted.');
-      refetch();
-    } catch (err) { alert(err?.response?.data?.error || 'Failed to delete project'); }
-  };
+  // Delete lives in the project detail page now (see ProjectDetailPage) — only
+  // reactivate remains reachable from the list.
   const handleReactivate = async (e, project) => {
     e.stopPropagation();
     try { await projectApi.reactivate(project.projectId); refetch(); } catch {}
@@ -259,17 +252,14 @@ export default function ProjectListPage({ currentUser, onSelectProject, onOpenTe
           <EmptyStateHint emptyState={p.emptyState} theme={theme} />
         </Cell>
 
+        {/* Delete moved OUT of the list into the project detail page (it now
+            lives inside the project, Manager-only). Only Reactivate remains
+            here, for an inactive project a Manager wants to bring back. */}
         <Cell w={COL.actions} onClick={e => e.stopPropagation()}>
-          {!selectMode && p.myRole === 'Manager' && (
-            p.isActive === false ? (
-              <IconBtn title="Reactivate project" onClick={(e) => handleReactivate(e, p)} style={{ width: 26, height: 26 }}>
-                <RotateCcw size={13} strokeWidth={2} />
-              </IconBtn>
-            ) : (
-              <IconBtnDanger title="Delete project" onClick={(e) => handleDelete(e, p)} style={{ width: 26, height: 26 }}>
-                <Trash2 size={13} strokeWidth={2} />
-              </IconBtnDanger>
-            )
+          {!selectMode && p.myRole === 'Manager' && p.isActive === false && (
+            <IconBtn title="Reactivate project" onClick={(e) => handleReactivate(e, p)} style={{ width: 26, height: 26 }}>
+              <RotateCcw size={13} strokeWidth={2} />
+            </IconBtn>
           )}
         </Cell>
       </ListRow>

@@ -30,33 +30,9 @@ export const ERP_MODULES = [
     path: '/projects',
     component: ProjectManagementModule,
   },
-  {
-    id: 'inventory',
-    label: 'Inventory',
-    shortLabel: 'Stock',
-    description: 'Materials & warehouse',
-    status: 'coming-soon',
-    path: '/inventory',
-    component: null,
-  },
-  {
-    id: 'hr',
-    label: 'HR & Workforce',
-    shortLabel: 'HR',
-    description: 'Team & attendance',
-    status: 'coming-soon',
-    path: '/hr',
-    component: null,
-  },
-  {
-    id: 'reports',
-    label: 'Reports & Analytics',
-    shortLabel: 'Reports',
-    description: 'Insights & exports',
-    status: 'coming-soon',
-    path: '/reports',
-    component: null,
-  },
+  // Inventory (Stock), HR, and Reports were coming-soon placeholders —
+  // removed from the sidebar so only Home and Projects show. Re-add their
+  // entries here when those modules are actually built.
 ];
 
 export const DEFAULT_MODULE_ID = 'dashboard';
