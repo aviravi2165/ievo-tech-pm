@@ -182,6 +182,8 @@ async function registerUser(data) {
   // first login (must_change_password = 1). The plaintext is emailed to the
   // user immediately — it is never returned to the frontend or stored anywhere.
   const temporaryPassword = generateTempPassword();
+  
+  console.log({temporaryPassword}); //TODO
   const passwordHash = await bcrypt.hash(temporaryPassword, 10);
 
   const pool = await getPool();

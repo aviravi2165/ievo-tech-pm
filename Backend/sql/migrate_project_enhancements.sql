@@ -69,6 +69,22 @@ IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_projects_
         CHECK (status IN ('Active','Hold','Completed','Closed'));
 GO
 
+-- The column's DEFAULT is a SEPARATE object from the CHECK constraint above.
+-- The old schema defaulted status to 'Planning'; new projects INSERT without
+-- specifying status and pick up that default, which the new CHECK now rejects.
+-- Drop whatever default is currently on the column (auto-generated name) and
+-- add a named 'Active' default so createProject keeps working.
+DECLARE @df sysname;
+SELECT @df = dc.name
+FROM sys.default_constraints dc
+JOIN sys.columns c ON c.object_id = dc.parent_object_id AND c.column_id = dc.parent_column_id
+WHERE dc.parent_object_id = OBJECT_ID('dbo.pm_projects') AND c.name = 'status';
+IF @df IS NOT NULL
+    EXEC('ALTER TABLE dbo.pm_projects DROP CONSTRAINT ' + @df);
+IF NOT EXISTS (SELECT 1 FROM sys.default_constraints WHERE name = 'DF_pm_projects_status')
+    ALTER TABLE dbo.pm_projects ADD CONSTRAINT DF_pm_projects_status DEFAULT 'Active' FOR status;
+GO
+
 /* ===== 3. Project grouping ==================================================
    Shared group catalogue + a single group_id column on pm_projects
    (folder-style: a project belongs to at most one group). */
