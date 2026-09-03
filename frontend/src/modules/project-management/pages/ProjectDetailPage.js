@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTheme } from '@emotion/react';
-import { ChevronLeft, LayoutGrid, RotateCcw } from 'lucide-react';
+import { ChevronLeft, LayoutGrid, RotateCcw, Pencil, Trash2 } from 'lucide-react';
 import StatusBadge, { InactiveBadge } from '../components/StatusBadge';
 import EmptyStateHint from '../components/EmptyStateHint';
 import ProgressBar from '../components/ProgressBar';
@@ -11,6 +11,7 @@ import MemberManager from '../components/MemberManager';
 import ParticipantsPanel from '../components/ParticipantsPanel';
 import AuditLog from '../components/AuditLog';
 import ProjectAnalytics from '../components/ProjectAnalytics';
+import ProjectEditModal from '../components/ProjectEditModal';
 import { useProject } from '../hooks/useProject';
 import { useProjectAnalytics } from '../hooks/useProjectAnalytics';
 import { aggregateAssignees } from '../utils/aggregateAssignees';
@@ -21,7 +22,7 @@ import {
   Detail, DetailHeader, DetailTitle, DetailSub, DetailTabs, Tab, DetailBody,
 } from '../styles/ProjectDetailPage.styles';
 import {
-  Wrap, IconBtn, BtnPrimary, BtnGhost, EditPanel, EditPanelTitle, Empty, DepBadge, MemberRow,
+  Wrap, IconBtn, IconBtnDanger, BtnPrimary, BtnGhost, EditPanel, EditPanelTitle, Empty, DepBadge, MemberRow,
 } from '../styles/shared.styles';
 
 // Audit tab is visible to ALL members (Managers see full log, others read-only)
@@ -43,6 +44,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
   const { project, phases, loading, error, refetch } = useProject(projectId);
   const [tab,          setTab]          = useState('Phases');
   const [showAddPhase, setShowAddPhase] = useState(false);
+  const [showEditProject, setShowEditProject] = useState(false);
   const [descExpanded, setDescExpanded] = useState(false);
   const [newPhaseName, setNewPhaseName] = useState('');
   const [newPhaseStart, setNewPhaseStart] = useState('');
@@ -128,6 +130,24 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
   const handleReactivateProject = async () => {
     try { await projectApi.reactivate(projectId); refetch(); }
     catch (err) { showToast(apiErrorMessage(err, 'Failed to reactivate project.')); }
+  };
+
+  // Delete lives here (inside the project) now, not on the list. Manager-only:
+  // the button is gated on canEdit here, and the backend's DELETE /:id route
+  // is Manager-gated too (projectRoutes.js requireRole('Manager')). A project
+  // with phases under it deactivates instead of hard-deleting (preserving the
+  // data); an empty one is removed and we return to the list.
+  const handleDeleteProject = async () => {
+    if (!window.confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
+    try {
+      const { action } = await projectApi.delete(projectId);
+      if (action === 'deactivated') {
+        alert('This project still has phases — it was deactivated instead of deleted.');
+        refetch();
+      } else {
+        onBack();
+      }
+    } catch (err) { showToast(apiErrorMessage(err, 'Failed to delete project.')); }
   };
 
   // ── Project Managers (passed to ParticipantsPanel's Managers section) ─────────
@@ -244,6 +264,22 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
             <EmptyStateHint emptyState={project.emptyState} theme={theme} />
           </div>
           {isProjectInactive && <InactiveBadge />}
+          {/* Manager-only "edit everything" — name, description, dates, and
+              status, all in one modal (#4/#5). Hidden while the project is
+              inactive (reactivate first). */}
+          {canEdit && !isProjectInactive && (
+            <IconBtn title="Edit project (name, description, dates, status)" onClick={() => setShowEditProject(true)} style={{ width:26, height:26 }}>
+              <Pencil size={13} strokeWidth={2} />
+            </IconBtn>
+          )}
+          {/* Delete — Manager-only, lives inside the project now (moved off the
+              home list). Shown for an active project; an inactive one shows
+              Reactivate instead. */}
+          {canEdit && !isProjectInactive && (
+            <IconBtnDanger title="Delete project" onClick={handleDeleteProject} style={{ width:26, height:26 }}>
+              <Trash2 size={13} strokeWidth={2} />
+            </IconBtnDanger>
+          )}
           {isProjectInactive && myRole === 'Manager' && (
             <IconBtn title="Reactivate project" onClick={handleReactivateProject} style={{ width:26, height:26 }}>
               <RotateCcw size={13} strokeWidth={2} />
@@ -426,20 +462,16 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
                       Name
                     </span>
                   </TableHeadCell>
-                  {/* Participants/Dates/Status/Progress are all centered —
-                      header text-align:center + cell justifyContent:center
-                      within the same fixed-width grid column, the one
-                      technique that's actually held up under verification
-                      (Progress). Name/Activity/Task stay left-aligned since
+                  {/* Column order: Weightage | Duration | Progress | Status |
+                      Participants. All centered — header text-align:center +
+                      cell justifyContent:center within the same fixed-width
+                      grid column. Name/Activity/Task stay left-aligned since
                       they carry the expand chevron. */}
-                  <TableHeadCell w={GROUP_COL.manager} center>Participants</TableHeadCell>
+                  <TableHeadCell w={GROUP_COL.weight} center>Weightage</TableHeadCell>
                   <TableHeadCell w={GROUP_COL.dates} center>Duration</TableHeadCell>
-                  {/* BUG-030: Progress used to be crammed inside the Name
-                      cell's cluster with no header of its own — it now gets
-                      a dedicated column matching Status and matching
-                      ProjectListPage's own Progress column. */}
                   <TableHeadCell w={GROUP_COL.progress} center>Progress</TableHeadCell>
                   <TableHeadCell w={GROUP_COL.status} center>Status</TableHeadCell>
+                  <TableHeadCell w={GROUP_COL.manager} center>Participants</TableHeadCell>
                   {/* No trailing spacer needed anymore — RowActions is
                       position:absolute now, so it never consumes flex
                       layout space and can't affect where these columns
@@ -491,6 +523,14 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
         {/* ── Audit tab — visible to all members ── */}
         {tab === 'Audit' && <AuditLog projectId={projectId} />}
       </DetailBody>
+
+      {showEditProject && (
+        <ProjectEditModal
+          project={project}
+          onClose={() => setShowEditProject(false)}
+          onSaved={() => { setShowEditProject(false); refetch(); }}
+        />
+      )}
     </Detail>
   );
 }

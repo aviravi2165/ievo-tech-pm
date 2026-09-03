@@ -1,20 +1,24 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, Fragment } from 'react';
 import { useTheme } from '@emotion/react';
-import { FolderKanban, RotateCcw, Trash2 } from 'lucide-react';
+import { FolderKanban, RotateCcw, Trash2, ChevronDown, ChevronRight, Pencil } from 'lucide-react';
 import StatusBadge, { InactiveBadge, statusLabel } from '../components/StatusBadge';
 import EmptyStateHint from '../components/EmptyStateHint';
 import ProgressBar from '../components/ProgressBar';
 import OverdueBadge from '../components/OverdueBadge';
 import ProjectFormModal from '../components/ProjectFormModal';
 import { useProjectList } from '../hooks/useProject';
-import { projectApi } from '../api/projectApi';
+import { projectApi, projectGroupApi } from '../api/projectApi';
 import { Table, TableHead, TableHeadCell, ListRow, Cell } from '../styles/Table.styles';
 import { Topbar, TopbarH1, TopbarActions, List } from '../styles/ProjectListPage.styles';
 import { Wrap, Empty, BtnPrimary, BtnGhost, DepBadge, IconBtn, IconBtnDanger } from '../styles/shared.styles';
 import { useSortFilter } from '../../shared/hooks/useSortFilter';
 import { SortSelect, FilterSelect, FilterToggle } from '../../shared/components/TableControls';
 
-const COL = { owner: 105, dates: 140, progress: 100, status: 96, role: 74, actions: 28 };
+// Role column removed (#6). Added a narrow serial-number column (#2) at the
+// front instead. dates widened slightly since it now carries a phrase
+// ("3 weeks left") rather than a raw date range.
+const COL = { sno: 40, owner: 105, dates: 120, progress: 100, status: 96, actions: 28 };
+const GRID_COLS = `${COL.sno}px minmax(120px, 1fr) ${COL.owner}px ${COL.dates}px ${COL.progress}px ${COL.status}px ${COL.actions}px`;
 
 function parseLocalDate(d) {
   if (!d) return null;
@@ -28,7 +32,23 @@ function fmtDate(d) {
   return dt.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-export default function ProjectListPage({ onSelectProject, onOpenTemplates }) {
+// Duration column (#3): show how much time is LEFT ("3 weeks left") instead
+// of the raw start→end range; the actual dates go in the hover tooltip.
+function durationInfo(plannedStart, plannedEnd, status) {
+  if (status === 'Completed') return { text: 'Completed', colorKey: 'ash' };
+  if (status === 'Closed')    return { text: 'Closed',    colorKey: 'ash' };
+  if (!plannedEnd)            return { text: '—',         colorKey: 'ashLight' };
+  const end = parseLocalDate(plannedEnd);
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const days = Math.round((end - now) / 86400000);
+  if (days < 0)   return { text: `${Math.ceil(Math.abs(days) / 7)}w overdue`, colorKey: 'danger' };
+  if (days === 0) return { text: 'Due today', colorKey: 'warning' };
+  if (days < 7)   return { text: `${days} day${days === 1 ? '' : 's'} left`, colorKey: 'ash' };
+  const weeks = Math.ceil(days / 7);
+  return { text: `${weeks} week${weeks === 1 ? '' : 's'} left`, colorKey: 'ash' };
+}
+
+export default function ProjectListPage({ currentUser, onSelectProject, onOpenTemplates }) {
   const theme = useTheme();
   const {
     projects, total, search, setSearch, hasMore,
@@ -37,9 +57,20 @@ export default function ProjectListPage({ onSelectProject, onOpenTemplates }) {
   const [showCreate, setShowCreate] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
 
-  // Debounced search box — types locally into its own state, only pushes
-  // to the hook (which fires a new server request) after a short pause.
-  // Without this, every keystroke would fire its own paginated fetch.
+  const isAdmin = currentUser?.userType === 'admin';
+
+  // ── Grouping state ──────────────────────────────────────────────────────────
+  const [groups, setGroups] = useState([]);              // full shared group catalogue (with createdBy)
+  const [selectMode, setSelectMode] = useState(false);   // are we picking projects to group?
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [newGroupName, setNewGroupName] = useState('');
+  const [targetGroupId, setTargetGroupId] = useState(''); // for "add to existing group"
+  const [collapsed, setCollapsed] = useState(new Set());  // groupIds (and 'ungrouped') that are collapsed
+
+  const refetchGroups = useCallback(() => projectGroupApi.list().then(setGroups).catch(() => {}), []);
+  useEffect(() => { refetchGroups(); }, [refetchGroups]);
+
+  // Debounced search box.
   const [searchInput, setSearchInput] = useState(search);
   const debounceRef = useRef(null);
   useEffect(() => {
@@ -50,9 +81,6 @@ export default function ProjectListPage({ onSelectProject, onOpenTemplates }) {
 
   const isAdminView = projects.some(p => p.isSuperAdmin);
 
-  // UI-only sort/filter over the currently-loaded page of projects — the
-  // server-side "Load more" pagination above is unaffected; sorting/
-  // filtering just reorders/narrows whatever's already been fetched.
   const statusOptions = useMemo(() => (
     [...new Set(projects.map(p => p.status).filter(Boolean))].map(s => ({ value: s, label: statusLabel(s) }))
   ), [projects]);
@@ -72,10 +100,6 @@ export default function ProjectListPage({ onSelectProject, onOpenTemplates }) {
     },
   });
 
-  // Lets a dashboard tile ("Overdue Projects") land here PRE-filtered
-  // instead of dumping the user on the unfiltered list and making them
-  // re-apply it — dispatched by AdminDashboard.js's navigateToProjectsFiltered,
-  // same 'CustomEvent + small delay' pattern as onSelectProject/open-project.
   useEffect(() => {
     const handler = (e) => {
       const detail = e.detail || {};
@@ -87,22 +111,192 @@ export default function ProjectListPage({ onSelectProject, onOpenTemplates }) {
     return () => window.removeEventListener('pm-project-list-filter', handler);
   }, [setFilter]);
 
-  const handleDelete = async (e, project) => {
-    e.stopPropagation();
-    if (!window.confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
-    try {
-      const { action } = await projectApi.delete(project.projectId);
-      if (action === 'deactivated') alert('This project still has phases — it was deactivated instead of deleted.');
-      refetch();
-    } catch (err) {
-      alert(err?.response?.data?.error || 'Failed to delete project');
+  // ── Bucket the visible projects into group sections + an Ungrouped bucket.
+  // Sections are built from what's currently loaded/visible; a group with no
+  // visible projects simply doesn't render a section (it still exists in the
+  // "add to existing group" dropdown). ─────────────────────────────────────
+  const { groupSections, ungrouped } = useMemo(() => {
+    const byGroup = new Map();
+    const rest = [];
+    for (const p of visibleProjects) {
+      if (p.groupId != null) {
+        if (!byGroup.has(p.groupId)) byGroup.set(p.groupId, { groupId: p.groupId, name: p.groupName || 'Group', projects: [] });
+        byGroup.get(p.groupId).projects.push(p);
+      } else rest.push(p);
     }
-  };
+    return {
+      groupSections: [...byGroup.values()].sort((a, b) => a.name.localeCompare(b.name)),
+      ungrouped: rest,
+    };
+  }, [visibleProjects]);
 
+  // Running 1-based serial across the grouped display order.
+  const serialMap = useMemo(() => {
+    const m = new Map(); let n = 0;
+    for (const s of groupSections) for (const p of s.projects) m.set(p.projectId, ++n);
+    for (const p of ungrouped) m.set(p.projectId, ++n);
+    return m;
+  }, [groupSections, ungrouped]);
+
+  const groupsById = useMemo(() => new Map(groups.map(g => [g.groupId, g])), [groups]);
+  const canGroup = (p) => p.myRole === 'Manager'; // admins already read as Manager here
+
+  // ── Project actions ─────────────────────────────────────────────────────────
+  // Delete lives in the project detail page now (see ProjectDetailPage) — only
+  // reactivate remains reachable from the list.
   const handleReactivate = async (e, project) => {
     e.stopPropagation();
     try { await projectApi.reactivate(project.projectId); refetch(); } catch {}
   };
+
+  // ── Group actions ───────────────────────────────────────────────────────────
+  const toggleSelected = (id) => setSelectedIds(prev => {
+    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
+  });
+  const exitSelect = () => { setSelectMode(false); setSelectedIds(new Set()); setNewGroupName(''); setTargetGroupId(''); };
+  const afterGroupChange = async () => { await refetchGroups(); refetch(); exitSelect(); };
+
+  const handleCreateGroup = async () => {
+    if (!newGroupName.trim() || selectedIds.size < 1) return;
+    try { await projectGroupApi.create(newGroupName.trim(), [...selectedIds]); await afterGroupChange(); }
+    catch (err) { alert(err?.response?.data?.error || 'Failed to create group'); }
+  };
+  const handleAddToExisting = async () => {
+    if (!targetGroupId || selectedIds.size < 1) return;
+    try {
+      for (const id of selectedIds) await projectGroupApi.setProjectGroup(id, Number(targetGroupId));
+      await afterGroupChange();
+    } catch (err) { alert(err?.response?.data?.error || 'Failed to add to group'); }
+  };
+  const handleUngroupSelected = async () => {
+    try {
+      for (const id of selectedIds) await projectGroupApi.setProjectGroup(id, null);
+      await afterGroupChange();
+    } catch (err) { alert(err?.response?.data?.error || 'Failed to remove from group'); }
+  };
+  const handleRenameGroup = async (section) => {
+    const name = window.prompt('Rename group:', section.name);
+    if (name == null || !name.trim()) return;
+    try { await projectGroupApi.rename(section.groupId, name.trim()); await refetchGroups(); refetch(); }
+    catch (err) { alert(err?.response?.data?.error || 'Failed to rename group'); }
+  };
+  const handleDeleteGroup = async (section) => {
+    if (!window.confirm(`Delete group "${section.name}"? Its projects just become ungrouped — the projects themselves are not deleted.`)) return;
+    try { await projectGroupApi.delete(section.groupId); await refetchGroups(); refetch(); }
+    catch (err) { alert(err?.response?.data?.error || 'Failed to delete group'); }
+  };
+
+  const toggleCollapse = (key) => setCollapsed(prev => {
+    const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n;
+  });
+
+  // ── Row renderer (shared by every section) ──────────────────────────────────
+  const renderRow = (p) => {
+    const serial = serialMap.get(p.projectId);
+    const selectable = canGroup(p);
+    const checked = selectedIds.has(p.projectId);
+    return (
+      <ListRow key={p.projectId}
+        onClick={selectMode ? (selectable ? () => toggleSelected(p.projectId) : undefined) : () => onSelectProject(p.projectId)}
+        style={{
+          minHeight: 36, padding: '5px 10px',
+          cursor: selectMode && !selectable ? 'default' : 'pointer',
+          opacity: selectMode && !selectable ? 0.45 : 1,
+          background: checked ? `${theme.colors.espresso}14` : undefined,
+        }}>
+        <Cell w={COL.sno} center>
+          {selectMode
+            ? (selectable
+                ? <input type="checkbox" checked={checked} readOnly style={{ pointerEvents: 'none' }} />
+                : <span style={{ fontSize: 9, color: theme.colors.ashLight }} title="You can only group projects you manage">—</span>)
+            : <span style={{ fontSize: 10, color: theme.colors.ashLight, fontWeight: 600 }}>{serial}</span>}
+        </Cell>
+
+        <Cell style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: '100%' }}>
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: theme.colors.onyx, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }} title={p.name}>
+              {p.name}
+            </span>
+            {p.isActive === false && <InactiveBadge />}
+            {p.isOverdue && <OverdueBadge days={p.overdueDays} />}
+          </div>
+          <span style={{ fontSize: 9, color: theme.colors.ashLight }}>
+            {p.phaseCount} phase{p.phaseCount !== 1 ? 's' : ''} · {p.memberCount} member{p.memberCount !== 1 ? 's' : ''}
+          </span>
+        </Cell>
+
+        <Cell w={COL.owner}>
+          <span style={{ fontSize: 10, color: theme.colors.ash, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {p.ownerName || '—'}
+          </span>
+        </Cell>
+
+        <Cell w={COL.dates}>
+          {(() => {
+            const d = durationInfo(p.plannedStart, p.plannedEnd, p.status);
+            const tip = p.plannedStart ? `${fmtDate(p.plannedStart)} → ${fmtDate(p.plannedEnd)}` : 'No dates set';
+            return (
+              <span title={tip} style={{ fontSize: 10.5, color: theme.colors[d.colorKey], fontWeight: d.colorKey === 'danger' ? 700 : 500, whiteSpace: 'nowrap' }}>
+                {d.text}
+              </span>
+            );
+          })()}
+        </Cell>
+
+        <Cell w={COL.progress} center>
+          <ProgressBar value={p.progress || 0} />
+        </Cell>
+
+        <Cell w={COL.status} center style={{ flexDirection: 'column', gap: 2 }}>
+          <StatusBadge status={p.status} />
+          <EmptyStateHint emptyState={p.emptyState} theme={theme} />
+        </Cell>
+
+        {/* Delete moved OUT of the list into the project detail page (it now
+            lives inside the project, Manager-only). Only Reactivate remains
+            here, for an inactive project a Manager wants to bring back. */}
+        <Cell w={COL.actions} onClick={e => e.stopPropagation()}>
+          {!selectMode && p.myRole === 'Manager' && p.isActive === false && (
+            <IconBtn title="Reactivate project" onClick={(e) => handleReactivate(e, p)} style={{ width: 26, height: 26 }}>
+              <RotateCcw size={13} strokeWidth={2} />
+            </IconBtn>
+          )}
+        </Cell>
+      </ListRow>
+    );
+  };
+
+  // Full-width band that heads a group section.
+  const SectionHeader = ({ label, count, collapseKey, section }) => {
+    const g = section ? groupsById.get(section.groupId) : null;
+    const canManageGroup = section && (isAdmin || (g && String(g.createdBy) === String(currentUser?.userId)));
+    const isCollapsed = collapsed.has(collapseKey);
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
+        background: `${theme.colors.espresso}0f`, borderBottom: `1px solid ${theme.colors.border}`,
+        cursor: 'pointer', userSelect: 'none',
+      }} onClick={() => toggleCollapse(collapseKey)}>
+        {isCollapsed ? <ChevronRight size={14} strokeWidth={2.5} style={{ color: theme.colors.ash }} />
+                     : <ChevronDown  size={14} strokeWidth={2.5} style={{ color: theme.colors.ash }} />}
+        <FolderKanban size={13} strokeWidth={2} style={{ color: theme.colors.espresso }} />
+        <span style={{ fontSize: 12, fontWeight: 700, color: theme.colors.onyx }}>{label}</span>
+        <span style={{ fontSize: 11, color: theme.colors.ash }}>({count})</span>
+        {canManageGroup && (
+          <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }} onClick={e => e.stopPropagation()}>
+            <IconBtn title="Rename group" onClick={() => handleRenameGroup(section)} style={{ width: 22, height: 22 }}>
+              <Pencil size={12} strokeWidth={2} />
+            </IconBtn>
+            <IconBtnDanger title="Delete group" onClick={() => handleDeleteGroup(section)} style={{ width: 22, height: 22 }}>
+              <Trash2 size={12} strokeWidth={2} />
+            </IconBtnDanger>
+          </span>
+        )}
+      </div>
+    );
+  };
+
+  const hasGroups = groupSections.length > 0;
 
   return (
     <Wrap>
@@ -127,11 +321,57 @@ export default function ProjectListPage({ onSelectProject, onOpenTemplates }) {
           active={!!(filters.status || filters.active || filters.overdue)} title="Sort & filter projects" />
         <TopbarActions>
           <BtnGhost onClick={onOpenTemplates}>Templates</BtnGhost>
+          {/* Toggle grouping (select) mode — pick projects, then create/assign a group. */}
+          <BtnGhost onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
+            style={selectMode ? { borderColor: theme.colors.espresso, color: theme.colors.espresso } : undefined}>
+            {selectMode ? 'Cancel grouping' : 'Group projects'}
+          </BtnGhost>
           <BtnPrimary onClick={() => setShowCreate(true)}>
             + New Project
           </BtnPrimary>
         </TopbarActions>
       </Topbar>
+
+      {/* ── Grouping action bar — shown while picking projects ── */}
+      {selectMode && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 20px', background: `${theme.colors.espresso}0f`, borderBottom: `1px solid ${theme.colors.border}` }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: theme.colors.onyx }}>
+            {selectedIds.size} selected
+          </span>
+          <span style={{ fontSize: 11, color: theme.colors.ash }}>
+            Tick projects you manage, then create a new group or add them to an existing one.
+          </span>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto', flexWrap: 'wrap' }}>
+            <input
+              placeholder="New group name…"
+              value={newGroupName}
+              onChange={e => setNewGroupName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleCreateGroup()}
+              style={{ background: theme.colors.white, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '6px 10px', color: theme.colors.onyx, fontSize: 12, width: 170, outline: 'none' }}
+            />
+            <BtnPrimary onClick={handleCreateGroup} disabled={!newGroupName.trim() || selectedIds.size < 1}>
+              Create group
+            </BtnPrimary>
+
+            {groups.length > 0 && (
+              <>
+                <span style={{ fontSize: 11, color: theme.colors.ashLight }}>or</span>
+                <select value={targetGroupId} onChange={e => setTargetGroupId(e.target.value)}
+                  style={{ background: theme.colors.white, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '6px 10px', color: theme.colors.onyx, fontSize: 12, outline: 'none' }}>
+                  <option value="">Add to existing…</option>
+                  {groups.map(g => <option key={g.groupId} value={g.groupId}>{g.name}</option>)}
+                </select>
+                <BtnGhost onClick={handleAddToExisting} disabled={!targetGroupId || selectedIds.size < 1}>Add</BtnGhost>
+              </>
+            )}
+
+            <BtnGhost onClick={handleUngroupSelected} disabled={selectedIds.size < 1} title="Remove selected projects from their group">
+              Ungroup
+            </BtnGhost>
+          </div>
+        </div>
+      )}
 
       {showFilters && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 20px', background: theme.colors.greige, borderBottom: `1px solid ${theme.colors.border}` }}>
@@ -172,86 +412,30 @@ export default function ProjectListPage({ onSelectProject, onOpenTemplates }) {
 
         {visibleProjects.length > 0 && (
           <Table>
-            {/* cols is required now that TableHead is CSS Grid — without
-                it, this defaulted silently to the Phase/Activity table's
-                5-column GROUP_GRID_COLS template while actually rendering
-                7 columns of completely different widths, which is why
-                this page's header (and by extension its row alignment)
-                broke when TableHead was converted to grid. This page's
-                rows (ListRow/Cell) are still flexbox, not grid — that's
-                fine, both layout modes agree on exact pixel widths for a
-                fixed-width column, they just need to be told the SAME
-                widths, which this cols string now does. */}
-            <TableHead cols={`minmax(120px, 1fr) ${COL.owner}px ${COL.dates}px ${COL.progress}px ${COL.status}px ${COL.role}px ${COL.actions}px`}>
+            <TableHead cols={GRID_COLS}>
+              <TableHeadCell center>#</TableHeadCell>
               <TableHeadCell>Name</TableHeadCell>
               <TableHeadCell>Owner</TableHeadCell>
               <TableHeadCell>Duration</TableHeadCell>
               <TableHeadCell center>Progress</TableHeadCell>
               <TableHeadCell center>Status</TableHeadCell>
-              <TableHeadCell center>Role</TableHeadCell>
               <TableHeadCell />
             </TableHead>
 
-            {visibleProjects.map(p => (
-              <ListRow key={p.projectId} onClick={() => onSelectProject(p.projectId)} style={{ minHeight: 36, padding: '5px 10px' }}>
-                {/* Explicit 2-line stack (title row, meta row) rather than
-                    packing name+badges+meta all inline on one line — an
-                    unconstrained flex row of text spans doesn't reliably
-                    shrink/wrap, which is what caused rows to overflow their
-                    fixed height and visually bleed into the row below. */}
-                <Cell style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: '100%' }}>
-                    <span style={{ fontSize: 10.5, fontWeight: 700, color: theme.colors.onyx, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }} title={p.name}>
-                      {p.name}
-                    </span>
-                    {p.isActive === false && <InactiveBadge />}
-                    {p.isOverdue && <OverdueBadge days={p.overdueDays} />}
-                  </div>
-                  <span style={{ fontSize: 9, color: theme.colors.ashLight }}>
-                    {p.phaseCount} phase{p.phaseCount !== 1 ? 's' : ''} · {p.memberCount} member{p.memberCount !== 1 ? 's' : ''}
-                  </span>
-                </Cell>
-
-                <Cell w={COL.owner}>
-                  <span style={{ fontSize: 10, color: theme.colors.ash, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {p.ownerName || '—'}
-                  </span>
-                </Cell>
-
-                <Cell w={COL.dates}>
-                  <span style={{ fontSize: 9.5, color: theme.colors.ash, whiteSpace: 'nowrap' }}>
-                    {p.plannedStart ? `${fmtDate(p.plannedStart)} → ${fmtDate(p.plannedEnd)}` : '—'}
-                  </span>
-                </Cell>
-
-                <Cell w={COL.progress} center>
-                  <ProgressBar value={p.progress || 0} />
-                </Cell>
-
-                <Cell w={COL.status} center style={{ flexDirection: 'column', gap: 2 }}>
-                  <StatusBadge status={p.status} />
-                  <EmptyStateHint emptyState={p.emptyState} theme={theme} />
-                </Cell>
-
-                <Cell w={COL.role} center>
-                  <DepBadge as="span">{p.myRole}</DepBadge>
-                </Cell>
-
-                <Cell w={COL.actions} onClick={e => e.stopPropagation()}>
-                  {p.myRole === 'Manager' && (
-                    p.isActive === false ? (
-                      <IconBtn title="Reactivate project" onClick={(e) => handleReactivate(e, p)} style={{ width: 26, height: 26 }}>
-                        <RotateCcw size={13} strokeWidth={2} />
-                      </IconBtn>
-                    ) : (
-                      <IconBtnDanger title="Delete project" onClick={(e) => handleDelete(e, p)} style={{ width: 26, height: 26 }}>
-                        <Trash2 size={13} strokeWidth={2} />
-                      </IconBtnDanger>
-                    )
-                  )}
-                </Cell>
-              </ListRow>
+            {/* Group sections (collapsible), then the Ungrouped bucket. When
+                there are no groups at all, the projects render as a plain flat
+                list with no section headers. */}
+            {groupSections.map(section => (
+              <Fragment key={section.groupId}>
+                <SectionHeader label={section.name} count={section.projects.length} collapseKey={section.groupId} section={section} />
+                {!collapsed.has(section.groupId) && section.projects.map(renderRow)}
+              </Fragment>
             ))}
+
+            {hasGroups && ungrouped.length > 0 && (
+              <SectionHeader label="Ungrouped" count={ungrouped.length} collapseKey="ungrouped" section={null} />
+            )}
+            {(!hasGroups || !collapsed.has('ungrouped')) && ungrouped.map(renderRow)}
           </Table>
         )}
 

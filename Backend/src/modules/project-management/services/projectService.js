@@ -67,15 +67,15 @@ async function listProjects(userId, isAdmin = false, opts = {}) {
       SELECT p.project_id AS projectId, p.name, p.description, p.status,
              p.planned_start AS plannedStart, p.planned_end AS plannedEnd,
              p.created_at AS createdAt, pm.role AS myRole, p.is_active AS isActive,
+             p.group_id AS groupId, grp.name AS groupName,
              COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''), u.email) AS ownerName,
              -- Raw "past its own planned_end" only — status exclusion
              -- applied in JS below against the DERIVED status (see the
              -- matching comment in activityService.getActivitiesForPhase).
-             -- 'Cancelled' is the one value deriveProjectStatus never
-             -- overwrites, so p.status NOT IN ('Cancelled') here would have
-             -- been safe on its own, but 'Completed' is exactly as
-             -- transient as Phase/Activity's — never reliably written back
-             -- to this column — so it needed the same fix.
+             -- 'Hold'/'Closed' are the values deriveProjectStatus preserves,
+             -- but 'Completed' is transient (never reliably written back to
+             -- this column), so the overdue exclusion has to run against the
+             -- derived status in JS, not this raw column.
              CASE WHEN p.planned_end < CAST(GETDATE() AS DATE)
                   THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS plannedEndPassed,
              (SELECT COUNT(*) FROM pm_phases ph WHERE ph.project_id=p.project_id AND ph.is_deleted=0) AS phaseCount,
@@ -84,6 +84,7 @@ async function listProjects(userId, isAdmin = false, opts = {}) {
       FROM pm_projects p
       ${joinClause}
       LEFT JOIN auth_users u ON u.user_id=p.owner_id
+      LEFT JOIN pm_project_groups grp ON grp.group_id=p.group_id
       WHERE p.is_deleted=0 ${searchClause}
       ORDER BY p.is_active DESC, p.modified_at DESC
       ${paginationClause}
@@ -126,7 +127,7 @@ async function listProjects(userId, isAdmin = false, opts = {}) {
     // Gated on actually having a task somewhere underneath it — see the
     // matching comment in activityService.getActivitiesForPhase. emptyState
     // is NOT date-gated, unlike isOverdue — see phaseService's own comment.
-    p.isOverdue = Boolean(p.plannedEndPassed) && p.status !== 'Completed' && p.status !== 'Cancelled' && stats.hasTasks;
+    p.isOverdue = Boolean(p.plannedEndPassed) && p.status !== 'Completed' && p.status !== 'Closed' && stats.hasTasks;
     p.overdueDays = p.isOverdue ? getOverdueDays(p.plannedEnd) : 0;
     p.emptyState = stats.phaseCount === 0 ? 'noPhases' : (stats.hasTasks ? null : 'noTasks');
     delete p.plannedEndPassed;
@@ -173,11 +174,11 @@ async function getProject(projectId, userId, isAdmin = false) {
   const stats = await getProjectStats(projectId);
   const progress = stats.progress;
   proj.status = deriveProjectStatus(progress, proj.status, stats.hasActiveWork);
-  proj.isOverdue = Boolean(proj.plannedEndPassed) && proj.status !== 'Completed' && proj.status !== 'Cancelled' && stats.hasTasks;
+  proj.isOverdue = Boolean(proj.plannedEndPassed) && proj.status !== 'Completed' && proj.status !== 'Closed' && stats.hasTasks;
   proj.overdueDays = proj.isOverdue ? getOverdueDays(proj.plannedEnd) : 0;
   proj.emptyState = stats.phaseCount === 0 ? 'noPhases' : (stats.hasTasks ? null : 'noTasks');
   delete proj.plannedEndPassed;
-  const delayDays = (proj.status === 'Completed' || proj.status === 'Cancelled')
+  const delayDays = (proj.status === 'Completed' || proj.status === 'Closed')
     ? 0
     : await getProjectDelayDays(projectId, proj.plannedEnd);
   return { ...proj, members: membersResult.recordset, progress, delayDays };
@@ -233,6 +234,13 @@ async function updateProject(projectId, userId, body) {
   if (body.name !== undefined) {
     if (!body.name.trim()) { const e = new Error('Project name is required'); e.statusCode = 400; throw e; }
     if (body.name.trim().length > 200) { const e = new Error('Project name must be 200 characters or fewer'); e.statusCode = 400; throw e; }
+  }
+  // Only the manually-settable statuses can be written here. 'Completed' is
+  // automatic (deriveProjectStatus returns it at 100% progress), so it's not
+  // an accepted manual value — a Manager sets Active / Hold / Closed, and
+  // Completed shows on its own when the work is done.
+  if (body.status !== undefined && !['Active', 'Hold', 'Closed'].includes(body.status)) {
+    const e = new Error('Project status must be Active, Hold, or Closed.'); e.statusCode = 400; throw e;
   }
   if (body.plannedStart !== undefined || body.plannedEnd !== undefined) {
     const pool0 = await getPool();

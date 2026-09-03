@@ -146,6 +146,18 @@ export const templateApi = {
   removeTask:         (taskId)           => axiosInstance.delete(`/api/templates/tasks/${taskId}`).then(r => r.data),
 };
 
+// Project groups — folder-style grouping of projects on the home page.
+// Shared org-wide; assignment requires Manager-on-project, rename/delete
+// requires group creator or admin (enforced server-side).
+export const projectGroupApi = {
+  list:           ()                 => axiosInstance.get('/api/project-groups').then(r => r.data),
+  create:         (name, projectIds) => axiosInstance.post('/api/project-groups', { name, projectIds }).then(r => r.data),
+  rename:         (id, name)         => axiosInstance.patch(`/api/project-groups/${id}`, { name }).then(r => r.data),
+  delete:         (id)               => axiosInstance.delete(`/api/project-groups/${id}`).then(r => r.data),
+  // Move one project into a group (groupId) or out of it (null)
+  setProjectGroup:(projectId, groupId) => axiosInstance.patch(`/api/project-groups/project/${projectId}`, { groupId }).then(r => r.data),
+};
+
 // User search — used by MemberManager and assignee picker
 export const userApi = {
   search: (q, limit = 10) =>

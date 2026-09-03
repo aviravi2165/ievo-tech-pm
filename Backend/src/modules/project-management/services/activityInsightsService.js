@@ -40,7 +40,7 @@ async function getEligibleActivities() {
     INNER JOIN pm_phases            ph  ON ph.phase_id = a.phase_id AND ph.is_deleted = 0
     INNER JOIN pm_projects          p   ON p.project_id = ph.project_id AND p.is_deleted = 0
     WHERE a.is_deleted = 0
-      AND p.status NOT IN ('Completed', 'Cancelled')
+      AND p.status NOT IN ('Completed', 'Closed')
   `);
   return result.recordset;
 }

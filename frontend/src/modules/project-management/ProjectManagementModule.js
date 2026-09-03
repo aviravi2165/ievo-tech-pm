@@ -9,6 +9,7 @@ function ProjectListRoute({ currentUser }) {
   const navigate = useNavigate();
   return (
     <ProjectListPage
+      currentUser={currentUser}
       onSelectProject={(id) => navigate(`/projects/${id}`)}
       onOpenTemplates={() => navigate('/projects/templates')}
     />
