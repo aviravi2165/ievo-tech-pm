@@ -1192,6 +1192,31 @@ IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_projects_
 GO
 
 -- ────────────────────────────────────────────────────────────
+-- Project grouping — a shared, org-wide list of named groups. Folder-style:
+-- a project belongs to AT MOST ONE group, stored as the single group_id
+-- column on pm_projects (NULL = ungrouped). Moving a project to a new group
+-- just overwrites that column; deleting a group nulls it out (handled in
+-- projectGroupService, not via cascade, to avoid multiple-cascade-path
+-- issues on pm_projects).
+-- ────────────────────────────────────────────────────────────
+IF OBJECT_ID('dbo.pm_project_groups', 'U') IS NULL
+CREATE TABLE dbo.pm_project_groups (
+    group_id   int IDENTITY(1,1) NOT NULL,
+    name       nvarchar(120) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    created_by uniqueidentifier NULL,
+    created_at datetimeoffset DEFAULT sysdatetimeoffset() NOT NULL,
+    CONSTRAINT PK_pm_project_groups PRIMARY KEY (group_id),
+    CONSTRAINT FK_pm_project_groups_creator FOREIGN KEY (created_by) REFERENCES dbo.auth_users(user_id)
+);
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.pm_projects') AND name = 'group_id')
+    ALTER TABLE dbo.pm_projects ADD group_id int NULL;
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_pm_projects_group')
+    ALTER TABLE dbo.pm_projects ADD CONSTRAINT FK_pm_projects_group
+        FOREIGN KEY (group_id) REFERENCES dbo.pm_project_groups(group_id);
+GO
+
+-- ────────────────────────────────────────────────────────────
 -- pm_tasks.start_date — explicit planned start, distinct from created_at
 -- (when the row was inserted) and due_date (when it's due). The Timeline
 -- view previously used created_at as a task's bar-start, which made a

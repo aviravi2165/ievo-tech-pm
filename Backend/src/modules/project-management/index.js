@@ -7,6 +7,7 @@
  * via getIo() — no second Server instance created.
  */
 const projectRoutes  = require('./routes/projectRoutes');
+const projectGroupRoutes = require('./routes/projectGroupRoutes');
 const phaseRoutes    = require('./routes/phaseRoutes');
 const activityRoutes = require('./routes/activityRoutes');
 const taskRoutes     = require('./routes/taskRoutes');
@@ -16,6 +17,7 @@ const { startActivityInsightsCron } = require('./cron/activityInsightsCron');
 
 function register(app) {
   app.use('/api/projects',   projectRoutes);
+  app.use('/api/project-groups', projectGroupRoutes);
   app.use('/api/phases',     phaseRoutes);
   app.use('/api/activities', activityRoutes);
   app.use('/api/tasks',      taskRoutes);

@@ -67,6 +67,7 @@ async function listProjects(userId, isAdmin = false, opts = {}) {
       SELECT p.project_id AS projectId, p.name, p.description, p.status,
              p.planned_start AS plannedStart, p.planned_end AS plannedEnd,
              p.created_at AS createdAt, pm.role AS myRole, p.is_active AS isActive,
+             p.group_id AS groupId, grp.name AS groupName,
              COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''), u.email) AS ownerName,
              -- Raw "past its own planned_end" only — status exclusion
              -- applied in JS below against the DERIVED status (see the
@@ -83,6 +84,7 @@ async function listProjects(userId, isAdmin = false, opts = {}) {
       FROM pm_projects p
       ${joinClause}
       LEFT JOIN auth_users u ON u.user_id=p.owner_id
+      LEFT JOIN pm_project_groups grp ON grp.group_id=p.group_id
       WHERE p.is_deleted=0 ${searchClause}
       ORDER BY p.is_active DESC, p.modified_at DESC
       ${paginationClause}
