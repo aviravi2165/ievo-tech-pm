@@ -331,14 +331,14 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
           </Cell>
         ) : (
           // canManager && !isInactive — same permission the old dedicated
-          // "Rename" icon required. Clicking the name itself now opens the
-          // same inline rename input that icon used to open; no separate
-          // icon needed for an action whose target is already the thing
-          // you're clicking on.
+          // "Rename" icon required. DOUBLE-clicking the name opens the inline
+          // rename input (single click does nothing) — a single click was too
+          // easy to trigger by accident while just scanning the row, so it's
+          // gated behind an explicit double-click now.
           <Cell
-            onClick={(canManager && !isInactive) ? (e) => { e.stopPropagation(); setEditingName(true); } : undefined}
+            onDoubleClick={(canManager && !isInactive) ? (e) => { e.stopPropagation(); setEditingName(true); } : undefined}
             style={{ cursor: (canManager && !isInactive) ? 'pointer' : 'default' }}
-            title={(canManager && !isInactive) ? 'Click to rename' : undefined}
+            title={(canManager && !isInactive) ? 'Double-click to rename' : undefined}
           >
             <TaskName title={task.name} style={{
               overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',

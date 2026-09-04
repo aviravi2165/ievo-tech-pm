@@ -463,15 +463,17 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
                     </span>
                   </TableHeadCell>
                   {/* Column order: Weightage | Duration | Progress | Status |
-                      Participants. All centered — header text-align:center +
-                      cell justifyContent:center within the same fixed-width
-                      grid column. Name/Activity/Task stay left-aligned since
-                      they carry the expand chevron. */}
+                      Owner. All centered — header text-align:center + cell
+                      justifyContent:center within the same fixed-width grid
+                      column. Name/Activity/Task stay left-aligned since they
+                      carry the expand chevron. The "Owner" cell rolls up
+                      everyone involved at/under the row (see managerNames in
+                      phaseService/activityService). */}
                   <TableHeadCell w={GROUP_COL.weight} center>Weightage</TableHeadCell>
                   <TableHeadCell w={GROUP_COL.dates} center>Duration</TableHeadCell>
                   <TableHeadCell w={GROUP_COL.progress} center>Progress</TableHeadCell>
                   <TableHeadCell w={GROUP_COL.status} center>Status</TableHeadCell>
-                  <TableHeadCell w={GROUP_COL.manager} center>Participants</TableHeadCell>
+                  <TableHeadCell w={GROUP_COL.manager} center>Owner</TableHeadCell>
                   {/* No trailing spacer needed anymore — RowActions is
                       position:absolute now, so it never consumes flex
                       layout space and can't affect where these columns

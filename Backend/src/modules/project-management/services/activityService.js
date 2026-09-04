@@ -115,11 +115,22 @@ async function getActivitiesForPhase(phaseId, userId, isAdmin = false) {
                SELECT COUNT(*) FROM pm_activity_members WHERE activity_id = a.activity_id
              ) AS memberCount,
              -- Activity Manager names, for a quick "who to ping" chip
+             -- Participants in the activity's "Owner" cell = its own Managers
+             -- PLUS everyone assigned to a task under it (task assignees
+             -- bubble up here). Deduped by user via UNION.
              (
-               SELECT STRING_AGG(COALESCE(NULLIF(TRIM(CONCAT(mu.first_name,' ',mu.last_name)),''), mu.email), ', ')
-               FROM pm_activity_members mgr
-               INNER JOIN auth_users mu ON mu.user_id = mgr.user_id
-               WHERE mgr.activity_id = a.activity_id AND mgr.role = 'Manager'
+               SELECT STRING_AGG(nm, ', ') FROM (
+                 SELECT DISTINCT COALESCE(NULLIF(TRIM(CONCAT(au.first_name,' ',au.last_name)),''), au.email) AS nm
+                 FROM auth_users au
+                 INNER JOIN (
+                   SELECT user_id FROM pm_activity_members
+                     WHERE activity_id = a.activity_id AND role = 'Manager'
+                   UNION
+                   SELECT ta.user_id FROM pm_task_assignees ta
+                     INNER JOIN pm_tasks pt ON pt.task_id = ta.task_id
+                     WHERE pt.activity_id = a.activity_id AND pt.is_active = 1
+                 ) ids ON ids.user_id = au.user_id
+               ) names
              ) AS managerNames
       FROM pm_activities a
       LEFT JOIN auth_users u ON u.user_id = a.owner_id
