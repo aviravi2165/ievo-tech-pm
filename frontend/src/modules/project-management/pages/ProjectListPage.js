@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback, Fragment } from 'react';
 import { useTheme } from '@emotion/react';
-import { FolderKanban, RotateCcw, Trash2, ChevronDown, ChevronRight, Pencil } from 'lucide-react';
+import { FolderKanban, RotateCcw, Trash2, ChevronDown, ChevronRight, Pencil, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
 import StatusBadge, { InactiveBadge, statusLabel } from '../components/StatusBadge';
 import EmptyStateHint from '../components/EmptyStateHint';
 import ProgressBar from '../components/ProgressBar';
@@ -14,11 +14,14 @@ import { Wrap, Empty, BtnPrimary, BtnGhost, DepBadge, IconBtn, IconBtnDanger } f
 import { useSortFilter } from '../../shared/hooks/useSortFilter';
 import { SortSelect, FilterSelect, FilterToggle } from '../../shared/components/TableControls';
 import HoverTip from '../../shared/components/HoverTip';
+import { truncateName } from '../utils/truncateName';
 
 // Role column removed (#6). Added a narrow serial-number column (#2) at the
 // front instead. dates widened slightly since it now carries a phrase
 // ("3 weeks left") rather than a raw date range.
-const COL = { sno: 40, owner: 105, dates: 120, progress: 100, status: 96, actions: 28 };
+// sno widened from 40 → 62 to fit the "collapse/expand all" toggle button
+// sitting to the LEFT of the "S.no" label in the header.
+const COL = { sno: 62, owner: 105, dates: 120, progress: 100, status: 96, actions: 28 };
 const GRID_COLS = `${COL.sno}px minmax(120px, 1fr) ${COL.owner}px ${COL.dates}px ${COL.progress}px ${COL.status}px ${COL.actions}px`;
 
 function parseLocalDate(d) {
@@ -35,10 +38,14 @@ function fmtDate(d) {
 
 // Duration column (#1): show the project's PLANNED duration in whole weeks
 // (start → end), e.g. 1 Jun → 1 Aug ≈ "8 weeks". If it has run past its
-// planned end and isn't finished yet, append the overrun, e.g.
-// "8 weeks (4 days delay)". The actual dates go in the hover tooltip.
+// planned end and isn't finished yet, ALSO return the overrun as a compact
+// `delay` string shown on its own line under the duration:
+//   - 7 days or fewer  → days only,        e.g. "-3d"
+//   - more than 7 days → weeks + days,     e.g. "-1w 2d" (or "-2w" when it
+//     lands on a whole number of weeks)
+// The actual dates go in the hover tooltip. `delay` is null when on-time.
 function durationInfo(plannedStart, plannedEnd, status) {
-  if (!plannedStart || !plannedEnd) return { text: '—', colorKey: 'ashLight' };
+  if (!plannedStart || !plannedEnd) return { text: '—', colorKey: 'ashLight', delay: null };
   const start = parseLocalDate(plannedStart);
   const end   = parseLocalDate(plannedEnd);
   const totalDays = Math.round((end - start) / 86400000);
@@ -53,14 +60,18 @@ function durationInfo(plannedStart, plannedEnd, status) {
     const now = new Date(); now.setHours(0, 0, 0, 0);
     const overdueDays = Math.round((now - end) / 86400000);
     if (overdueDays > 0) {
-      const dw = Math.floor(overdueDays / 7);
-      const delay = overdueDays < 7
-        ? `${overdueDays} day${overdueDays === 1 ? '' : 's'} delay`
-        : `${dw} week${dw === 1 ? '' : 's'} delay`;
-      return { text: `${base} (${delay})`, colorKey: 'danger' };
+      let delay;
+      if (overdueDays <= 7) {
+        delay = `-${overdueDays}d`;
+      } else {
+        const w = Math.floor(overdueDays / 7);
+        const d = overdueDays % 7;
+        delay = d > 0 ? `-${w}w ${d}d` : `-${w}w`;
+      }
+      return { text: base, colorKey: 'ash', delay };
     }
   }
-  return { text: base, colorKey: 'ash' };
+  return { text: base, colorKey: 'ash', delay: null };
 }
 
 export default function ProjectListPage({ currentUser, onSelectProject, onOpenTemplates }) {
@@ -230,7 +241,7 @@ export default function ProjectListPage({ currentUser, onSelectProject, onOpenTe
         <Cell style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: '100%' }}>
             <span style={{ fontSize: 10.5, fontWeight: 700, color: theme.colors.onyx, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }} title={p.name}>
-              {p.name}
+              {truncateName(p.name)}
             </span>
             {p.isActive === false && <InactiveBadge />}
             {p.isOverdue && <OverdueBadge days={p.overdueDays} />}
@@ -262,12 +273,24 @@ export default function ProjectListPage({ currentUser, onSelectProject, onOpenTe
                 <div style={{ borderTop: '1px solid rgba(255,255,255,0.15)', paddingTop: 5, display: 'flex', justifyContent: 'space-between', gap: 14 }}>
                   <span style={{ opacity: 0.7 }}>Duration</span><span style={{ fontWeight: 600 }}>{d.text}</span>
                 </div>
+                {d.delay && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 14 }}>
+                    <span style={{ opacity: 0.7 }}>Delay</span><span style={{ fontWeight: 600 }}>{d.delay}</span>
+                  </div>
+                )}
               </div>
             ) : 'No dates set';
             return (
               <HoverTip content={tip}>
-                <span style={{ fontSize: 10.5, color: theme.colors[d.colorKey], fontWeight: d.colorKey === 'danger' ? 700 : 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {d.text}
+                <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1, minWidth: 0 }}>
+                  <span style={{ fontSize: 10.5, color: theme.colors[d.colorKey], fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>
+                    {d.text}
+                  </span>
+                  {d.delay && (
+                    <span style={{ fontSize: 9.5, color: theme.colors.danger, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                      ({d.delay})
+                    </span>
+                  )}
                 </span>
               </HoverTip>
             );
@@ -298,7 +321,7 @@ export default function ProjectListPage({ currentUser, onSelectProject, onOpenTe
   };
 
   // Full-width band that heads a group section.
-  const SectionHeader = ({ label, count, collapseKey, section }) => {
+  const SectionHeader = ({ label, count, collapseKey, section, serial }) => {
     const g = section ? groupsById.get(section.groupId) : null;
     const canManageGroup = section && (isAdmin || (g && String(g.createdBy) === String(currentUser?.userId)));
     const isCollapsed = collapsed.has(collapseKey);
@@ -310,7 +333,18 @@ export default function ProjectListPage({ currentUser, onSelectProject, onOpenTe
       }} onClick={() => toggleCollapse(collapseKey)}>
         {isCollapsed ? <ChevronRight size={14} strokeWidth={2.5} style={{ color: theme.colors.ash }} />
                      : <ChevronDown  size={14} strokeWidth={2.5} style={{ color: theme.colors.ash }} />}
-        <FolderKanban size={13} strokeWidth={2} style={{ color: theme.colors.espresso }} />
+        {/* Group serial number (1, 2, 3…) in place of the folder icon, so the
+            count of groups reads at a glance. The "Ungrouped" bucket has no
+            serial (it isn't a numbered group) and keeps the folder icon. */}
+        {serial != null ? (
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            minWidth: 14, flexShrink: 0,
+            color: theme.colors.espresso, fontSize: 12, fontWeight: 700,
+          }}>{serial}</span>
+        ) : (
+          <FolderKanban size={13} strokeWidth={2} style={{ color: theme.colors.espresso }} />
+        )}
         <span style={{ fontSize: 12, fontWeight: 700, color: theme.colors.onyx }}>{label}</span>
         <span style={{ fontSize: 11, color: theme.colors.ash }}>({count})</span>
         {canManageGroup && (
@@ -328,6 +362,17 @@ export default function ProjectListPage({ currentUser, onSelectProject, onOpenTe
   };
 
   const hasGroups = groupSections.length > 0;
+
+  // Every collapsible section key on screen — each group section, plus the
+  // "Ungrouped" bucket (which only renders its own header when groups exist).
+  // Drives the single expand-all / collapse-all toggle in the header.
+  const allCollapseKeys = useMemo(() => {
+    const keys = groupSections.map(s => s.groupId);
+    if (hasGroups && ungrouped.length > 0) keys.push('ungrouped');
+    return keys;
+  }, [groupSections, hasGroups, ungrouped]);
+  const allCollapsed = allCollapseKeys.length > 0 && allCollapseKeys.every(k => collapsed.has(k));
+  const toggleAll = () => setCollapsed(allCollapsed ? new Set() : new Set(allCollapseKeys));
 
   return (
     <Wrap>
@@ -444,7 +489,25 @@ export default function ProjectListPage({ currentUser, onSelectProject, onOpenTe
         {visibleProjects.length > 0 && (
           <Table>
             <TableHead cols={GRID_COLS}>
-              <TableHeadCell center>#</TableHeadCell>
+              <TableHeadCell center>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
+                  {allCollapseKeys.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={toggleAll}
+                      title={allCollapsed ? 'Expand all groups' : 'Collapse all groups'}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        width: 18, height: 18, padding: 0, cursor: 'pointer',
+                        background: 'none', border: 'none', color: theme.colors.ash, flexShrink: 0,
+                      }}
+                    >
+                      {allCollapsed ? <ChevronsUpDown size={14} strokeWidth={2.5} /> : <ChevronsDownUp size={14} strokeWidth={2.5} />}
+                    </button>
+                  )}
+                  S.no
+                </div>
+              </TableHeadCell>
               <TableHeadCell>Name</TableHeadCell>
               <TableHeadCell>Owner</TableHeadCell>
               <TableHeadCell>Duration</TableHeadCell>
@@ -456,9 +519,9 @@ export default function ProjectListPage({ currentUser, onSelectProject, onOpenTe
             {/* Group sections (collapsible), then the Ungrouped bucket. When
                 there are no groups at all, the projects render as a plain flat
                 list with no section headers. */}
-            {groupSections.map(section => (
+            {groupSections.map((section, idx) => (
               <Fragment key={section.groupId}>
-                <SectionHeader label={section.name} count={section.projects.length} collapseKey={section.groupId} section={section} />
+                <SectionHeader label={section.name} count={section.projects.length} collapseKey={section.groupId} section={section} serial={idx + 1} />
                 {!collapsed.has(section.groupId) && section.projects.map(renderRow)}
               </Fragment>
             ))}

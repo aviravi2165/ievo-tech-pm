@@ -118,7 +118,7 @@ async function getActivitiesForPhase(phaseId, userId, isAdmin = false) {
              -- Participants in the activity's "Owner" cell = its own Managers
              -- PLUS everyone assigned to a task under it (task assignees
              -- bubble up here). Deduped by user via UNION.
-             (
+             COALESCE((
                SELECT STRING_AGG(nm, ', ') FROM (
                  SELECT DISTINCT COALESCE(NULLIF(TRIM(CONCAT(au.first_name,' ',au.last_name)),''), au.email) AS nm
                  FROM auth_users au
@@ -131,12 +131,18 @@ async function getActivitiesForPhase(phaseId, userId, isAdmin = false) {
                      WHERE pt.activity_id = a.activity_id AND pt.is_active = 1
                  ) ids ON ids.user_id = au.user_id
                ) names
+             ),
+             -- Fallback: an activity with nobody assigned yet defaults its
+             -- Owner to the PROJECT owner (its creator) rather than "None".
+             -- Editable as normal — adding real participants replaces this.
+             COALESCE(NULLIF(TRIM(CONCAT(pOwner.first_name,' ',pOwner.last_name)),''), pOwner.email)
              ) AS managerNames
       FROM pm_activities a
       LEFT JOIN auth_users u ON u.user_id = a.owner_id
       LEFT JOIN pm_activity_threads pat ON pat.activity_id = a.activity_id
       INNER JOIN pm_phases parentPh ON parentPh.phase_id = a.phase_id
       INNER JOIN pm_projects parentProj ON parentProj.project_id = parentPh.project_id
+      LEFT JOIN auth_users pOwner ON pOwner.user_id = parentProj.owner_id
       WHERE a.phase_id = @phaseId AND a.is_deleted = 0
       ORDER BY a.is_active DESC, a.display_order
     `);

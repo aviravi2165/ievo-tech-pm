@@ -45,6 +45,18 @@ async function getOrgGroupMembers(orgGroupId) {
 async function createOrgGroup(name, description, userId, memberIds = []) {
   if (!name?.trim()) { const e = new Error('Team name is required'); e.statusCode = 400; throw e; }
   const pool = await getPool();
+  // Team names must be unique among ACTIVE teams (case-insensitive) — the
+  // "team name should be unique" requirement. A soft-deleted (is_active=0)
+  // team never blocks reuse of its name. This is an app-level check, not a DB
+  // unique index, because existing data may already hold duplicates that a
+  // constraint couldn't be added over.
+  const dupe = await pool.request()
+    .input('name', sql.VarChar(150), name.trim())
+    .query(`SELECT TOP 1 org_group_id FROM org_groups WHERE is_active = 1 AND LOWER(name) = LOWER(@name)`);
+  if (dupe.recordset.length) {
+    const e = new Error(`A team named "${name.trim()}" already exists. Pick a different name.`);
+    e.statusCode = 409; throw e;
+  }
   const result = await pool.request()
     .input('name',        sql.VarChar(150),      name.trim())
     .input('description', sql.NVarChar(500),     description || null)
@@ -80,6 +92,19 @@ async function updateOrgGroup(orgGroupId, data) {
   if (!keys.length) return { orgGroupId };
 
   const pool = await getPool();
+  // Same uniqueness rule as create — but exclude this team itself so saving
+  // an unchanged name (or only editing the description) doesn't false-trip.
+  if (fields.name !== undefined) {
+    const dupe = await pool.request()
+      .input('name', sql.VarChar(150), fields.name)
+      .input('orgGroupId', sql.Int, orgGroupId)
+      .query(`SELECT TOP 1 org_group_id FROM org_groups
+              WHERE is_active = 1 AND org_group_id <> @orgGroupId AND LOWER(name) = LOWER(@name)`);
+    if (dupe.recordset.length) {
+      const e = new Error(`A team named "${fields.name}" already exists. Pick a different name.`);
+      e.statusCode = 409; throw e;
+    }
+  }
   const req  = pool.request().input('orgGroupId', sql.Int, orgGroupId);
   const types = { name: sql.VarChar(150), description: sql.NVarChar(500) };
   const set = keys.map((k, i) => { const ph = `f${i}`; req.input(ph, types[k], fields[k]); return `${k}=@${ph}`; }).join(', ');

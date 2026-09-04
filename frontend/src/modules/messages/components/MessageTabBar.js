@@ -31,12 +31,10 @@ export default function MessageTabBar({ tab, onTabChange, isSuperAdmin = false }
         Groups
         {groupUnreadCount > 0 && <Badge>{groupUnreadCount > 99 ? '99+' : groupUnreadCount}</Badge>}
       </NavBtn>
-      {/* Teams — admin-managed org-wide groups (e.g. "Production Team"),
-          browsable read-only here by everyone; creating/editing is admin
-          only (gated inside TeamManager itself via isAdmin). */}
-      <NavBtn type="button" active={tab === 'teams'} onClick={() => onTabChange('teams')}>
-        Teams
-      </NavBtn>
+      {/* Teams tab is admin-only now. Normal users don't get a Teams browser
+          tab — they still USE teams by picking one as a recipient in the New
+          Message composer (Inbox → compose → "Teams" section of the dropdown).
+          Only the super admin (branch above) sees the Teams management tab. */}
     </TabBarNav>
   );
 }
