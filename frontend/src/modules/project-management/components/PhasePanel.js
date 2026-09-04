@@ -811,13 +811,13 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
                   Activity
                 </span>
               </TableHeadCell>
-              {/* Order: Weightage | Duration | Progress | Status |
-                  Participants — see the Phase header in ProjectDetailPage.js. */}
+              {/* Order: Weightage | Duration | Progress | Status | Owner —
+                  see the Phase header in ProjectDetailPage.js. */}
               <TableHeadCell w={GROUP_COL.weight} center>Weightage</TableHeadCell>
               <TableHeadCell w={GROUP_COL.dates} center>Duration</TableHeadCell>
               <TableHeadCell w={GROUP_COL.progress} center>Progress</TableHeadCell>
               <TableHeadCell w={GROUP_COL.status} center>Status</TableHeadCell>
-              <TableHeadCell w={GROUP_COL.manager} center>Participants</TableHeadCell>
+              <TableHeadCell w={GROUP_COL.manager} center>Owner</TableHeadCell>
             </TableHead>
           )}
           {!loading && visibleActivities.map(act => (

@@ -82,11 +82,30 @@ async function getPhasesForProject(projectId, userId, isAdmin = false) {
              (
                SELECT COUNT(*) FROM pm_phase_members WHERE phase_id = ph.phase_id
              ) AS memberCount,
+             -- Participants shown in the phase's "Owner" cell = everyone
+             -- involved AT or UNDER this phase: the phase's own Managers,
+             -- PLUS every Activity Manager and every task assignee beneath
+             -- it — so an activity's people bubble up to the phase (the
+             -- requested "activity ke participants phase me bhi hone chaiye").
+             -- UNION dedups by user; then we resolve names once.
              (
-               SELECT STRING_AGG(COALESCE(NULLIF(TRIM(CONCAT(mu.first_name,' ',mu.last_name)),''), mu.email), ', ')
-               FROM pm_phase_members mgr
-               INNER JOIN auth_users mu ON mu.user_id = mgr.user_id
-               WHERE mgr.phase_id = ph.phase_id AND mgr.role = 'Manager'
+               SELECT STRING_AGG(nm, ', ') FROM (
+                 SELECT DISTINCT COALESCE(NULLIF(TRIM(CONCAT(pu.first_name,' ',pu.last_name)),''), pu.email) AS nm
+                 FROM auth_users pu
+                 INNER JOIN (
+                   SELECT user_id FROM pm_phase_members
+                     WHERE phase_id = ph.phase_id AND role = 'Manager'
+                   UNION
+                   SELECT am.user_id FROM pm_activity_members am
+                     INNER JOIN pm_activities pa ON pa.activity_id = am.activity_id
+                     WHERE pa.phase_id = ph.phase_id AND am.role = 'Manager' AND pa.is_deleted = 0
+                   UNION
+                   SELECT ta.user_id FROM pm_task_assignees ta
+                     INNER JOIN pm_tasks pt   ON pt.task_id = ta.task_id
+                     INNER JOIN pm_activities pa2 ON pa2.activity_id = pt.activity_id
+                     WHERE pa2.phase_id = ph.phase_id AND pt.is_active = 1 AND pa2.is_deleted = 0
+                 ) ids ON ids.user_id = pu.user_id
+               ) names
              ) AS managerNames
       FROM pm_phases ph
       INNER JOIN pm_projects parentProj ON parentProj.project_id = ph.project_id

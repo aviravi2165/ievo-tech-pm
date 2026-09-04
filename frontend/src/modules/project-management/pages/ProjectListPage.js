@@ -13,6 +13,7 @@ import { Topbar, TopbarH1, TopbarActions, List } from '../styles/ProjectListPage
 import { Wrap, Empty, BtnPrimary, BtnGhost, DepBadge, IconBtn, IconBtnDanger } from '../styles/shared.styles';
 import { useSortFilter } from '../../shared/hooks/useSortFilter';
 import { SortSelect, FilterSelect, FilterToggle } from '../../shared/components/TableControls';
+import HoverTip from '../../shared/components/HoverTip';
 
 // Role column removed (#6). Added a narrow serial-number column (#2) at the
 // front instead. dates widened slightly since it now carries a phrase
@@ -32,20 +33,34 @@ function fmtDate(d) {
   return dt.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-// Duration column (#3): show how much time is LEFT ("3 weeks left") instead
-// of the raw start→end range; the actual dates go in the hover tooltip.
+// Duration column (#1): show the project's PLANNED duration in whole weeks
+// (start → end), e.g. 1 Jun → 1 Aug ≈ "8 weeks". If it has run past its
+// planned end and isn't finished yet, append the overrun, e.g.
+// "8 weeks (4 days delay)". The actual dates go in the hover tooltip.
 function durationInfo(plannedStart, plannedEnd, status) {
-  if (status === 'Completed') return { text: 'Completed', colorKey: 'ash' };
-  if (status === 'Closed')    return { text: 'Closed',    colorKey: 'ash' };
-  if (!plannedEnd)            return { text: '—',         colorKey: 'ashLight' };
-  const end = parseLocalDate(plannedEnd);
-  const now = new Date(); now.setHours(0, 0, 0, 0);
-  const days = Math.round((end - now) / 86400000);
-  if (days < 0)   return { text: `${Math.ceil(Math.abs(days) / 7)}w overdue`, colorKey: 'danger' };
-  if (days === 0) return { text: 'Due today', colorKey: 'warning' };
-  if (days < 7)   return { text: `${days} day${days === 1 ? '' : 's'} left`, colorKey: 'ash' };
-  const weeks = Math.ceil(days / 7);
-  return { text: `${weeks} week${weeks === 1 ? '' : 's'} left`, colorKey: 'ash' };
+  if (!plannedStart || !plannedEnd) return { text: '—', colorKey: 'ashLight' };
+  const start = parseLocalDate(plannedStart);
+  const end   = parseLocalDate(plannedEnd);
+  const totalDays = Math.round((end - start) / 86400000);
+  // Whole weeks the span covers (floor: 61 days → 8 weeks, not 9), min 1 so a
+  // sub-week project still reads as "1 week" rather than "0 weeks".
+  const weeks = Math.max(1, Math.floor(totalDays / 7));
+  const base  = `${weeks} week${weeks === 1 ? '' : 's'}`;
+
+  // A delay only matters for still-running work — a Completed/Closed project
+  // isn't "late" anymore, so it just shows its planned duration.
+  if (status !== 'Completed' && status !== 'Closed') {
+    const now = new Date(); now.setHours(0, 0, 0, 0);
+    const overdueDays = Math.round((now - end) / 86400000);
+    if (overdueDays > 0) {
+      const dw = Math.floor(overdueDays / 7);
+      const delay = overdueDays < 7
+        ? `${overdueDays} day${overdueDays === 1 ? '' : 's'} delay`
+        : `${dw} week${dw === 1 ? '' : 's'} delay`;
+      return { text: `${base} (${delay})`, colorKey: 'danger' };
+    }
+  }
+  return { text: base, colorKey: 'ash' };
 }
 
 export default function ProjectListPage({ currentUser, onSelectProject, onOpenTemplates }) {
@@ -234,11 +249,27 @@ export default function ProjectListPage({ currentUser, onSelectProject, onOpenTe
         <Cell w={COL.dates}>
           {(() => {
             const d = durationInfo(p.plannedStart, p.plannedEnd, p.status);
-            const tip = p.plannedStart ? `${fmtDate(p.plannedStart)} → ${fmtDate(p.plannedEnd)}` : 'No dates set';
+            const hasDates = p.plannedStart && p.plannedEnd;
+            const tip = hasDates ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                <div style={{ fontWeight: 700, opacity: 0.85, letterSpacing: '.04em', textTransform: 'uppercase', fontSize: 9.5 }}>Timeline</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 14 }}>
+                  <span style={{ opacity: 0.7 }}>Start</span><span style={{ fontWeight: 600 }}>{fmtDate(p.plannedStart)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 14 }}>
+                  <span style={{ opacity: 0.7 }}>End</span><span style={{ fontWeight: 600 }}>{fmtDate(p.plannedEnd)}</span>
+                </div>
+                <div style={{ borderTop: '1px solid rgba(255,255,255,0.15)', paddingTop: 5, display: 'flex', justifyContent: 'space-between', gap: 14 }}>
+                  <span style={{ opacity: 0.7 }}>Duration</span><span style={{ fontWeight: 600 }}>{d.text}</span>
+                </div>
+              </div>
+            ) : 'No dates set';
             return (
-              <span title={tip} style={{ fontSize: 10.5, color: theme.colors[d.colorKey], fontWeight: d.colorKey === 'danger' ? 700 : 500, whiteSpace: 'nowrap' }}>
-                {d.text}
-              </span>
+              <HoverTip content={tip}>
+                <span style={{ fontSize: 10.5, color: theme.colors[d.colorKey], fontWeight: d.colorKey === 'danger' ? 700 : 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {d.text}
+                </span>
+              </HoverTip>
             );
           })()}
         </Cell>
