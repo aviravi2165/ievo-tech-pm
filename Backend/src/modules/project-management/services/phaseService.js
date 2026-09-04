@@ -88,7 +88,7 @@ async function getPhasesForProject(projectId, userId, isAdmin = false) {
              -- it — so an activity's people bubble up to the phase (the
              -- requested "activity ke participants phase me bhi hone chaiye").
              -- UNION dedups by user; then we resolve names once.
-             (
+             COALESCE((
                SELECT STRING_AGG(nm, ', ') FROM (
                  SELECT DISTINCT COALESCE(NULLIF(TRIM(CONCAT(pu.first_name,' ',pu.last_name)),''), pu.email) AS nm
                  FROM auth_users pu
@@ -106,9 +106,15 @@ async function getPhasesForProject(projectId, userId, isAdmin = false) {
                      WHERE pa2.phase_id = ph.phase_id AND pt.is_active = 1 AND pa2.is_deleted = 0
                  ) ids ON ids.user_id = pu.user_id
                ) names
+             ),
+             -- Fallback: a phase with nobody assigned yet defaults its Owner
+             -- to the PROJECT owner (its creator) rather than showing "None".
+             -- Editable as normal — adding real participants replaces this.
+             COALESCE(NULLIF(TRIM(CONCAT(ownerU.first_name,' ',ownerU.last_name)),''), ownerU.email)
              ) AS managerNames
       FROM pm_phases ph
       INNER JOIN pm_projects parentProj ON parentProj.project_id = ph.project_id
+      LEFT JOIN auth_users ownerU ON ownerU.user_id = parentProj.owner_id
       WHERE ph.project_id=@projectId AND ph.is_deleted=0
       ORDER BY ph.is_active DESC, ph.display_order
     `);

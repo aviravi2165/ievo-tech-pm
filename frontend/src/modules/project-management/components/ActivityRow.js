@@ -10,6 +10,7 @@ import UserSearchInput from './UserSearchInput';
 import ChatButton from './ChatButton';
 import ParticipantsPanel from './ParticipantsPanel';
 import { aggregateAssignees } from '../utils/aggregateAssignees';
+import { truncateName } from '../utils/truncateName';
 import { activityApi } from '../api/projectApi';
 import { showToast, apiErrorMessage } from '../hooks/toastStore';
 import { GroupRow, RowActions, COL, TASK_GRID_COLS, TableHead, TableHeadCell } from '../styles/Table.styles';
@@ -410,7 +411,7 @@ export default function ActivityRow({
             style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s', flexShrink: 0, color: theme.colors.ash }} />
 
           <ActivityName style={{ opacity: (isBlocked || isInactive) ? 0.5 : 1 }} title={activity.name}>
-            {activity.name}
+            {truncateName(activity.name, 24)}
           </ActivityName>
 
           {activity.dependsOn?.length > 0 && (
