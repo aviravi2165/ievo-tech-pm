@@ -49,6 +49,17 @@ function addDays(date, days) {
   return d;
 }
 
+// Templates predate the now-required weightage on Phase/Activity/Task, so
+// they carry none. Split 100% evenly across N siblings, the LAST one
+// absorbing the rounding remainder so each set totals exactly 100.00
+// (e.g. 3 siblings → 33.33, 33.33, 33.34). Shared by all three levels below.
+function evenWeightage(index, count) {
+  const base = Math.floor(10000 / count) / 100;
+  return index === count - 1
+    ? Math.round((100 - base * (count - 1)) * 100) / 100
+    : base;
+}
+
 // ── Template CRUD (admin) ───────────────────────────────────────────────────
 
 async function listTemplates() {
@@ -353,12 +364,15 @@ async function instantiateTemplate(templateId, projectId, userId) {
   // "blocked by an unresolved dependency". Deferring all dependency wiring
   // to a second pass, once everything already exists, avoids that entirely.
   const phaseIds = [];
-  for (const tplPhase of template.phases) {
+  const phaseCount = template.phases.length;
+  for (const [phaseIndex, tplPhase] of template.phases.entries()) {
     const phaseStart = addDays(projectStart, tplPhase.startOffsetDays);
     const phaseEnd = addDays(phaseStart, tplPhase.durationDays);
     const phase = await phaseService.createPhase(projectId, userId, {
       name: tplPhase.name, description: tplPhase.description,
       plannedStart: toISODate(phaseStart), plannedEnd: toISODate(phaseEnd),
+      // Templates carry no weightage — distribute evenly so the project totals 100%.
+      weightage: evenWeightage(phaseIndex, phaseCount),
     });
     phaseIds.push(phase.phaseId);
 
@@ -367,12 +381,8 @@ async function instantiateTemplate(templateId, projectId, userId) {
     for (const [activityIndex, tplActivity] of tplPhase.activities.entries()) {
       const actStart = addDays(phaseStart, tplActivity.startOffsetDays);
       const actEnd = addDays(actStart, tplActivity.durationDays);
-      // Templates predate required Activity weightage. Give each generated
-      // Activity an equal share, with the final Activity receiving any
-      // rounding remainder so the Phase totals exactly 100%.
-      const weightage = activityIndex === activityCount - 1
-        ? Math.round((100 - (Math.floor(10000 / activityCount) / 100) * (activityCount - 1)) * 100) / 100
-        : Math.floor(10000 / activityCount) / 100;
+      // Equal share across the phase's activities (templates carry none).
+      const weightage = evenWeightage(activityIndex, activityCount);
       const activity = await activityService.createActivity(phase.phaseId, projectId, userId, {
         name: tplActivity.name, description: tplActivity.description,
         plannedStart: toISODate(actStart), plannedEnd: toISODate(actEnd),
@@ -381,11 +391,14 @@ async function instantiateTemplate(templateId, projectId, userId) {
       activityIds.push(activity.activityId);
 
       const taskIds = [];
-      for (const tplTask of tplActivity.tasks) {
+      const taskCount = tplActivity.tasks.length;
+      for (const [taskIndex, tplTask] of tplActivity.tasks.entries()) {
         const dueDate = addDays(actStart, tplTask.dueOffsetDays);
         const task = await taskService.createTask(activity.activityId, projectId, userId, {
           name: tplTask.name, description: tplTask.description,
           priority: tplTask.priority, dueDate: toISODate(dueDate),
+          // Even split across this activity's tasks (templates carry none).
+          weightage: evenWeightage(taskIndex, taskCount),
         });
         taskIds.push(task.taskId);
       }
