@@ -36,7 +36,10 @@ function parseLocalDate(d) {
 function fmtDate(d) {
   const dt = parseLocalDate(d);
   if (!dt) return '—';
-  return dt.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
+  // dd/mm/yyyy — day-first, never mm/dd (per the date-format decision).
+  const dd = String(dt.getDate()).padStart(2, '0');
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${dt.getFullYear()}`;
 }
 
 export default function ProjectDetailPage({ projectId, onBack, currentUser }) {

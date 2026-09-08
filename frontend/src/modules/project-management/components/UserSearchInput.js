@@ -145,6 +145,15 @@ export default function UserSearchInput({ selectedUser, onSelect, excludeUserIds
       {open && (loading || results.length > 0) && dropRect && createPortal(
         <UserDropdown
           ref={dropRef}
+          // This dropdown is portaled to <body>, so it lives OUTSIDE any
+          // popover it's used inside (Phase/Activity/Project participants).
+          // Those popovers close on a document mousedown that lands outside
+          // their own content — and a click on a result here would count as
+          // "outside", closing the popover before the pick registers. Stop
+          // the mousedown from reaching document so picking a user never
+          // collapses the surrounding popover. (Options still get their own
+          // onMouseDown → handlePick, which runs before this bubbles up.)
+          onMouseDown={e => e.stopPropagation()}
           style={{
             position: 'fixed',
             top: dropRect.top,
