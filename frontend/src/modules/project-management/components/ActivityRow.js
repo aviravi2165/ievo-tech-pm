@@ -34,7 +34,8 @@ function initials(name = '') { return (name || '?').split(' ').map(w => w[0]).jo
 function fmtRange(start, end) {
   const s = parseLocalDate(start), e = parseLocalDate(end);
   if (!s && !e) return null;
-  const fmt = d => d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+  // dd/mm per date — day-first (never mm/dd), compact for the narrow cell.
+  const fmt = d => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
   return `${s ? fmt(s) : '?'} → ${e ? fmt(e) : '?'}`;
 }
 
@@ -168,12 +169,10 @@ export default function ActivityRow({
     if (open) { fetchTasks(); fetchMembers(); }
   }, [open, fetchTasks, fetchMembers]);
 
-  useEffect(() => {
-    if (panel !== 'members') return;
-    const handler = (e) => { if (participantsRef.current && !participantsRef.current.contains(e.target)) setPanel(null); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [panel]);
+  // See PhasePanel.js — FloatingPopover's own onClose (below) handles
+  // close-on-outside-click against the PORTALED content. The old handler
+  // compared against participantsRef (the anchor cell), which never contains
+  // the portaled popup, so every in-panel click closed it mid-interaction.
 
   const togglePanel = (p) => setPanel(v => v === p ? null : p);
 
@@ -185,11 +184,15 @@ export default function ActivityRow({
   } = useSortFilter(tasks, {
     sorters: {
       name:     (a, b) => (a.name || '').localeCompare(b.name || ''),
+      // Start date, falling back to due date for tasks that have no start set
+      // (start is optional; due is required) so they still order sensibly.
+      start:    (a, b) => ((parseLocalDate(a.startDate) || parseLocalDate(a.dueDate))?.getTime() ?? 0) - ((parseLocalDate(b.startDate) || parseLocalDate(b.dueDate))?.getTime() ?? 0),
       due:      (a, b) => (parseLocalDate(a.dueDate)?.getTime() ?? 0) - (parseLocalDate(b.dueDate)?.getTime() ?? 0),
       priority: (a, b) => PRIORITY_OPTS.indexOf(a.priority) - PRIORITY_OPTS.indexOf(b.priority),
       status:   (a, b) => (a.status || '').localeCompare(b.status || ''),
     },
-    defaultSortKey: 'due',
+    // Default to Start date — tasks read most naturally in the order work begins.
+    defaultSortKey: 'start',
     filters: {
       status:   { predicate: (t, v) => t.status === v },
       priority: { predicate: (t, v) => t.priority === v },
@@ -234,12 +237,17 @@ export default function ActivityRow({
   // ── Activity manager management (passed to ParticipantsPanel) ─────────────────
   // Always adds as 'Manager' — Viewer is project-only now, no role choice
   // left to make at Activity level either.
+  // Refresh the popup's own list (fetchMembers) AND the phase (onRefetchPhase),
+  // since the activity row's "Owner" cell (activity.managerNames) comes from
+  // the phase-level activity fetch — otherwise the cell only refreshed on a
+  // full page reload. onRefetchProject keeps higher levels consistent too.
   const handleAddManager = async (userId) => {
     await activityApi.addMember(activity.activityId, userId, 'Manager');
     await fetchMembers();
+    onRefetchPhase?.(); onRefetchProject?.();
   };
   const handleRemoveManager = async (uid) => {
-    try { await activityApi.removeMember(activity.activityId, uid); await fetchMembers(); }
+    try { await activityApi.removeMember(activity.activityId, uid); await fetchMembers(); onRefetchPhase?.(); onRefetchProject?.(); }
     catch (err) { showToast(apiErrorMessage(err, 'Failed to remove member.')); }
   };
 
@@ -490,7 +498,7 @@ export default function ActivityRow({
             </span>
           </div>
 
-          <FloatingPopover anchorRef={participantsRef} open={panel === 'members'} width={360}>
+          <FloatingPopover anchorRef={participantsRef} open={panel === 'members'} onClose={() => setPanel(null)} width={360}>
             <div onClick={e => e.stopPropagation()} style={{
               background: theme.colors.greige, border: `1px solid ${theme.colors.border}`,
               borderTop: `2px solid ${theme.colors.espresso}`, borderRadius: theme.radius.sm,
@@ -753,7 +761,8 @@ export default function ActivityRow({
               <SortSelect
                 value={taskSortKey} onChange={setTaskSortKey} dir={taskSortDir} onToggleDir={toggleTaskSortDir}
                 options={[
-                  { value: 'name', label: 'Name' }, { value: 'due', label: 'Due Date' },
+                  { value: 'start', label: 'Start Date' }, { value: 'due', label: 'Due Date' },
+                  { value: 'name', label: 'Name' },
                   { value: 'priority', label: 'Priority' }, { value: 'status', label: 'Status' },
                 ]}
               />

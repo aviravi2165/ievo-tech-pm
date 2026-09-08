@@ -29,7 +29,10 @@ function parseLocalDate(d) {
 function fmtRange(start, end) {
   const s = parseLocalDate(start), e = parseLocalDate(end);
   if (!s && !e) return null;
-  const fmt = d => d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+  // dd/mm per date — day-first (never mm/dd), kept compact (no year) so the
+  // range fits the narrow Duration cell. Full dd/mm/yyyy is used wherever a
+  // single date is shown (list tooltip, task due, project header).
+  const fmt = d => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
   return `${s ? fmt(s) : '?'} → ${e ? fmt(e) : '?'}`;
 }
 function initials(name = '') { return (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(); }
@@ -161,7 +164,9 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
       end:    (a, b) => (parseLocalDate(a.plannedEnd)?.getTime() ?? 0) - (parseLocalDate(b.plannedEnd)?.getTime() ?? 0),
       status: (a, b) => (a.status || '').localeCompare(b.status || ''),
     },
-    defaultSortKey: 'name',
+    // Default to Start date — activities read most naturally in the order
+    // work actually begins, not alphabetically.
+    defaultSortKey: 'start',
     filters: {
       status: { predicate: (a, v) => a.status === v },
       active: { predicate: (a, v) => (v === 'active' ? a.isActive !== false : a.isActive === false) },
@@ -186,21 +191,27 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
   // the first time).
   useEffect(() => { if (open) fetchPhaseMembers(); }, [open, fetchPhaseMembers]);
 
-  useEffect(() => {
-    if (panel !== 'members') return;
-    const handler = (e) => { if (participantsRef.current && !participantsRef.current.contains(e.target)) setPanel(null); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [panel]);
+  // Close-on-outside-click for the Participants popup is handled by
+  // FloatingPopover's own onClose below — it checks the PORTALED content, not
+  // this anchor cell. The old handler here compared against participantsRef
+  // (the cell), but the popup content is portaled to <body> and so is never
+  // "inside" that cell — every click within the panel counted as outside and
+  // slammed it shut mid-interaction (the "it suddenly closes when I assign"
+  // bug). Removed; the popover manages its own close correctly.
 
   // Always adds as 'Manager' — Viewer is project-only now (see
   // ParticipantsPanel.js), there's no role choice left to make at Phase level.
+  // After add/remove, refresh BOTH the popup's own member list (fetchPhaseMembers)
+  // AND the project (onRefetchProject) — the row's "Owner" cell shows
+  // phase.managerNames, which comes from the project-level fetch, so without
+  // the project refetch the cell only updated on a full page reload.
   const handleAddManager = async (userId) => {
     await phaseApi.addMember(phase.phaseId, userId, 'Manager');
     await fetchPhaseMembers();
+    onRefetchProject?.();
   };
   const handleRemoveManager = async (uid) => {
-    try { await phaseApi.removeMember(phase.phaseId, uid); await fetchPhaseMembers(); }
+    try { await phaseApi.removeMember(phase.phaseId, uid); await fetchPhaseMembers(); onRefetchProject?.(); }
     catch (err) { showToast(apiErrorMessage(err, 'Failed to remove member.')); }
   };
 
@@ -490,7 +501,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
             </span>
           </div>
 
-          <FloatingPopover anchorRef={participantsRef} open={panel === 'members'} width={360}>
+          <FloatingPopover anchorRef={participantsRef} open={panel === 'members'} onClose={() => setPanel(null)} width={360}>
             <div onClick={e => e.stopPropagation()} style={{
               background: theme.colors.greige, border: `1px solid ${theme.colors.border}`,
               borderTop: `2px solid ${theme.colors.espresso}`, borderRadius: theme.radius.sm,

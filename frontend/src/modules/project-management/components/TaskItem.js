@@ -41,7 +41,10 @@ function parseLocalDate(d) {
 function fmtDate(d) {
   const dt = parseLocalDate(d);
   if (!dt) return '';
-  return dt.toLocaleDateString([], { day: 'numeric', month: 'short' });
+  // dd/mm/yyyy — day-first, never mm/dd (per the date-format decision).
+  const dd = String(dt.getDate()).padStart(2, '0');
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${dt.getFullYear()}`;
 }
 function toInput(d) { return d ? String(d).split('T')[0] : ''; }
 function initials(name = '') { return (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(); }
