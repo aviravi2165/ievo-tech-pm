@@ -36,9 +36,11 @@ export const ERP_MODULES = [
     label: 'Daily Progress Report',
     shortLabel: 'DPR',
     description: 'Project report chats across projects (admins + added members)',
-    status: 'active',
+    // status: 'active',
+    status: 'coming-soon',
     path: '/dpr',
-    component: DPRModule,
+    // component: DPRModule,
+    component: null,
   },
   {
     id: 'analytics',
