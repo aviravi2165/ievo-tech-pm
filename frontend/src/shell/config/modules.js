@@ -1,6 +1,7 @@
 import ProjectManagementModule from '../../modules/project-management/ProjectManagementModule';
 import DashboardModule from '../../modules/dashboard/DashboardModule';
-import DPRModule from '../../modules/dpr/DPRModule';
+// DPRModule import intentionally unused — DPR is currently disabled
+// (status: 'coming-soon', component: null) below.
 
 /**
  * ERP module registry. Add new modules here when integrating.
@@ -36,9 +37,9 @@ export const ERP_MODULES = [
     label: 'Daily Progress Report',
     shortLabel: 'DPR',
     description: 'Project report chats across projects (admins + added members)',
-    status: 'active',
+    status: 'coming-soon',
     path: '/dpr',
-    component: DPRModule,
+    component: null,
   },
   {
     id: 'analytics',
