@@ -42,8 +42,15 @@ export default function TopBanner({ currentUser, activeModule }) {
 
   return (
     <Topbar>
-      <TopbarBrand>
-        <TopbarLogoImg src={logo} alt="" />
+      {/* Double-clicking the logo (icon + wordmark) opens the SPECULA naming
+          PDF in a new tab — same easter-egg action as the login screen. No
+          visible affordance; onMouseDown suppresses default text selection. */}
+      <TopbarBrand
+        onDoubleClick={() => window.open('/Naming_Proposal_Specula_OnePage.pdf', '_blank', 'noopener,noreferrer')}
+        onMouseDown={(e) => { if (e.detail > 1) e.preventDefault(); }}
+        style={{ userSelect: 'none', cursor: 'default' }}
+      >
+        <TopbarLogoImg src={logo} alt="" draggable={false} />
         <TopbarWordmark>SPECULA</TopbarWordmark>
         <TopbarDivider />
         <TopbarModule>{activeModule?.label ?? 'ERP'}</TopbarModule>

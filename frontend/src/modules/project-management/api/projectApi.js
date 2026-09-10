@@ -158,6 +158,18 @@ export const projectGroupApi = {
   setProjectGroup:(projectId, groupId) => axiosInstance.patch(`/api/project-groups/project/${projectId}`, { groupId }).then(r => r.data),
 };
 
+// Project "Report" chat + DPR. The report is a reused messaging conversation;
+// `get` returns { conversationId, groupId, members, canManage } (and lazily
+// creates the conversation on first open). Membership is admin-curated.
+export const reportApi = {
+  get:          (projectId)         => axiosInstance.get(`/api/projects/${projectId}/report`).then(r => r.data),
+  listMembers:  (projectId)         => axiosInstance.get(`/api/projects/${projectId}/report/members`).then(r => r.data),
+  addMember:    (projectId, userId) => axiosInstance.post(`/api/projects/${projectId}/report/members`, { userId }).then(r => r.data),
+  removeMember: (projectId, uid)    => axiosInstance.delete(`/api/projects/${projectId}/report/members/${uid}`).then(r => r.data),
+  // DPR — every project report the caller can see (admin = all, else their own).
+  listDpr:      ()                  => axiosInstance.get('/api/dpr/projects').then(r => r.data),
+};
+
 // User search — used by MemberManager and assignee picker
 export const userApi = {
   search: (q, limit = 10) =>

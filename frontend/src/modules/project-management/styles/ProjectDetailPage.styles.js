@@ -35,6 +35,12 @@ export const DetailSub = styled.div`
 export const DetailTabs = styled.div`
   display: flex; gap: 0; border-bottom: 1px solid ${t(th => th.colors.border)};
   background: ${t(th => th.colors.white)}; flex-shrink: 0;
+  /* Scroll the tab strip sideways on narrow screens rather than letting the
+     tabs wrap/overflow — matters once there are several tabs (Phases,
+     Analytics, Participants, Report, Audit). Scrollbar hidden for a clean look. */
+  overflow-x: auto; scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+  & > * { flex-shrink: 0; }
 `;
 
 export const Tab = styled.button`

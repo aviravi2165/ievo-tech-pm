@@ -18,6 +18,8 @@ export const Topbar = styled.header`
   background: ${p => p.theme.gradient.header};
   border-bottom: 1px solid ${p => p.theme.colors.border};
   box-shadow: 0 1px 3px rgba(26, 29, 35, 0.06);
+
+  @media (max-width: 600px) { padding: 0 10px; gap: 8px; }
 `;
 
 export const TopbarBrand = styled.div`
@@ -48,6 +50,10 @@ export const TopbarWordmark = styled.span`
   font-weight: 800;
   letter-spacing: 0.09em;
   color: ${p => p.theme.colors.onyx};
+
+  /* The logo icon already brands the corner — drop the wordmark on small
+     screens to free room for the module label + actions. */
+  @media (max-width: 600px) { display: none; }
 `;
 
 export const TopbarDivider = styled.span`
@@ -68,6 +74,9 @@ export const TopbarActions = styled.div`
   align-items: center;
   gap: 11px;
   margin-left: auto;
+  min-width: 0;
+
+  @media (max-width: 600px) { gap: 7px; }
 `;
 
 export const TopbarStatus = styled.span`
@@ -118,6 +127,9 @@ export const TopbarName = styled.span`
   font-size: 11px;
   font-weight: 500;
   color: ${p => p.theme.colors.onyx};
+
+  /* Avatar still identifies the user; hide the name text on small screens. */
+  @media (max-width: 600px) { display: none; }
 `;
 
 export const TopbarLogout = styled.button`

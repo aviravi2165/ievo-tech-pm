@@ -151,6 +151,8 @@ export const ModalOverlay = styled.div`
   position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45);
   z-index: 1000; display: flex; align-items: center; justify-content: center;
   padding: 20px; backdrop-filter: blur(2px);
+
+  @media (max-width: 600px) { padding: 10px; }
 `;
 
 export const Modal = styled.div`
@@ -161,6 +163,8 @@ export const Modal = styled.div`
   max-height: 85vh; overflow-y: auto;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
   position: relative;
+
+  @media (max-width: 600px) { padding: 20px 16px; max-height: 90vh; }
 
   h3 {
     font-family: ${t(th => th.font.display)};

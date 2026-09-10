@@ -1,5 +1,6 @@
 import ProjectManagementModule from '../../modules/project-management/ProjectManagementModule';
 import DashboardModule from '../../modules/dashboard/DashboardModule';
+import DPRModule from '../../modules/dpr/DPRModule';
 
 /**
  * ERP module registry. Add new modules here when integrating.
@@ -29,6 +30,24 @@ export const ERP_MODULES = [
     status: 'active',
     path: '/projects',
     component: ProjectManagementModule,
+  },
+  {
+    id: 'dpr',
+    label: 'Daily Progress Report',
+    shortLabel: 'DPR',
+    description: 'Project report chats across projects (admins + added members)',
+    status: 'active',
+    path: '/dpr',
+    component: DPRModule,
+  },
+  {
+    id: 'analytics',
+    label: 'Analytics',
+    shortLabel: 'Analytics',
+    description: 'Cross-project analytics & insights (coming soon)',
+    status: 'coming-soon',
+    path: '/analytics',
+    component: null, // placeholder — disabled in the drawer, shows a "Soon" badge
   },
   // Inventory (Stock), HR, and Reports were coming-soon placeholders —
   // removed from the sidebar so only Home and Projects show. Re-add their

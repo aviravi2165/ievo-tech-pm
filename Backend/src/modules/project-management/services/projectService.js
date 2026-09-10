@@ -181,7 +181,15 @@ async function getProject(projectId, userId, isAdmin = false) {
   const delayDays = (proj.status === 'Completed' || proj.status === 'Closed')
     ? 0
     : await getProjectDelayDays(projectId, proj.plannedEnd);
-  return { ...proj, members: membersResult.recordset, progress, delayDays };
+  // Cheap Report-tab visibility flag (admin OR an explicit report member) —
+  // does NOT create the report conversation (that happens lazily when the tab
+  // is actually opened). Lets the frontend show/hide the Report tab.
+  const reportAccess = isAdmin || (await pool.request()
+    .input('projectId', sql.Int, projectId)
+    .input('userId', sql.UniqueIdentifier, userId)
+    .query(`SELECT 1 AS ok FROM pm_report_members WHERE project_id=@projectId AND user_id=@userId`)
+  ).recordset.length > 0;
+  return { ...proj, members: membersResult.recordset, progress, delayDays, reportAccess };
 }
 
 async function createProject(userId, body) {

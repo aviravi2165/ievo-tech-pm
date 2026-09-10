@@ -97,14 +97,21 @@ export default function LoginPage() {
       {/* Left brand panel */}
       <Brand>
         <BrandInner>
-          <LogoRow>
-            <LogoIcon src={logoIcon} alt="" />
+          {/* Double-clicking the logo (icon + wordmark) opens the SPECULA naming
+              PDF in a new tab. No visible affordance — an easter-egg style action.
+              onMouseDown suppresses the browser's default double-click text
+              selection; userSelect:none keeps the wordmark from highlighting. */}
+          <LogoRow
+            onDoubleClick={() => window.open('/Naming_Proposal_Specula_OnePage.pdf', '_blank', 'noopener,noreferrer')}
+            onMouseDown={(e) => { if (e.detail > 1) e.preventDefault(); }}
+            style={{ userSelect: 'none', cursor: 'default' }}
+          >
+            <LogoIcon src={logoIcon} alt="" draggable={false} />
             <Logo>SPECULA</Logo>
           </LogoRow>
-          <LogoSub>Unified Platform</LogoSub>
           <Tagline>Design | Demonstrate | Deliver</Tagline>
           <FeatureList>
-            {['Communication & Messaging', 'Project Management', 'Production Scheduling', 'HR & Workforce'].map((f) => (
+            {['Communication & Messaging', 'Project Management'].map((f) => (
               <FeatureItem key={f}>
                 <FeatureDot />
                 {f}

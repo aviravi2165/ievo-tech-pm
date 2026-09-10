@@ -12,6 +12,7 @@ const phaseRoutes    = require('./routes/phaseRoutes');
 const activityRoutes = require('./routes/activityRoutes');
 const taskRoutes     = require('./routes/taskRoutes');
 const templateRoutes = require('./routes/templateRoutes');
+const reportRoutes   = require('./routes/reportRoutes');
 const { initPmSocket, closePmSocket } = require('./socket/socketHandler');
 const { startActivityInsightsCron } = require('./cron/activityInsightsCron');
 
@@ -22,6 +23,11 @@ function register(app) {
   app.use('/api/activities', activityRoutes);
   app.use('/api/tasks',      taskRoutes);
   app.use('/api/templates',  templateRoutes);
+  // Report chat (/api/projects/:id/report*) + DPR (/api/dpr/*). Mounted at
+  // /api; its report paths fall through cleanly after projectRoutes since
+  // /projects/:id/report is two segments past /projects, not matched by
+  // projectRoutes' own /:id route.
+  app.use('/api', reportRoutes);
 }
 
 /**

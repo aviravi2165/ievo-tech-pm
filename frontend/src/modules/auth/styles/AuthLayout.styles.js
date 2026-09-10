@@ -64,6 +64,10 @@ export const LogoIcon = styled.img`
   width: auto;
   object-fit: contain;
   display: block;
+  /* Reverse (dark-background) logo: recolor the source PNG to a solid white
+     silhouette — brightness(0) flattens it to black, invert(1) flips to pure
+     white — preserving the exact shape, proportions and clean edges. */
+  filter: brightness(0) invert(1);
 `;
 
 export const Logo = styled.div`
