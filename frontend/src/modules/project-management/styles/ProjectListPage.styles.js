@@ -8,6 +8,10 @@ export const Topbar = styled.div`
   border-bottom: 1px solid ${t(th => th.colors.border)};
   background: ${t(th => th.colors.white)};
   flex-shrink: 0;
+  /* Wrap on narrow screens so the search box + action buttons stack instead
+     of overflowing off-screen. No effect on desktop (there's room, so it
+     stays on one line). */
+  flex-wrap: wrap; row-gap: 8px;
 `;
 
 export const TopbarH1 = styled.h1`

@@ -56,6 +56,21 @@ function ModuleIconSvg({ id }) {
           <path d="M2 20h20" />
         </svg>
       );
+    case 'analytics':
+      return (
+        <svg {...common}>
+          <path d="M3 3v18h18" />
+          <path d="M7 15l3-4 3 3 4-6" />
+        </svg>
+      );
+    case 'dpr':
+      return (
+        <svg {...common}>
+          <rect x="4" y="3" width="16" height="18" rx="2" />
+          <path d="M9 3v3h6V3" />
+          <path d="M8 11h8M8 15h5" />
+        </svg>
+      );
     default:
       return (
         <svg {...common}>

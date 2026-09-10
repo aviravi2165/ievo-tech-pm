@@ -12,6 +12,7 @@ import ParticipantsPanel from '../components/ParticipantsPanel';
 import AuditLog from '../components/AuditLog';
 import ProjectAnalytics from '../components/ProjectAnalytics';
 import ProjectEditModal from '../components/ProjectEditModal';
+import ReportTab from '../components/ReportTab';
 import { useProject } from '../hooks/useProject';
 import { useProjectAnalytics } from '../hooks/useProjectAnalytics';
 import { aggregateAssignees } from '../utils/aggregateAssignees';
@@ -350,9 +351,10 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
         </div>
       </DetailHeader>
 
-      {/* ── Tabs ── */}
+      {/* ── Tabs ── The Report tab appears (after Audit) only for admins or
+          people explicitly added to this project's report (reportAccess). ── */}
       <DetailTabs>
-        {TABS.map(t => (
+        {[...(project.reportAccess ? [...TABS, 'Report'] : TABS), 'Attendance'].map(t => (
           <Tab key={t} active={tab === t} onClick={() => setTab(t)}>
             {t}
             {t === 'Phases'  && <span style={{ marginLeft:5, opacity:.6, fontSize:11 }}>({phases.length})</span>}
@@ -361,7 +363,14 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
         ))}
       </DetailTabs>
 
-      {/* ── Body ── */}
+      {/* Report tab is a full-height chat — rendered OUTSIDE the scrolling
+          DetailBody so the chat window manages its own scroll. */}
+      {tab === 'Report' ? (
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <ReportTab projectId={projectId} projectName={project.name} />
+        </div>
+      ) : (
+      /* ── Body ── */
       <DetailBody>
 
         {/* ── Phases tab ── */}
@@ -527,7 +536,15 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
 
         {/* ── Audit tab — visible to all members ── */}
         {tab === 'Audit' && <AuditLog projectId={projectId} />}
+
+        {/* ── Attendance tab — placeholder, feature not built yet ── */}
+        {tab === 'Attendance' && (
+          <div style={{ padding: '48px 20px', textAlign: 'center', color: theme.colors.ash, fontSize: 14 }}>
+            Coming soon
+          </div>
+        )}
       </DetailBody>
+      )}
 
       {showEditProject && (
         <ProjectEditModal
