@@ -7,6 +7,7 @@ import UserSearchInput from './UserSearchInput';
 import ChatButton from './ChatButton';
 import { taskApi } from '../api/projectApi';
 import { showToast, apiErrorMessage } from '../hooks/toastStore';
+import { openDateChangeRequest } from '../hooks/dateChangeRequestStore';
 import { TaskTableRow, Cell, COL, Assignees, Avatar, RowActions } from '../styles/Table.styles';
 import { TaskName } from '../styles/TaskItem.styles';
 import {
@@ -238,7 +239,13 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
       await taskApi.update(task.taskId, { startDate: editStart || null, dueDate: editDue, weightage: Number(editWeight) });
       onRefetch?.(); setPanel(null);
     }
-    catch (err) { setDateError(apiErrorMessage(err, 'Failed to update dates.')); }
+    catch (err) {
+      const data = err?.response?.data;
+      // A locked date (already set, being changed) — hand off to the
+      // approval-request flow instead of just showing an inline error.
+      if (data?.code === 'DATE_LOCKED' && data?.meta) { openDateChangeRequest(data.meta); setPanel(null); return; }
+      setDateError(apiErrorMessage(err, 'Failed to update dates.'));
+    }
   };
 
   // ── Description save ───────────────────────────────────────────────────────

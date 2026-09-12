@@ -13,6 +13,8 @@ import AuditLog from '../components/AuditLog';
 import ProjectAnalytics from '../components/ProjectAnalytics';
 import ProjectEditModal from '../components/ProjectEditModal';
 import ReportTab from '../components/ReportTab';
+import ApprovalsPanel from '../components/ApprovalsPanel';
+import DateChangeRequestModal from '../components/DateChangeRequestModal';
 import { useProject } from '../hooks/useProject';
 import { useProjectAnalytics } from '../hooks/useProjectAnalytics';
 import { aggregateAssignees } from '../utils/aggregateAssignees';
@@ -354,7 +356,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
       {/* ── Tabs ── The Report tab appears (after Audit) only for admins or
           people explicitly added to this project's report (reportAccess). ── */}
       <DetailTabs>
-        {[...(project.reportAccess ? [...TABS, 'Report'] : TABS), 'Attendance'].map(t => (
+        {[...(project.reportAccess ? [...TABS, 'Report'] : TABS), 'Approvals', 'Attendance'].map(t => (
           <Tab key={t} active={tab === t} onClick={() => setTab(t)}>
             {t}
             {t === 'Phases'  && <span style={{ marginLeft:5, opacity:.6, fontSize:11 }}>({phases.length})</span>}
@@ -537,6 +539,11 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
         {/* ── Audit tab — visible to all members ── */}
         {tab === 'Audit' && <AuditLog projectId={projectId} />}
 
+        {/* ── Approvals tab — date-change requests raised on/against this
+            project (see dateChangeRequestService). Visible to everyone;
+            content is per-viewer (their own requests + ones addressed to them). ── */}
+        {tab === 'Approvals' && <ApprovalsPanel projectId={projectId} />}
+
         {/* ── Attendance tab — placeholder, feature not built yet ── */}
         {tab === 'Attendance' && (
           <div style={{ padding: '48px 20px', textAlign: 'center', color: theme.colors.ash, fontSize: 14 }}>
@@ -545,6 +552,11 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
         )}
       </DetailBody>
       )}
+
+      {/* Mounted once — any locked-date save anywhere on this page (Project
+          edit modal, Phase/Activity/Task date panels) opens this via
+          dateChangeRequestStore instead of just erroring out. */}
+      <DateChangeRequestModal onApplied={refetch} />
 
       {showEditProject && (
         <ProjectEditModal

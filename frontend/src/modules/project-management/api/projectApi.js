@@ -170,6 +170,19 @@ export const reportApi = {
   listDpr:      ()                  => axiosInstance.get('/api/dpr/projects').then(r => r.data),
 };
 
+// Date-change approval requests — once a Project/Phase/Activity/Task date is
+// set, changing it directly is blocked (409 { code: 'DATE_LOCKED' }); this is
+// how a requester asks a chosen approver (admin or project member) to apply
+// the change instead.
+export const dateChangeRequestApi = {
+  create:      (body)                => axiosInstance.post('/api/date-requests', body).then(r => r.data),
+  listPending: (projectId)           => axiosInstance.get('/api/date-requests/pending', { params: { projectId } }).then(r => r.data),
+  listMine:    (projectId)           => axiosInstance.get('/api/date-requests/mine', { params: { projectId } }).then(r => r.data),
+  approve:     (requestId, note)     => axiosInstance.post(`/api/date-requests/${requestId}/approve`, { note }).then(r => r.data),
+  reject:      (requestId, note)     => axiosInstance.post(`/api/date-requests/${requestId}/reject`, { note }).then(r => r.data),
+  cancel:      (requestId)           => axiosInstance.post(`/api/date-requests/${requestId}/cancel`).then(r => r.data),
+};
+
 // User search — used by MemberManager and assignee picker
 export const userApi = {
   search: (q, limit = 10) =>

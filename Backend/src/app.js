@@ -58,6 +58,11 @@ function createApp() {
     res.status(err.statusCode || 500).json({
       error:   err.message || 'Internal server error',
       message: err.message || 'Internal server error',
+      // Optional machine-readable extras a thrown error can attach (e.g.
+      // dateChangeRequestService's DATE_LOCKED) — undefined on ordinary
+      // errors, so this adds nothing to the existing response shape.
+      ...(err.code ? { code: err.code } : {}),
+      ...(err.meta ? { meta: err.meta } : {}),
     });
   });
 

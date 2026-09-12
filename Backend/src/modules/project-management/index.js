@@ -13,6 +13,7 @@ const activityRoutes = require('./routes/activityRoutes');
 const taskRoutes     = require('./routes/taskRoutes');
 const templateRoutes = require('./routes/templateRoutes');
 const reportRoutes   = require('./routes/reportRoutes');
+const dateChangeRequestRoutes = require('./routes/dateChangeRequestRoutes');
 const { initPmSocket, closePmSocket } = require('./socket/socketHandler');
 const { startActivityInsightsCron } = require('./cron/activityInsightsCron');
 
@@ -28,6 +29,9 @@ function register(app) {
   // /projects/:id/report is two segments past /projects, not matched by
   // projectRoutes' own /:id route.
   app.use('/api', reportRoutes);
+  // Date-change approval requests (/api/date-requests*) — the "locked
+  // date needs approval" feature, shared by project/phase/activity/task.
+  app.use('/api', dateChangeRequestRoutes);
 }
 
 /**

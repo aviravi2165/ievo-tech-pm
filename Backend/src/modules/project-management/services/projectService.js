@@ -6,6 +6,7 @@ const { deriveProjectStatus, getProjectStats } = require('./progressService');
 const { getProjectDelayDays, getOverdueDays } = require('./delayService');
 const { isInactive } = require('./dependencyService');
 const pmChatService = require('./pmChatService');
+const dateChangeRequestService = require('./dateChangeRequestService');
 
 // resolveTaskManagerIds/resolveActivityThreadSeedIds (roleService.js)
 // cumulatively include Project Managers alongside Activity/Phase Managers —
@@ -234,11 +235,15 @@ const PROJECT_FIELD_TYPES = {
   dept_id:       sql.Int,
 };
 
-async function updateProject(projectId, userId, body) {
+async function updateProject(projectId, userId, body, isAdmin = false) {
   if (await isInactive('project', projectId)) {
     const e = new Error('This Project is inactive — reactivate it before making changes.');
     e.statusCode = 409; throw e;
   }
+  // Once a planned date is set, only an admin can change it directly — anyone
+  // else must go through a date-change approval request (dateChangeRequestService).
+  await dateChangeRequestService.assertDateFieldsAllowed('project', projectId,
+    { plannedStart: body.plannedStart, plannedEnd: body.plannedEnd }, isAdmin, projectId);
   if (body.name !== undefined) {
     if (!body.name.trim()) { const e = new Error('Project name is required'); e.statusCode = 400; throw e; }
     if (body.name.trim().length > 200) { const e = new Error('Project name must be 200 characters or fewer'); e.statusCode = 400; throw e; }

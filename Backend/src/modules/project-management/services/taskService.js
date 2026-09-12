@@ -7,6 +7,7 @@ const { getActivityProgress, getPhaseProgress, deriveStatus, getActivityHasActiv
 const { getEffectiveActivityRole } = require('./roleService');
 const { broadcastStatusChanged, broadcastUnblocked, broadcastAssignmentRequest, broadcastAssignmentResponded, broadcastProgressUpdated } = require('../socket/socketHandler');
 const pmChatService = require('./pmChatService');
+const dateChangeRequestService = require('./dateChangeRequestService');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -510,6 +511,10 @@ async function updateTask(taskId, projectId, userId, body, isAdmin = false) {
     const e = new Error('This Task is inactive — reactivate it before making changes.');
     e.statusCode = 409; throw e;
   }
+  // Once a start/due date is set, only an admin can change it directly —
+  // anyone else must go through a date-change approval request.
+  await dateChangeRequestService.assertDateFieldsAllowed('task', taskId,
+    { startDate: body.startDate, dueDate: body.dueDate }, isAdmin, projectId);
   if (body.weightage === null || body.weightage === '') {
     const e = new Error('Task weightage is required'); e.statusCode = 400; throw e;
   }

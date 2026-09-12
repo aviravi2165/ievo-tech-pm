@@ -7,6 +7,7 @@ const { deriveStatus, getActivityStats } = require('./progressService');
 const { getActivityDelayDays, getOverdueDays } = require('./delayService');
 const pmChatService = require('./pmChatService');
 const { getEffectiveActivityRole } = require('./roleService');
+const dateChangeRequestService = require('./dateChangeRequestService');
 
 function parseIdList(val) {
   if (!val) return [];
@@ -470,11 +471,15 @@ const ACTIVITY_FIELD_TYPES = {
   weightage:     sql.Decimal(5, 2),
 };
 
-async function updateActivity(activityId, projectId, userId, body) {
+async function updateActivity(activityId, projectId, userId, body, isAdmin = false) {
   if (await isInactive('activity', activityId) || await isInactive('project', projectId)) {
     const e = new Error('This Activity is inactive — reactivate it before making changes.');
     e.statusCode = 409; throw e;
   }
+  // Once a planned date is set, only an admin can change it directly — anyone
+  // else must go through a date-change approval request.
+  await dateChangeRequestService.assertDateFieldsAllowed('activity', activityId,
+    { plannedStart: body.plannedStart, plannedEnd: body.plannedEnd }, isAdmin, projectId);
   if (body.weightage === null || body.weightage === '') {
     const e = new Error('Activity weightage is required'); e.statusCode = 400; throw e;
   }
