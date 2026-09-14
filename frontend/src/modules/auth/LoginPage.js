@@ -102,24 +102,24 @@ export default function LoginPage() {
               onMouseDown suppresses the browser's default double-click text
               selection; userSelect:none keeps the wordmark from highlighting. */}
           <LogoRow
-            onDoubleClick={() => window.open('/Naming_Proposal_Specula_OnePage.pdf', '_blank', 'noopener,noreferrer')}
+            onClick={() => window.open('/Naming_Proposal_Specula_OnePage.pdf', '_blank', 'noopener,noreferrer')}
             onMouseDown={(e) => { if (e.detail > 1) e.preventDefault(); }}
             style={{ userSelect: 'none', cursor: 'default' }}
           >
             <LogoIcon src={logoIcon} alt="" draggable={false} />
             <Logo>SPECULA</Logo>
           </LogoRow>
-          <Tagline>Design | Demonstrate | Deliver</Tagline>
-          <FeatureList>
+          {/*<Tagline>Design | Demonstrate | Deliver</Tagline>*/}
+          {/*<FeatureList>
             {['Communication & Messaging', 'Project Management'].map((f) => (
               <FeatureItem key={f}>
                 <FeatureDot />
                 {f}
               </FeatureItem>
             ))}
-          </FeatureList>
+          </FeatureList>*/}
         </BrandInner>
-        <BrandFooter>Iraj Evolution Design Co. Pvt. Ltd.</BrandFooter>
+        {/*<BrandFooter>Iraj Evolution Design Co. Pvt. Ltd.</BrandFooter>*/}
       </Brand>
 
       {/* Right form panel */}

@@ -9,6 +9,7 @@ export const Root = styled.div`
   display: flex;
   height: 100%; /* not 100vh — see ErpShell in Shell.styles.js for why (zoom/vh gap) */
   font-family: 'DM Sans', 'Segoe UI', system-ui, sans-serif;
+  justify-content: center;
 `;
 
 // BUG-016: width was a bare 42% with no ceiling, so it kept growing with
@@ -25,7 +26,7 @@ export const Brand = styled.div`
   border-right: 3px solid ${p => p.theme.colors.copper};
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: center;
   padding: 48px 52px;
   color: ${p => p.theme.colors.greige};
 `;
