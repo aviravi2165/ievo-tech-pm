@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTheme } from '@emotion/react';
 import { X } from 'lucide-react';
 import { projectApi } from '../api/projectApi';
+import { openDateChangeRequest } from '../hooks/dateChangeRequestStore';
 import { ModalOverlay, Modal, Field, FieldHint, ModalFooter, BtnGhost, BtnPrimary } from '../styles/shared.styles';
 import { useEscapeKey } from '../../shared/hooks/useEscapeKey';
 
@@ -66,7 +67,15 @@ export default function ProjectEditModal({ project, onClose, onSaved }) {
       });
       onSaved();
     } catch (err) {
-      setApiError(err?.response?.data?.error || 'Failed to save project');
+      const data = err?.response?.data;
+      // A locked date (already set, being changed) — hand off to the
+      // approval-request flow instead of just erroring out.
+      if (data?.code === 'DATE_LOCKED' && data?.meta) {
+        openDateChangeRequest(data.meta);
+        onClose();
+        return;
+      }
+      setApiError(data?.error || 'Failed to save project');
     } finally { setSaving(false); }
   };
 

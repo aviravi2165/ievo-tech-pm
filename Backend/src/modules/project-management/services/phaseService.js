@@ -7,6 +7,7 @@ const { deriveStatus, getPhaseStats } = require('./progressService');
 const { getPhaseDelayDays, getOverdueDays } = require('./delayService');
 const { getEffectivePhaseRole } = require('./roleService');
 const pmChatService = require('./pmChatService');
+const dateChangeRequestService = require('./dateChangeRequestService');
 
 function parseIdList(val) {
   if (!val) return [];
@@ -249,11 +250,15 @@ const PHASE_FIELD_TYPES = {
   weightage:     sql.Decimal(5, 2),
 };
 
-async function updatePhase(phaseId, projectId, userId, body) {
+async function updatePhase(phaseId, projectId, userId, body, isAdmin = false) {
   if (await isInactive('phase', phaseId) || await isInactive('project', projectId)) {
     const e = new Error('This Phase is inactive — reactivate it before making changes.');
     e.statusCode = 409; throw e;
   }
+  // Once a planned date is set, only an admin can change it directly — anyone
+  // else must go through a date-change approval request.
+  await dateChangeRequestService.assertDateFieldsAllowed('phase', phaseId,
+    { plannedStart: body.plannedStart, plannedEnd: body.plannedEnd }, isAdmin, projectId);
   if (body.weightage === null || body.weightage === '') {
     const e = new Error('Phase weightage is required'); e.statusCode = 400; throw e;
   }

@@ -13,6 +13,7 @@ import { aggregateAssignees } from '../utils/aggregateAssignees';
 import { truncateName } from '../utils/truncateName';
 import { activityApi } from '../api/projectApi';
 import { showToast, apiErrorMessage } from '../hooks/toastStore';
+import { handleSaveError } from '../hooks/dateChangeRequestStore';
 import { GroupRow, RowActions, COL, TASK_GRID_COLS, TableHead, TableHeadCell } from '../styles/Table.styles';
 import { ActivityName, ActivityBody } from '../styles/ActivityRow.styles';
 import {
@@ -230,7 +231,7 @@ export default function ActivityRow({
       });
       onRefetchPhase?.(); onRefetchProject?.();
       setPanel(null); setEditErrors({});
-    } catch (err) { showToast(apiErrorMessage(err, 'Failed to save activity.')); }
+    } catch (err) { handleSaveError(err, 'Failed to save activity.'); }
     finally { setEditSaving(false); }
   };
 

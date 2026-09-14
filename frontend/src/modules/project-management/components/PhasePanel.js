@@ -11,6 +11,7 @@ import { aggregateAssignees } from '../utils/aggregateAssignees';
 import { truncateName } from '../utils/truncateName';
 import { phaseApi, activityApi } from '../api/projectApi';
 import { showToast, apiErrorMessage } from '../hooks/toastStore';
+import { handleSaveError } from '../hooks/dateChangeRequestStore';
 import { GroupRow, RowActions, GROUP_COL, TableHead, TableHeadCell } from '../styles/Table.styles';
 import { PhaseName, PhaseBody } from '../styles/PhasePanel.styles';
 import {
@@ -260,7 +261,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
       });
       onRefetchProject?.();
       setPanel(null); setDateErrors({});
-    } catch (err) { showToast(apiErrorMessage(err, 'Failed to save phase.')); }
+    } catch (err) { handleSaveError(err, 'Failed to save phase.'); }
     finally { setDateSaving(false); }
   };
 
