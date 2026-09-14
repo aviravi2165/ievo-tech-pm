@@ -41,6 +41,10 @@ function toNewMessagePayload(payload) {
     // server refresh. See replyToConversation/activityInsightsService for
     // where this gets set.
     excludeFromUnread: Boolean(payload.excludeFromUnread || payload.isSystem),
+    // Who this message @mentioned (already validated against active
+    // participants by messageService.insertMentions) — lets a client
+    // highlight its own name and drives the separate MENTIONED ping below.
+    mentionedUserIds: payload.mentionedUserIds || [],
   };
 }
 
@@ -196,6 +200,19 @@ async function broadcastNewMessage(result) {
 
   participantIds.forEach(pid => {
     io.to(`user:${pid}`).except(convRoom).emit('NEW_MESSAGE', payload);
+  });
+
+  // 3. A dedicated ping for whoever got @mentioned in this message — sent
+  // to their personal room regardless of whether they're currently viewing
+  // the thread (unlike NEW_MESSAGE above, a mention deserves its own
+  // heads-up even with the conversation already open).
+  (payload.mentionedUserIds || []).forEach(uid => {
+    io.to(`user:${uid}`).emit('MENTIONED', {
+      conversationId, messageId: payload.messageId,
+      senderName: payload.senderName, subject: payload.subject,
+      groupName: payload.groupName, bodyHtml: payload.bodyHtml,
+      createdAt: payload.createdAt,
+    });
   });
 }
 
