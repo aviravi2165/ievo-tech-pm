@@ -14,7 +14,8 @@ import ProjectAnalytics from '../components/ProjectAnalytics';
 import ProjectEditModal from '../components/ProjectEditModal';
 import ReportTab from '../components/ReportTab';
 import ApprovalsPanel from '../components/ApprovalsPanel';
-import AttendancePanel from '../components/AttendancePanel';
+// AttendancePanel import intentionally unused — Attendance is back to a
+// "Coming soon" placeholder below; the component file itself is untouched.
 import DateChangeRequestModal from '../components/DateChangeRequestModal';
 import { useProject } from '../hooks/useProject';
 import { useProjectAnalytics } from '../hooks/useProjectAnalytics';
@@ -545,8 +546,12 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
             content is per-viewer (their own requests + ones addressed to them). ── */}
         {tab === 'Approvals' && <ApprovalsPanel projectId={projectId} />}
 
-        {/* ── Attendance tab — self check-in + Manager/admin overrides ── */}
-        {tab === 'Attendance' && <AttendancePanel projectId={projectId} myUserId={myUserId} canEdit={canEdit} />}
+        {/* ── Attendance tab — placeholder, feature not built yet ── */}
+        {tab === 'Attendance' && (
+          <div style={{ padding: '48px 20px', textAlign: 'center', color: theme.colors.ash, fontSize: 14 }}>
+            Coming soon
+          </div>
+        )}
       </DetailBody>
       )}
 
