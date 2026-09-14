@@ -395,6 +395,36 @@ async function linkAttachmentsToMessage(reqFn, messageId, attachmentIds, uploade
   }
 }
 
+// @mentions — records comm_message_mentions rows for the subset of
+// mentionedUserIds that are actually ACTIVE participants of the
+// conversation (never trust the client's list blindly). Returns just that
+// validated subset, which the caller includes in its result so the socket
+// broadcast + reply payload only ever names people who could really see the
+// message. Self-mentions are allowed (harmless) but pointless to notify —
+// filtered out here too.
+async function insertMentions(reqFn, conversationId, messageId, mentionedUserIds = [], senderId) {
+  const candidateIds = [...new Set(mentionedUserIds.map(String))].filter(id => id !== String(senderId));
+  if (!candidateIds.length) return [];
+
+  const activeIds = await getParticipantUserIds(conversationId);
+  const activeSet = new Set(activeIds.map(String));
+  const validIds  = candidateIds.filter(id => activeSet.has(id));
+  if (!validIds.length) return [];
+
+  for (const uid of validIds) {
+    await reqFn()
+      .input('messageId', sql.Int,              messageId)
+      .input('userId',    sql.UniqueIdentifier, uid)
+      .input('convId',    sql.Int,              conversationId)
+      .query(`
+        IF NOT EXISTS (SELECT 1 FROM comm_message_mentions WHERE message_id=@messageId AND mentioned_user_id=@userId)
+          INSERT INTO comm_message_mentions (message_id, mentioned_user_id, conversation_id)
+          VALUES (@messageId, @userId, @convId)
+      `);
+  }
+  return validIds;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Send message
 // ─────────────────────────────────────────────────────────────────────────────
@@ -669,7 +699,7 @@ async function addParticipant(conversationId, userIds, actorUserId, actorUserTyp
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function replyToConversation(conversationId, senderUserId, payload) {
-  const { bodyHtml, attachmentIds = [], parentMessageId = null } = payload;
+  const { bodyHtml, attachmentIds = [], parentMessageId = null, mentionedUserIds = [] } = payload;
   // Only active (non-removed) participants may reply
   await assertActiveParticipant(conversationId, senderUserId);
   await ensureParticipantArchiveColumn();
@@ -712,6 +742,7 @@ async function replyToConversation(conversationId, senderUserId, payload) {
   return withTransaction(async (req) => {
     const messageId = await insertMessage(req, conversationId, senderUserId, sanitizedBody, parentMessageId);
     await linkAttachmentsToMessage(req, messageId, attachmentIds, senderUserId);
+    const recordedMentionIds = await insertMentions(req, conversationId, messageId, mentionedUserIds, senderUserId);
     await req()
       .input('convId', sql.Int, conversationId)
       .query(`UPDATE comm_conversations SET last_message_at = SYSDATETIMEOFFSET() WHERE conversation_id = @convId`);
@@ -777,6 +808,7 @@ async function replyToConversation(conversationId, senderUserId, payload) {
       bodyHtml:  sanitizedBody,
       createdAt: msgRes.recordset[0]?.createdAt || new Date().toISOString(),
       excludeFromUnread: Boolean(meta.excludeFromUnread),
+      mentionedUserIds: recordedMentionIds,
     };
   });
 }
