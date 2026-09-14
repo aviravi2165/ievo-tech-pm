@@ -14,6 +14,7 @@ const taskRoutes     = require('./routes/taskRoutes');
 const templateRoutes = require('./routes/templateRoutes');
 const reportRoutes   = require('./routes/reportRoutes');
 const dateChangeRequestRoutes = require('./routes/dateChangeRequestRoutes');
+const attendanceRoutes = require('./routes/attendanceRoutes');
 const { initPmSocket, closePmSocket } = require('./socket/socketHandler');
 const { startActivityInsightsCron } = require('./cron/activityInsightsCron');
 
@@ -32,6 +33,9 @@ function register(app) {
   // Date-change approval requests (/api/date-requests*) — the "locked
   // date needs approval" feature, shared by project/phase/activity/task.
   app.use('/api', dateChangeRequestRoutes);
+  // Attendance (/api/projects/:id/attendance*) — self check-in + Manager/
+  // admin overrides, one row per (project, member, date).
+  app.use('/api', attendanceRoutes);
 }
 
 /**

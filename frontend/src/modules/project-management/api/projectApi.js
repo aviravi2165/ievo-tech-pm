@@ -183,6 +183,16 @@ export const dateChangeRequestApi = {
   cancel:      (requestId)           => axiosInstance.post(`/api/date-requests/${requestId}/cancel`).then(r => r.data),
 };
 
+// Project Attendance — one row per (project, member, date). checkIn is
+// always today's date (server-enforced); setStatus is the Manager/admin
+// override for any member on any date.
+export const attendanceApi = {
+  getForDate:    (projectId, date)               => axiosInstance.get(`/api/projects/${projectId}/attendance`, { params: { date } }).then(r => r.data),
+  getSummary:    (projectId, month)              => axiosInstance.get(`/api/projects/${projectId}/attendance/summary`, { params: { month } }).then(r => r.data),
+  checkIn:       (projectId, body)               => axiosInstance.post(`/api/projects/${projectId}/attendance/checkin`, body).then(r => r.data),
+  setStatus:     (projectId, userId, body)       => axiosInstance.put(`/api/projects/${projectId}/attendance/${userId}`, body).then(r => r.data),
+};
+
 // User search — used by MemberManager and assignee picker
 export const userApi = {
   search: (q, limit = 10) =>
