@@ -3,7 +3,6 @@ import { useTheme } from '@emotion/react';
 import { subscribeDateChangeRequest, closeDateChangeRequest } from '../hooks/dateChangeRequestStore';
 import { dateChangeRequestApi } from '../api/projectApi';
 import { showToast, apiErrorMessage } from '../hooks/toastStore';
-import UserSearchInput from './UserSearchInput';
 import { ModalOverlay, Modal, Field, BtnPrimary, BtnGhost } from '../styles/shared.styles';
 
 const FIELD_LABEL = { plannedStart: 'start date', plannedEnd: 'end date', startDate: 'start date', dueDate: 'due date' };
@@ -28,12 +27,22 @@ export default function DateChangeRequestModal({ onApplied }) {
   const theme = useTheme();
   const [meta, setMeta] = useState(null);
   const [reason, setReason] = useState('');
-  const [approver, setApprover] = useState(null);
+  const [approverId, setApproverId] = useState('');
+  const [approvers, setApprovers] = useState([]);
+  const [approversLoading, setApproversLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => subscribeDateChangeRequest(setMeta), []);
-  useEffect(() => { if (meta) { setReason(''); setApprover(null); setError(''); } }, [meta]);
+  useEffect(() => {
+    if (!meta) return;
+    setReason(''); setApproverId(''); setError('');
+    setApproversLoading(true);
+    dateChangeRequestApi.listEligible()
+      .then(setApprovers)
+      .catch(() => setApprovers([]))
+      .finally(() => setApproversLoading(false));
+  }, [meta]);
 
   if (!meta) return null;
 
@@ -41,7 +50,7 @@ export default function DateChangeRequestModal({ onApplied }) {
 
   const submit = async () => {
     if (!reason.trim()) { setError('Please explain why this date needs to change.'); return; }
-    if (!approver) { setError('Please choose who should approve this.'); return; }
+    if (!approverId) { setError('Please choose who should approve this.'); return; }
     setSubmitting(true); setError('');
     try {
       await dateChangeRequestApi.create({
@@ -51,7 +60,7 @@ export default function DateChangeRequestModal({ onApplied }) {
         field: meta.field,
         newValue: meta.newValue,
         reason: reason.trim(),
-        approverId: approver.userId,
+        approverId,
       });
       showToast('Request sent — you\'ll be notified once it\'s decided.', 'success');
       onApplied?.();
@@ -86,8 +95,16 @@ export default function DateChangeRequestModal({ onApplied }) {
         </Field>
 
         <Field>
-          <label>Send to (admin or a project member) <span className="req">*</span></label>
-          <UserSearchInput selectedUser={approver} onSelect={setApprover} placeholder="Search a person to approve…" />
+          <label>Send to (an admin, or an approver an admin has added) <span className="req">*</span></label>
+          <select value={approverId} onChange={e => setApproverId(e.target.value)} disabled={approversLoading}>
+            <option value="">{approversLoading ? 'Loading…' : 'Select an approver…'}</option>
+            {approvers.map(a => <option key={a.userId} value={a.userId}>{a.name}</option>)}
+          </select>
+          {!approversLoading && approvers.length === 0 && (
+            <div style={{ fontSize: 11.5, color: theme.colors.ash, marginTop: 6 }}>
+              No approvers are set up yet — ask an admin to add one from Manage Approvers.
+            </div>
+          )}
         </Field>
 
         {error && <div style={{ color: theme.colors.danger, fontSize: 12, marginBottom: 12 }}>{error}</div>}

@@ -40,4 +40,37 @@ const cancelRequest = async (req, res, next) => {
   catch (e) { next(e); }
 };
 
-module.exports = { create, listPending, listMine, approve, reject, cancel: cancelRequest };
+// Every request ever addressed to the caller (any status) — the "who
+// requested this, and why" log a designated approver needs. Self-scoped
+// (req.user.userId), so no extra access check needed here.
+const listHistory = async (req, res, next) => {
+  try { res.json(await svc.listHistoryForApprover(req.user.userId)); }
+  catch (e) { next(e); }
+};
+
+// The fixed approver list a requester picks from (admins ∪ pm_date_approvers).
+// Any authenticated user can read this — it's who's-in-the-list, not the
+// management screen (that's listApprovers/addApprover/removeApprover below).
+const listEligibleApprovers = async (req, res, next) => {
+  try { res.json(await svc.listEligibleApprovers()); }
+  catch (e) { next(e); }
+};
+
+// ── Approver management — admin-only (route-gated) ──────────────────────────
+const listApprovers = async (req, res, next) => {
+  try { res.json(await svc.listApprovers()); }
+  catch (e) { next(e); }
+};
+const addApprover = async (req, res, next) => {
+  try { res.json(await svc.addApprover(req.body.userId, req.user.userId)); }
+  catch (e) { next(e); }
+};
+const removeApprover = async (req, res, next) => {
+  try { res.json(await svc.removeApprover(req.params.userId)); }
+  catch (e) { next(e); }
+};
+
+module.exports = {
+  create, listPending, listMine, listHistory, approve, reject, cancel: cancelRequest,
+  listEligibleApprovers, listApprovers, addApprover, removeApprover,
+};

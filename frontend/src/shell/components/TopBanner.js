@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import ProfileMenu              from './ProfileMenu';
 import ChangePasswordModal      from './ChangePasswordModal';
 import UserManagementModal      from '../../modules/users/UserManagementModal';
+import ManageApproversModal     from '../../modules/project-management/components/ManageApproversModal';
 import {
   Topbar, TopbarBrand, TopbarLogoImg, TopbarWordmark, TopbarDivider, TopbarModule,
   TopbarActions, TopbarStatus, StatusDot, TopbarProfile, TopbarAvatar,
@@ -18,6 +19,10 @@ export default function TopBanner({ currentUser, activeModule }) {
   // User management (admin only)
   const [userMgmtOpen, setUserMgmtOpen] = useState(false);
   const [userMgmtTab,  setUserMgmtTab]  = useState('register');
+
+  // Date-change approvers (admin only) — who can be picked as the approver
+  // for a date-change request (see ManageApproversModal / pm_date_approvers).
+  const [approversOpen, setApproversOpen] = useState(false);
 
   const isAdmin = currentUser?.userType === 'admin';
 
@@ -79,6 +84,18 @@ export default function TopBanner({ currentUser, activeModule }) {
           </UserMgmtBtn>
         )}
 
+        {/* ── Date-change Approvers — admin only ────────────────────────────── */}
+        {isAdmin && (
+          <UserMgmtBtn type="button" onClick={() => setApproversOpen(true)} title="Manage Approvers">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2">
+              <path d="M9 11l3 3L22 4" />
+              <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
+            </svg>
+            <span>Manage Approvers</span>
+          </UserMgmtBtn>
+        )}
+
         {/* ── Profile ───────────────────────────────────────────────────────── */}
         <div style={{ position: 'relative' }}>
           <TopbarProfile
@@ -118,6 +135,12 @@ export default function TopBanner({ currentUser, activeModule }) {
         open={userMgmtOpen}
         defaultTab={userMgmtTab}
         onClose={() => setUserMgmtOpen(false)}
+      />
+
+      {/* Manage Approvers Modal */}
+      <ManageApproversModal
+        open={approversOpen}
+        onClose={() => setApproversOpen(false)}
       />
     </Topbar>
   );

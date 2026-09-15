@@ -1,5 +1,6 @@
 import ProjectManagementModule from '../../modules/project-management/ProjectManagementModule';
 import DashboardModule from '../../modules/dashboard/DashboardModule';
+import ApprovalsModule from '../../modules/approvals/ApprovalsModule';
 // DPRModule import intentionally unused — DPR is back to coming-soon (see
 // below); the component file itself is untouched, just not wired in.
 
@@ -40,6 +41,15 @@ export const ERP_MODULES = [
     status: 'coming-soon',
     path: '/dpr',
     component: null,
+  },
+  {
+    id: 'approvals',
+    label: 'Approvals',
+    shortLabel: 'Approvals',
+    description: 'Date-change requests sent to you, across every project',
+    status: 'active',
+    path: '/approvals',
+    component: ApprovalsModule,
   },
   {
     id: 'analytics',

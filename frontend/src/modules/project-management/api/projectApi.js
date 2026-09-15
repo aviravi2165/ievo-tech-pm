@@ -175,12 +175,25 @@ export const reportApi = {
 // how a requester asks a chosen approver (admin or project member) to apply
 // the change instead.
 export const dateChangeRequestApi = {
-  create:      (body)                => axiosInstance.post('/api/date-requests', body).then(r => r.data),
-  listPending: (projectId)           => axiosInstance.get('/api/date-requests/pending', { params: { projectId } }).then(r => r.data),
-  listMine:    (projectId)           => axiosInstance.get('/api/date-requests/mine', { params: { projectId } }).then(r => r.data),
-  approve:     (requestId, note)     => axiosInstance.post(`/api/date-requests/${requestId}/approve`, { note }).then(r => r.data),
-  reject:      (requestId, note)     => axiosInstance.post(`/api/date-requests/${requestId}/reject`, { note }).then(r => r.data),
-  cancel:      (requestId)           => axiosInstance.post(`/api/date-requests/${requestId}/cancel`).then(r => r.data),
+  create:       (body)                => axiosInstance.post('/api/date-requests', body).then(r => r.data),
+  // projectId omitted → global (a designated approver's own cross-project view).
+  listPending:  (projectId)           => axiosInstance.get('/api/date-requests/pending', { params: { projectId } }).then(r => r.data),
+  listMine:     (projectId)           => axiosInstance.get('/api/date-requests/mine', { params: { projectId } }).then(r => r.data),
+  // Every request ever addressed to the caller as approver (any status) —
+  // the "who requested this and why" log.
+  listHistory:  ()                    => axiosInstance.get('/api/date-requests/history').then(r => r.data),
+  approve:      (requestId, note)     => axiosInstance.post(`/api/date-requests/${requestId}/approve`, { note }).then(r => r.data),
+  reject:       (requestId, note)     => axiosInstance.post(`/api/date-requests/${requestId}/reject`, { note }).then(r => r.data),
+  cancel:       (requestId)           => axiosInstance.post(`/api/date-requests/${requestId}/cancel`).then(r => r.data),
+  // The fixed list a requester picks from — admins + designated approvers.
+  listEligible: ()                    => axiosInstance.get('/api/date-approvers/eligible').then(r => r.data),
+};
+
+// Admin-only: curate who can be picked as a date-change approver.
+export const dateApproverApi = {
+  list:   ()                 => axiosInstance.get('/api/date-approvers').then(r => r.data),
+  add:    (userId)           => axiosInstance.post('/api/date-approvers', { userId }).then(r => r.data),
+  remove: (userId)           => axiosInstance.delete(`/api/date-approvers/${userId}`).then(r => r.data),
 };
 
 // Project Attendance — one row per (project, member, date). checkIn is
