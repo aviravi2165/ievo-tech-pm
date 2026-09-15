@@ -6,9 +6,17 @@
  * Once a Project/Phase/Activity/Task has a planned date set, changing it
  * directly is blocked (assertDateFieldsAllowed, called from the 4 update
  * services). Instead the requester submits a request (reason + chosen
- * approver — an admin or a member of the project); the approver approves
- * (applies the change) or rejects it (no change). Admins bypass the lock
- * entirely, same as everywhere else in this module.
+ * approver); the approver approves (applies the change) or rejects it (no
+ * change). Admins bypass the lock entirely, same as everywhere else in this
+ * module.
+ *
+ * Who can be an approver is now a CURATED, global list — an admin, or a
+ * user an admin has explicitly designated via pm_date_approvers (see
+ * listApprovers/addApprover/removeApprover) — no longer any project member.
+ * Project membership is irrelevant to approving: a designated approver can
+ * decide requests on projects they're not even a member of, which is why
+ * listForApprover/listHistoryForApprover work globally (no projectId
+ * required) — that's the surface those approvers actually use.
  */
 
 const { getPool, sql } = require('../../../config/db');
@@ -68,17 +76,67 @@ async function assertDateFieldsAllowed(entityType, entityId, changes, isAdmin, p
   }
 }
 
-// Is this user allowed to be picked as an approver for this project?
-// (an admin, or an actual member of the project)
-async function isValidApprover(userId, projectId) {
+// Is this user allowed to be picked as an approver at all? An admin, or a
+// user an admin has explicitly designated (pm_date_approvers) — global,
+// not scoped to any one project.
+async function isValidApprover(userId) {
   const pool = await getPool();
-  const r = await pool.request().input('userId', sql.UniqueIdentifier, userId).input('projectId', sql.Int, projectId).query(`
+  const r = await pool.request().input('userId', sql.UniqueIdentifier, userId).query(`
     SELECT 1 AS ok
     FROM auth_users u
     WHERE u.user_id = @userId AND u.is_active = 1
-      AND (u.user_type = 'admin' OR EXISTS (SELECT 1 FROM pm_members m WHERE m.project_id = @projectId AND m.user_id = @userId))
+      AND (u.user_type = 'admin' OR EXISTS (SELECT 1 FROM pm_date_approvers a WHERE a.user_id = @userId))
   `);
   return r.recordset.length > 0;
+}
+
+// Every eligible approver — every active admin, UNION the designated list —
+// for the requester's approver picker (a fixed list now, not a free search).
+async function listEligibleApprovers() {
+  const pool = await getPool();
+  const r = await pool.request().query(`
+    SELECT user_id AS userId,
+           COALESCE(NULLIF(TRIM(CONCAT(first_name,' ',last_name)),''), email) AS name,
+           email
+    FROM auth_users
+    WHERE is_active = 1 AND (
+      user_type = 'admin'
+      OR user_id IN (SELECT user_id FROM pm_date_approvers)
+    )
+    ORDER BY name
+  `);
+  return r.recordset;
+}
+
+// ── Approver management (admin-only, route-gated) ──────────────────────────
+async function listApprovers() {
+  const pool = await getPool();
+  const r = await pool.request().query(`
+    SELECT a.user_id AS userId,
+           COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''), u.email) AS name,
+           u.email, a.added_at AS addedAt,
+           COALESCE(NULLIF(TRIM(CONCAT(bu.first_name,' ',bu.last_name)),''), bu.email) AS addedByName
+    FROM pm_date_approvers a
+    INNER JOIN auth_users u ON u.user_id = a.user_id AND u.is_active = 1
+    LEFT JOIN  auth_users bu ON bu.user_id = a.added_by
+    ORDER BY u.first_name, u.last_name
+  `);
+  return r.recordset;
+}
+
+async function addApprover(targetUserId, addedBy) {
+  const pool = await getPool();
+  await pool.request().input('userId', sql.UniqueIdentifier, targetUserId).input('addedBy', sql.UniqueIdentifier, addedBy)
+    .query(`IF NOT EXISTS (SELECT 1 FROM pm_date_approvers WHERE user_id=@userId)
+              INSERT INTO pm_date_approvers (user_id, added_by) VALUES (@userId, @addedBy)`);
+  return listApprovers();
+}
+
+async function removeApprover(targetUserId) {
+  const pool = await getPool();
+  await pool.request().input('userId', sql.UniqueIdentifier, targetUserId)
+    .query(`DELETE FROM pm_date_approvers WHERE user_id=@userId`);
+  return listApprovers();
 }
 
 async function createRequest({ projectId, entityType, entityId, field, newValue, reason, requestedBy, approverId }) {
@@ -87,8 +145,8 @@ async function createRequest({ projectId, entityType, entityId, field, newValue,
   if (!reason?.trim()) { const e = new Error('A reason is required.'); e.statusCode = 400; throw e; }
   if (!newValue) { const e = new Error('A new date is required.'); e.statusCode = 400; throw e; }
   if (!approverId) { const e = new Error('Please choose who should approve this change.'); e.statusCode = 400; throw e; }
-  if (!(await isValidApprover(approverId, projectId))) {
-    const e = new Error('The chosen approver must be an admin or a member of this project.'); e.statusCode = 400; throw e;
+  if (!(await isValidApprover(approverId))) {
+    const e = new Error('The chosen approver must be an admin or an approver an admin has added.'); e.statusCode = 400; throw e;
   }
 
   const pool = await getPool();
@@ -161,13 +219,26 @@ async function getRequestById(requestId) {
   return row || null;
 }
 
-// Requests pending THIS user's approval (optionally scoped to one project).
+// Requests pending THIS user's approval (optionally scoped to one project;
+// omit projectId for a designated approver's global "awaiting you" list —
+// they need this to work across projects they aren't even a member of).
 async function listForApprover(userId, projectId) {
   const pool = await getPool();
   const req = pool.request().input('userId', sql.UniqueIdentifier, userId);
   let where = `r.approver_id = @userId AND r.status = 'pending'`;
   if (projectId) { req.input('projectId', sql.Int, projectId); where += ` AND r.project_id = @projectId`; }
   const r = await req.query(`${SELECT_BASE} WHERE ${where} ORDER BY r.created_at DESC`);
+  return attachEntityNames(r.recordset);
+}
+
+// Full log (any status) of every request ever addressed to this approver —
+// "who requested this, and why" — across all projects. The visibility an
+// admin-designated approver needs since they may not be a member of the
+// project the request came from.
+async function listHistoryForApprover(userId) {
+  const pool = await getPool();
+  const r = await pool.request().input('userId', sql.UniqueIdentifier, userId)
+    .query(`${SELECT_BASE} WHERE r.approver_id = @userId ORDER BY r.created_at DESC`);
   return attachEntityNames(r.recordset);
 }
 
@@ -233,5 +304,6 @@ async function cancel(requestId, actorId) {
 }
 
 module.exports = {
-  assertDateFieldsAllowed, createRequest, listForApprover, listMine, decide, cancel, getRequestById,
+  assertDateFieldsAllowed, createRequest, listForApprover, listHistoryForApprover, listMine, decide, cancel, getRequestById,
+  isValidApprover, listEligibleApprovers, listApprovers, addApprover, removeApprover,
 };
