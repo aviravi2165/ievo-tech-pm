@@ -1,6 +1,7 @@
 import ProjectManagementModule from '../../modules/project-management/ProjectManagementModule';
 import DashboardModule from '../../modules/dashboard/DashboardModule';
 import ApprovalsModule from '../../modules/approvals/ApprovalsModule';
+import AILearningModule from '../../modules/ai-learning/AILearningModule';
 // DPRModule import intentionally unused — DPR is back to coming-soon (see
 // below); the component file itself is untouched, just not wired in.
 
@@ -50,6 +51,15 @@ export const ERP_MODULES = [
     status: 'active',
     path: '/approvals',
     component: ApprovalsModule,
+  },
+  {
+    id: 'ai-learning',
+    label: 'AI Learning',
+    shortLabel: 'AI Learning',
+    description: 'Document what you learned about AI — tools, tasks, workflows',
+    status: 'active',
+    path: '/ai-learning',
+    component: AILearningModule,
   },
   {
     id: 'analytics',

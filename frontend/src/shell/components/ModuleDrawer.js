@@ -78,6 +78,14 @@ function ModuleIconSvg({ id }) {
           <path d="M8 11h8M8 15h5" />
         </svg>
       );
+    case 'ai-learning':
+      return (
+        <svg {...common}>
+          <path d="M9 18h6M10 21h4" />
+          <path d="M12 3a6 6 0 00-4 10.5c.5.5.8 1 .9 1.5h6.2c.1-.5.4-1 .9-1.5A6 6 0 0012 3z" />
+          <path d="M9.5 9.5l1.5 1.5 3-3" />
+        </svg>
+      );
     default:
       return (
         <svg {...common}>

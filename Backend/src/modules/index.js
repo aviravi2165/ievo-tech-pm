@@ -5,8 +5,9 @@
 const auth        = require('./auth');
 const messages    = require('./messages');
 const projectManagement = require('./project-management');
+const aiLearning  = require('./ai-learning');
 
-const MODULES = [auth, messages, projectManagement];
+const MODULES = [auth, messages, projectManagement, aiLearning];
 
 function registerAllModules(app) {
   for (const mod of MODULES) {
