@@ -15,6 +15,7 @@ const templateRoutes = require('./routes/templateRoutes');
 const reportRoutes   = require('./routes/reportRoutes');
 const dateChangeRequestRoutes = require('./routes/dateChangeRequestRoutes');
 const attendanceRoutes = require('./routes/attendanceRoutes');
+const meetingAttendanceRoutes = require('./routes/meetingAttendanceRoutes');
 const { initPmSocket, closePmSocket } = require('./socket/socketHandler');
 const { startActivityInsightsCron } = require('./cron/activityInsightsCron');
 
@@ -34,8 +35,14 @@ function register(app) {
   // date needs approval" feature, shared by project/phase/activity/task.
   app.use('/api', dateChangeRequestRoutes);
   // Attendance (/api/projects/:id/attendance*) — self check-in + Manager/
-  // admin overrides, one row per (project, member, date).
+  // admin overrides, one row per (project, member, date). Superseded in the
+  // UI by meetingAttendanceRoutes below, but left mounted/untouched so no
+  // existing data or integration breaks.
   app.use('/api', attendanceRoutes);
+  // Meeting/session-based Attendance (/api/projects/:id/meetings*) — the
+  // current Attendance tab. Every attendance record belongs to a specific
+  // meeting (title + date), not just a bare date.
+  app.use('/api', meetingAttendanceRoutes);
 }
 
 /**
