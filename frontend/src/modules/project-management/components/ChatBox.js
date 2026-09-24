@@ -25,6 +25,16 @@ import { fileApi } from '../../messages/api/fileApi';
 function initials(name = '') { return (name || '?').split(' ').filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase(); }
 function escapeHtml(s = '') { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function fmtTime(iso) { try { return new Date(iso).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } }
+function dayKey(iso) { try { return new Date(iso).toDateString(); } catch { return ''; } }
+function fmtDaySeparator(iso) {
+  try {
+    const d = new Date(iso);
+    const today = new Date(); const yest = new Date(); yest.setDate(today.getDate() - 1);
+    if (d.toDateString() === today.toDateString()) return 'Today';
+    if (d.toDateString() === yest.toDateString()) return 'Yesterday';
+    return d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
+  } catch { return ''; }
+}
 
 // Wraps every literal "@Name" occurrence (for a known participant name) in a
 // message's bodyHtml with a highlighted span — but only inside text nodes,
@@ -113,7 +123,12 @@ const Bubble = memo(function Bubble({ m, mine, theme, mentionNames }) {
   );
 });
 
-export default function ChatBox({ conversationId }) {
+export default function ChatBox({
+  conversationId,
+  placeholder = 'Write an update…  (Enter to send, Shift+Enter for a new line, @ to mention)',
+  emptyTitle = 'No messages yet.',
+  emptySubtitle = 'Share an update or a document to get started.',
+}) {
   const theme = useTheme();
   const { currentUserId } = useMessaging();
   const { messages, conversation, loading, ready, error, sendReply, markAllRead } = useThread(conversationId);
@@ -226,12 +241,25 @@ export default function ChatBox({ conversationId }) {
         {error && <div style={{ color: theme.colors.danger, fontSize: 12, textAlign: 'center' }}>{error}</div>}
         {ready && messages.length === 0 && (
           <div style={{ margin: 'auto', textAlign: 'center', color: theme.colors.ashLight, fontSize: 13 }}>
-            No messages yet.<br />Share an update or a document to get started.
+            {emptyTitle}<br />{emptySubtitle}
           </div>
         )}
-        {messages.map(m => (
-          <Bubble key={m.messageId} m={m} mine={String(m.senderId) === String(currentUserId)} theme={theme} mentionNames={mentionNames} />
-        ))}
+        {messages.map((m, i) => {
+          const prev = messages[i - 1];
+          const showSeparator = !prev || dayKey(prev.sentAt) !== dayKey(m.sentAt);
+          return (
+            <div key={m.messageId}>
+              {showSeparator && (
+                <div style={{ display: 'flex', justifyContent: 'center', margin: '6px 0 10px' }}>
+                  <span style={{ fontSize: 10.5, fontWeight: 700, color: theme.colors.ash, background: theme.colors.mid, borderRadius: 10, padding: '3px 12px', textTransform: 'uppercase', letterSpacing: '.03em' }}>
+                    {fmtDaySeparator(m.sentAt)}
+                  </span>
+                </div>
+              )}
+              <Bubble m={m} mine={String(m.senderId) === String(currentUserId)} theme={theme} mentionNames={mentionNames} />
+            </div>
+          );
+        })}
        </div>
       </div>
 
@@ -280,7 +308,7 @@ export default function ChatBox({ conversationId }) {
             value={text}
             onChange={onTextChange}
             onKeyDown={onKeyDown}
-            placeholder="Write an update…  (Enter to send, Shift+Enter for a new line, @ to mention)"
+            placeholder={placeholder}
             rows={1}
             style={{ flex: 1, resize: 'none', maxHeight: 120, minHeight: 36, background: theme.colors.greige, border: `1px solid ${theme.colors.border}`, borderRadius: 12, padding: '9px 12px', fontSize: 13, color: theme.colors.onyx, outline: 'none', fontFamily: 'inherit', lineHeight: 1.4 }}
           />
