@@ -4,7 +4,7 @@ import { meetingAttendanceApi } from '../api/projectApi';
 import { showToast, apiErrorMessage } from '../hooks/toastStore';
 import { ModalOverlay, Modal, Field, ModalFooter, BtnPrimary, BtnGhost } from '../styles/shared.styles';
 
-const STATUSES = ['Present', 'Absent', 'Half Day'];
+const STATUSES = ['Present', 'Absent'];
 
 /**
  * AttendanceChangeRequestModal — a Member requesting a correction to their

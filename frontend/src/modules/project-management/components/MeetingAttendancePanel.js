@@ -16,7 +16,7 @@ function MeetingRow({ m, theme, onOpen }) {
   const total = m.totalMembers || 0;
   const summary = total === 0
     ? 'No members on this meeting'
-    : `${m.presentCount} Present · ${m.absentCount} Absent${m.halfDayCount ? ` · ${m.halfDayCount} Half Day` : ''}`;
+    : `${m.presentCount} Present · ${m.absentCount} Absent`;
   return (
     <button type="button" onClick={() => onOpen(m.meetingId)}
       style={{

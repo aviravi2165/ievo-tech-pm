@@ -7,8 +7,8 @@ import { BtnPrimary, BtnGhost, IconBtn, IconBtnDanger, Empty } from '../styles/s
 import MeetingFormModal from './MeetingFormModal';
 import AttendanceChangeRequestModal from './AttendanceChangeRequestModal';
 
-const STATUSES = ['Present', 'Absent', 'Half Day'];
-const STATUS_COLOR = { Present: 'success', 'Half Day': 'copper', Absent: 'danger' };
+const STATUSES = ['Present', 'Absent'];
+const STATUS_COLOR = { Present: 'success', Absent: 'danger' };
 function initials(name = '') { return (name || '?').split(' ').filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase(); }
 function fmtDate(d) {
   if (!d) return '—';
@@ -145,7 +145,6 @@ export default function MeetingDetailPanel({ projectId, meetingId, myUserId, myR
         <KpiCard label="Total members" value={kpis.total} theme={theme} />
         <KpiCard label="Present" value={kpis.present} theme={theme} color={theme.colors.success} />
         <KpiCard label="Absent" value={kpis.absent} theme={theme} color={theme.colors.danger} />
-        <KpiCard label="Half Day" value={kpis.halfDay} theme={theme} color={theme.colors.copper} />
         {kpis.notMarked > 0 && <KpiCard label="Not marked" value={kpis.notMarked} theme={theme} color={theme.colors.ashLight} />}
       </div>
 

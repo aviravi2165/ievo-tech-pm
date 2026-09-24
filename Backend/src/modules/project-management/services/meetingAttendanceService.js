@@ -29,7 +29,7 @@
 const { getPool, sql, withTransaction } = require('../../../config/db');
 const audit = require('./auditService');
 
-const STATUSES = ['Present', 'Absent', 'Half Day'];
+const STATUSES = ['Present', 'Absent'];
 
 function assertValidStatus(status) {
   if (!STATUSES.includes(status)) {
@@ -57,8 +57,7 @@ async function listMeetings(projectId, viewerRole, { search, dateFrom, dateTo } 
            COALESCE(NULLIF(TRIM(CONCAT(cu.first_name,' ',cu.last_name)),''), cu.email) AS createdByName,
            (SELECT COUNT(*) FROM pm_meeting_members mm WHERE mm.meeting_id = m.meeting_id) AS totalMembers,
            (SELECT COUNT(*) FROM pm_meeting_attendance a WHERE a.meeting_id = m.meeting_id AND a.status = 'Present')  AS presentCount,
-           (SELECT COUNT(*) FROM pm_meeting_attendance a WHERE a.meeting_id = m.meeting_id AND a.status = 'Absent')   AS absentCount,
-           (SELECT COUNT(*) FROM pm_meeting_attendance a WHERE a.meeting_id = m.meeting_id AND a.status = 'Half Day') AS halfDayCount
+           (SELECT COUNT(*) FROM pm_meeting_attendance a WHERE a.meeting_id = m.meeting_id AND a.status = 'Absent')   AS absentCount
            ${includePending ? `,
            (SELECT COUNT(*) FROM pm_attendance_change_requests r WHERE r.meeting_id = m.meeting_id AND r.status = 'pending') AS pendingRequestCount` : ''}
     FROM pm_meetings m
@@ -177,7 +176,6 @@ async function getMeetingDetail(meetingId, projectId, viewerId, viewerRole) {
     total: members.length,
     present: members.filter(m => m.status === 'Present').length,
     absent: members.filter(m => m.status === 'Absent').length,
-    halfDay: members.filter(m => m.status === 'Half Day').length,
     notMarked: members.filter(m => !m.status).length,
   };
 

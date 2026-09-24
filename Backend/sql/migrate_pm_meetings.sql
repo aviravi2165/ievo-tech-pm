@@ -65,7 +65,7 @@ BEGIN
     CONSTRAINT UQ_pm_meeting_attendance UNIQUE (meeting_id, user_id),
     CONSTRAINT FK_pm_ma_member   FOREIGN KEY (meeting_id, user_id) REFERENCES dbo.pm_meeting_members(meeting_id, user_id) ON DELETE CASCADE,
     CONSTRAINT FK_pm_ma_markedby FOREIGN KEY (marked_by) REFERENCES dbo.auth_users(user_id),
-    CONSTRAINT CK_pm_ma_status   CHECK (status IN ('Present','Absent','Half Day'))
+    CONSTRAINT CK_pm_ma_status   CHECK (status IN ('Present','Absent'))
   );
   CREATE INDEX IX_pm_ma_meeting ON dbo.pm_meeting_attendance(meeting_id);
   CREATE INDEX IX_pm_ma_user    ON dbo.pm_meeting_attendance(user_id);
@@ -95,7 +95,7 @@ BEGIN
     CONSTRAINT FK_pm_acr_project   FOREIGN KEY (project_id) REFERENCES dbo.pm_projects(project_id),
     CONSTRAINT FK_pm_acr_decidedby FOREIGN KEY (decided_by) REFERENCES dbo.auth_users(user_id),
     CONSTRAINT CK_pm_acr_status    CHECK (status IN ('pending','approved','rejected')),
-    CONSTRAINT CK_pm_acr_reqstatus CHECK (requested_status IN ('Present','Absent','Half Day'))
+    CONSTRAINT CK_pm_acr_reqstatus CHECK (requested_status IN ('Present','Absent'))
   );
   CREATE INDEX IX_pm_acr_meeting ON dbo.pm_attendance_change_requests(meeting_id, status);
   CREATE INDEX IX_pm_acr_project ON dbo.pm_attendance_change_requests(project_id, status);
@@ -103,6 +103,35 @@ BEGIN
   -- (approved/rejected) one doesn't block a fresh request.
   CREATE UNIQUE INDEX UQ_pm_acr_one_pending ON dbo.pm_attendance_change_requests(meeting_id, user_id)
     WHERE status = 'pending';
+END
+
+-- ── Drop 'Half Day' from the allowed attendance statuses ────────────────────
+-- Removed from the product — Present/Absent only. Guarded so this only fires
+-- on a DB where the table already exists with the old (wider) constraint; a
+-- brand-new DB gets the narrower CHECK straight from the CREATE TABLE above
+-- and skips this entirely. WITH NOCHECK (not WITH CHECK) — same pattern
+-- schema.mssql.sql already uses elsewhere for a widened/narrowed CHECK — so
+-- any pre-existing 'Half Day' row is grandfathered in as historical data
+-- rather than rewritten; only NEW writes are validated against the
+-- narrower list going forward (markAttendance/createChangeRequest already
+-- reject 'Half Day' at the application layer too).
+IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_ma_status')
+BEGIN
+  DECLARE @ma_def NVARCHAR(MAX) = (SELECT definition FROM sys.check_constraints WHERE name = 'CK_pm_ma_status');
+  IF @ma_def LIKE '%Half Day%'
+  BEGIN
+    ALTER TABLE dbo.pm_meeting_attendance DROP CONSTRAINT CK_pm_ma_status;
+    ALTER TABLE dbo.pm_meeting_attendance WITH NOCHECK ADD CONSTRAINT CK_pm_ma_status CHECK (status IN ('Present','Absent'));
+  END
+END
+IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_pm_acr_reqstatus')
+BEGIN
+  DECLARE @acr_def NVARCHAR(MAX) = (SELECT definition FROM sys.check_constraints WHERE name = 'CK_pm_acr_reqstatus');
+  IF @acr_def LIKE '%Half Day%'
+  BEGIN
+    ALTER TABLE dbo.pm_attendance_change_requests DROP CONSTRAINT CK_pm_acr_reqstatus;
+    ALTER TABLE dbo.pm_attendance_change_requests WITH NOCHECK ADD CONSTRAINT CK_pm_acr_reqstatus CHECK (requested_status IN ('Present','Absent'));
+  END
 END
 
 -- ── Widen pm_audit_log's entity_type CHECK to also allow 'meeting' ──────────
