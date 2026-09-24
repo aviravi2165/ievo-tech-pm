@@ -14,7 +14,10 @@ import ProjectAnalytics from '../components/ProjectAnalytics';
 import ProjectEditModal from '../components/ProjectEditModal';
 import ReportTab from '../components/ReportTab';
 import ApprovalsPanel from '../components/ApprovalsPanel';
-import AttendancePanel from '../components/AttendancePanel';
+// AttendancePanel (the old date-first tab) is superseded by
+// MeetingAttendancePanel below — left in place, untouched, along with its
+// backend/pm_attendance table, just no longer wired into this tab.
+import MeetingAttendancePanel from '../components/MeetingAttendancePanel';
 import DateChangeRequestModal from '../components/DateChangeRequestModal';
 import { useProject } from '../hooks/useProject';
 import { useProjectAnalytics } from '../hooks/useProjectAnalytics';
@@ -545,8 +548,13 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
             content is per-viewer (their own requests + ones addressed to them). ── */}
         {tab === 'Approvals' && <ApprovalsPanel projectId={projectId} />}
 
-        {/* ── Attendance tab — self check-in + Manager/admin overrides ── */}
-        {tab === 'Attendance' && <AttendancePanel projectId={projectId} myUserId={myUserId} canEdit={canEdit} />}
+        {/* ── Attendance tab — meeting/session-based (see
+            meetingAttendanceService). Viewer gets read-only access here
+            (unlike most other tabs) since Viewer is this app's "read-only,
+            project-wide" role — the spec's Project Owner/Leadership tier. ── */}
+        {tab === 'Attendance' && (
+          <MeetingAttendancePanel projectId={projectId} myUserId={myUserId} myRole={project.myRole} projectMembers={project.members || []} />
+        )}
       </DetailBody>
       )}
 

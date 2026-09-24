@@ -206,6 +206,25 @@ export const attendanceApi = {
   setStatus:     (projectId, userId, body)       => axiosInstance.put(`/api/projects/${projectId}/attendance/${userId}`, body).then(r => r.data),
 };
 
+// Meeting/session-based Attendance — the current Attendance tab. Every
+// attendance record belongs to a specific meeting (title + date), so
+// multiple meetings can exist on the same date. Supersedes attendanceApi
+// above in the UI (that one is left in place, untouched, for any existing
+// integration/data — just no longer called from AttendancePanel).
+export const meetingAttendanceApi = {
+  list:            (projectId, params)            => axiosInstance.get(`${BASE}/${projectId}/meetings`, { params }).then(r => r.data),
+  create:          (projectId, body)               => axiosInstance.post(`${BASE}/${projectId}/meetings`, body).then(r => r.data),
+  get:             (projectId, meetingId)          => axiosInstance.get(`${BASE}/${projectId}/meetings/${meetingId}`).then(r => r.data),
+  update:          (projectId, meetingId, body)    => axiosInstance.patch(`${BASE}/${projectId}/meetings/${meetingId}`, body).then(r => r.data),
+  updateMembers:   (projectId, meetingId, memberIds) => axiosInstance.put(`${BASE}/${projectId}/meetings/${meetingId}/members`, { memberIds }).then(r => r.data),
+  cancel:          (projectId, meetingId)          => axiosInstance.post(`${BASE}/${projectId}/meetings/${meetingId}/cancel`).then(r => r.data),
+  markAttendance:  (projectId, meetingId, userId, body) => axiosInstance.put(`${BASE}/${projectId}/meetings/${meetingId}/attendance/${userId}`, body).then(r => r.data),
+  requestChange:   (projectId, meetingId, body)    => axiosInstance.post(`${BASE}/${projectId}/meetings/${meetingId}/requests`, body).then(r => r.data),
+  cancelRequest:   (projectId, requestId)          => axiosInstance.post(`${BASE}/${projectId}/meetings/requests/${requestId}/cancel`).then(r => r.data),
+  approveRequest:  (projectId, requestId, note)    => axiosInstance.post(`${BASE}/${projectId}/meetings/requests/${requestId}/approve`, { note }).then(r => r.data),
+  rejectRequest:   (projectId, requestId, note)    => axiosInstance.post(`${BASE}/${projectId}/meetings/requests/${requestId}/reject`, { note }).then(r => r.data),
+};
+
 // User search — used by MemberManager and assignee picker
 export const userApi = {
   search: (q, limit = 10) =>
