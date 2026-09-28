@@ -45,12 +45,33 @@ const cancelMeeting = async (req, res, next) => {
   catch (e) { next(e); }
 };
 
+// Manager only — add ONE participant to THIS meeting (source: 'project' |
+// 'guest'). Never touches project membership either way.
+const addParticipant = async (req, res, next) => {
+  try {
+    const { userId, source } = req.body;
+    res.status(201).json(await svc.addParticipant(req.params.meetingId, req.pmProjectId, userId, source, req.user.userId));
+  } catch (e) { next(e); }
+};
+
+// Manager only — remove one participant (either source) from THIS meeting.
+const removeParticipant = async (req, res, next) => {
+  try { res.json(await svc.removeParticipant(req.params.meetingId, req.pmProjectId, req.params.uid, req.user.userId)); }
+  catch (e) { next(e); }
+};
+
 // Manager only — set one member's official status/remarks.
 const markAttendance = async (req, res, next) => {
   try {
     const { status, remarks } = req.body;
     res.json(await svc.markAttendance(req.params.meetingId, req.pmProjectId, req.params.uid, status, remarks, req.user.userId));
   } catch (e) { next(e); }
+};
+
+// Manager only — clear a mark back to Not Marked.
+const clearAttendance = async (req, res, next) => {
+  try { res.json(await svc.clearAttendance(req.params.meetingId, req.pmProjectId, req.params.uid, req.user.userId)); }
+  catch (e) { next(e); }
 };
 
 // Member (or Manager, though they'd never need to) — submit a request for
@@ -82,5 +103,6 @@ const cancelChangeRequest = async (req, res, next) => {
 
 module.exports = {
   listMeetings, createMeeting, getMeeting, updateMeeting, updateMembers, cancelMeeting,
-  markAttendance, createChangeRequest, approveChangeRequest, rejectChangeRequest, cancelChangeRequest,
+  addParticipant, removeParticipant,
+  markAttendance, clearAttendance, createChangeRequest, approveChangeRequest, rejectChangeRequest, cancelChangeRequest,
 };

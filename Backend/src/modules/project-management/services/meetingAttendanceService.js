@@ -98,8 +98,12 @@ async function createMeeting(projectId, { title, meetingDate, description, membe
       `);
     const id = ins.recordset[0].meetingId;
     for (const uid of memberIds) {
+      // source='project' — this is the Add Meeting form's roster picker,
+      // which only ever offers current project members (see
+      // addParticipant/updateMeetingMembers below for the meeting-only
+      // project-participant/guest paths added later).
       await req().input('meetingId', sql.Int, id).input('userId', sql.UniqueIdentifier, uid)
-        .query(`INSERT INTO pm_meeting_members (meeting_id, user_id) VALUES (@meetingId, @userId)`);
+        .query(`INSERT INTO pm_meeting_members (meeting_id, user_id, source) VALUES (@meetingId, @userId, 'project')`);
     }
     return id;
   });
@@ -134,7 +138,7 @@ async function getMeetingDetail(meetingId, projectId, viewerId, viewerRole) {
 
   const pool = await getPool();
   const membersR = await pool.request().input('meetingId', sql.Int, meetingId).query(`
-    SELECT mm.user_id AS userId,
+    SELECT mm.user_id AS userId, mm.source,
            COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''), u.email) AS name,
            a.status, a.remarks, a.updated_at AS updatedAt,
            a.marked_by AS markedById,
@@ -199,15 +203,21 @@ async function updateMeeting(meetingId, projectId, { title, meetingDate, descrip
   return getMeetingDetail(meetingId, projectId, actorId, 'Manager');
 }
 
-// Replace the roster with `memberIds` — adds new members, removes members no
-// longer selected (cascading their attendance/request rows off via the FK).
+// Replace the PROJECT-sourced roster with `memberIds` — adds new members,
+// removes ones no longer selected (cascading their attendance/request rows
+// off via the FK). Deliberately scoped to source='project' only (both the
+// read of "current" and the DELETE) — this is the Edit Meeting modal's
+// checkbox list, which only ever shows/offers project members, so it must
+// never touch a source='guest' row it doesn't even know about. Guests are
+// added/removed one at a time via addParticipant/removeParticipant below.
 async function updateMeetingMembers(meetingId, projectId, memberIds, actorId) {
   const meeting = await getMeetingRow(meetingId, projectId);
   if (!meeting) { const e = new Error('Meeting not found.'); e.statusCode = 404; throw e; }
   await assertMembersOfProject(projectId, memberIds);
 
   const pool = await getPool();
-  const currentR = await pool.request().input('meetingId', sql.Int, meetingId).query(`SELECT user_id AS userId FROM pm_meeting_members WHERE meeting_id=@meetingId`);
+  const currentR = await pool.request().input('meetingId', sql.Int, meetingId)
+    .query(`SELECT user_id AS userId FROM pm_meeting_members WHERE meeting_id=@meetingId AND source='project'`);
   const current = new Set(currentR.recordset.map(r => String(r.userId)));
   const desired = new Set(memberIds.map(String));
   const toAdd = [...desired].filter(id => !current.has(id));
@@ -215,15 +225,71 @@ async function updateMeetingMembers(meetingId, projectId, memberIds, actorId) {
 
   for (const uid of toAdd) {
     await pool.request().input('meetingId', sql.Int, meetingId).input('userId', sql.UniqueIdentifier, uid)
-      .query(`INSERT INTO pm_meeting_members (meeting_id, user_id) VALUES (@meetingId, @userId)`);
+      .query(`INSERT INTO pm_meeting_members (meeting_id, user_id, source) VALUES (@meetingId, @userId, 'project')`);
   }
   for (const uid of toRemove) {
     await pool.request().input('meetingId', sql.Int, meetingId).input('userId', sql.UniqueIdentifier, uid)
-      .query(`DELETE FROM pm_meeting_members WHERE meeting_id=@meetingId AND user_id=@userId`);
+      .query(`DELETE FROM pm_meeting_members WHERE meeting_id=@meetingId AND user_id=@userId AND source='project'`);
   }
   if (toAdd.length || toRemove.length) {
     await audit.log({ entityType: 'meeting', entityId: meetingId, projectId, userId: actorId, action: 'meeting_members_updated', newValue: `+${toAdd.length}/-${toRemove.length}` });
   }
+  return getMeetingDetail(meetingId, projectId, actorId, 'Manager');
+}
+
+// ── Meeting-only participants — added to THIS meeting alone, never to
+// project membership (pm_members is never touched by either path here) ────
+
+// Is this an existing, active, non-admin user? Same admin-exclusion
+// convention authService.searchUsers already uses for "who's pickable"
+// elsewhere in the app — a guest is picked from that same pool, just without
+// requiring project membership the way source='project' does.
+async function assertActiveSelectableUser(userId) {
+  const pool = await getPool();
+  const r = await pool.request().input('userId', sql.UniqueIdentifier, userId)
+    .query(`SELECT 1 AS ok FROM auth_users WHERE user_id=@userId AND is_active=1 AND user_type <> 'admin'`);
+  if (!r.recordset.length) { const e = new Error('That user could not be found.'); e.statusCode = 400; throw e; }
+}
+
+// source: 'project' (must already be a pm_members row for this project — a
+// project-side membership check, same rule createMeeting/updateMeetingMembers
+// use) or 'guest' (any other active, non-admin system user — no project
+// membership required or granted). Either way this ONLY writes
+// pm_meeting_members for THIS meeting; pm_members (project membership) is
+// never touched, and no other meeting is affected.
+async function addParticipant(meetingId, projectId, userId, source, actorId) {
+  const meeting = await getMeetingRow(meetingId, projectId);
+  if (!meeting) { const e = new Error('Meeting not found.'); e.statusCode = 404; throw e; }
+  if (source !== 'project' && source !== 'guest') { const e = new Error("source must be 'project' or 'guest'."); e.statusCode = 400; throw e; }
+  if (!userId) { const e = new Error('Select a person to add.'); e.statusCode = 400; throw e; }
+
+  if (source === 'project') await assertMembersOfProject(projectId, [userId]);
+  else await assertActiveSelectableUser(userId);
+
+  const pool = await getPool();
+  const existing = await pool.request().input('meetingId', sql.Int, meetingId).input('userId', sql.UniqueIdentifier, userId)
+    .query(`SELECT 1 AS ok FROM pm_meeting_members WHERE meeting_id=@meetingId AND user_id=@userId`);
+  if (existing.recordset.length) { const e = new Error('This person is already on this meeting.'); e.statusCode = 409; throw e; }
+
+  await pool.request().input('meetingId', sql.Int, meetingId).input('userId', sql.UniqueIdentifier, userId).input('source', sql.NVarChar(20), source)
+    .query(`INSERT INTO pm_meeting_members (meeting_id, user_id, source) VALUES (@meetingId, @userId, @source)`);
+  await audit.log({ entityType: 'meeting', entityId: meetingId, projectId, userId: actorId, action: 'meeting_participant_added', fieldChanged: source, newValue: userId });
+  return getMeetingDetail(meetingId, projectId, actorId, 'Manager');
+}
+
+// Removes one participant from THIS meeting only — works for either source
+// (a project-sourced member removed this way is exactly equivalent to
+// unchecking them in the Edit Meeting modal; a guest removed this way is the
+// ONLY way to remove a guest, since updateMeetingMembers above never touches
+// guest rows). Cascades their attendance/request rows off via the FK. Project
+// membership (pm_members) is never touched.
+async function removeParticipant(meetingId, projectId, userId, actorId) {
+  const meeting = await getMeetingRow(meetingId, projectId);
+  if (!meeting) { const e = new Error('Meeting not found.'); e.statusCode = 404; throw e; }
+  const pool = await getPool();
+  await pool.request().input('meetingId', sql.Int, meetingId).input('userId', sql.UniqueIdentifier, userId)
+    .query(`DELETE FROM pm_meeting_members WHERE meeting_id=@meetingId AND user_id=@userId`);
+  await audit.log({ entityType: 'meeting', entityId: meetingId, projectId, userId: actorId, action: 'meeting_participant_removed', newValue: userId });
   return getMeetingDetail(meetingId, projectId, actorId, 'Manager');
 }
 
@@ -262,6 +328,23 @@ async function markAttendance(meetingId, projectId, targetUserId, status, remark
       WHEN NOT MATCHED THEN INSERT (meeting_id, user_id, status, remarks, marked_by) VALUES (@meetingId, @userId, @status, @remarks, @markedBy);
     `);
   await audit.log({ entityType: 'meeting', entityId: meetingId, projectId, userId: actorId, action: 'attendance_marked', fieldChanged: 'status', newValue: status });
+  return getMeetingDetail(meetingId, projectId, actorId, 'Manager');
+}
+
+// Clears a mark back to "Not Marked" — the simplified UI's "change" affordance:
+// clicking an already-set Present/Absent chip clears it so both radio
+// options show again, without leaving a stale status behind. Manager/admin
+// only (route-gated), same as markAttendance. Deletes the row outright
+// (matches how "no row = Not Marked" already works everywhere else in this
+// feature) — the fact it was cleared is still in the audit trail even though
+// the live row is gone.
+async function clearAttendance(meetingId, projectId, targetUserId, actorId) {
+  const meeting = await getMeetingRow(meetingId, projectId);
+  if (!meeting) { const e = new Error('Meeting not found.'); e.statusCode = 404; throw e; }
+  const pool = await getPool();
+  await pool.request().input('meetingId', sql.Int, meetingId).input('userId', sql.UniqueIdentifier, targetUserId)
+    .query(`DELETE FROM pm_meeting_attendance WHERE meeting_id=@meetingId AND user_id=@userId`);
+  await audit.log({ entityType: 'meeting', entityId: meetingId, projectId, userId: actorId, action: 'attendance_cleared' });
   return getMeetingDetail(meetingId, projectId, actorId, 'Manager');
 }
 
@@ -369,5 +452,6 @@ async function cancelChangeRequest(requestId, projectId, actorId) {
 
 module.exports = {
   STATUSES, listMeetings, createMeeting, getMeetingDetail, updateMeeting, updateMeetingMembers, cancelMeeting,
-  markAttendance, createChangeRequest, decideChangeRequest, cancelChangeRequest,
+  addParticipant, removeParticipant,
+  markAttendance, clearAttendance, createChangeRequest, decideChangeRequest, cancelChangeRequest,
 };

@@ -21,8 +21,15 @@ router.patch('/projects/:id/meetings/:meetingId',        setProjectId, requireRo
 router.put('/projects/:id/meetings/:meetingId/members',  setProjectId, requireRole('Manager'), ctrl.updateMembers);
 router.post('/projects/:id/meetings/:meetingId/cancel',  setProjectId, requireRole('Manager'), ctrl.cancelMeeting);
 
+// ── Meeting-only participants (Project Participant or Guest) — Manager only.
+// Neither path ever touches pm_members (project membership) or any other
+// meeting. ──
+router.post('/projects/:id/meetings/:meetingId/participants',      setProjectId, requireRole('Manager'), ctrl.addParticipant);
+router.delete('/projects/:id/meetings/:meetingId/participants/:uid', setProjectId, requireRole('Manager'), ctrl.removeParticipant);
+
 // ── Official attendance — Manager/admin only ────────────────────────────────
-router.put('/projects/:id/meetings/:meetingId/attendance/:uid', setProjectId, requireRole('Manager'), ctrl.markAttendance);
+router.put('/projects/:id/meetings/:meetingId/attendance/:uid',    setProjectId, requireRole('Manager'), ctrl.markAttendance);
+router.delete('/projects/:id/meetings/:meetingId/attendance/:uid', setProjectId, requireRole('Manager'), ctrl.clearAttendance);
 
 // ── Self attendance change requests ─────────────────────────────────────────
 // Submit — Member and above (excludes Viewer; a Manager could technically

@@ -218,7 +218,12 @@ export const meetingAttendanceApi = {
   update:          (projectId, meetingId, body)    => axiosInstance.patch(`${BASE}/${projectId}/meetings/${meetingId}`, body).then(r => r.data),
   updateMembers:   (projectId, meetingId, memberIds) => axiosInstance.put(`${BASE}/${projectId}/meetings/${meetingId}/members`, { memberIds }).then(r => r.data),
   cancel:          (projectId, meetingId)          => axiosInstance.post(`${BASE}/${projectId}/meetings/${meetingId}/cancel`).then(r => r.data),
+  // Meeting-only participants — source: 'project' | 'guest'. Never touches
+  // project membership; only ever affects THIS meeting.
+  addParticipant:  (projectId, meetingId, userId, source) => axiosInstance.post(`${BASE}/${projectId}/meetings/${meetingId}/participants`, { userId, source }).then(r => r.data),
+  removeParticipant: (projectId, meetingId, userId) => axiosInstance.delete(`${BASE}/${projectId}/meetings/${meetingId}/participants/${userId}`).then(r => r.data),
   markAttendance:  (projectId, meetingId, userId, body) => axiosInstance.put(`${BASE}/${projectId}/meetings/${meetingId}/attendance/${userId}`, body).then(r => r.data),
+  clearAttendance: (projectId, meetingId, userId)  => axiosInstance.delete(`${BASE}/${projectId}/meetings/${meetingId}/attendance/${userId}`).then(r => r.data),
   requestChange:   (projectId, meetingId, body)    => axiosInstance.post(`${BASE}/${projectId}/meetings/${meetingId}/requests`, body).then(r => r.data),
   cancelRequest:   (projectId, requestId)          => axiosInstance.post(`${BASE}/${projectId}/meetings/requests/${requestId}/cancel`).then(r => r.data),
   approveRequest:  (projectId, requestId, note)    => axiosInstance.post(`${BASE}/${projectId}/meetings/requests/${requestId}/approve`, { note }).then(r => r.data),
