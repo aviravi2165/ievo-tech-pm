@@ -1,30 +1,18 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTheme } from '@emotion/react';
-import { ChevronLeft, Pencil, XCircle } from 'lucide-react';
+import { ChevronLeft, Pencil, XCircle, X } from 'lucide-react';
 import { meetingAttendanceApi } from '../api/projectApi';
 import { showToast, apiErrorMessage } from '../hooks/toastStore';
-import { BtnPrimary, BtnGhost, IconBtn, IconBtnDanger, Empty } from '../styles/shared.styles';
+import { BtnPrimary, BtnGhost, IconBtn, IconBtnDanger, Empty, MemberRow } from '../styles/shared.styles';
 import MeetingFormModal from './MeetingFormModal';
 import AttendanceChangeRequestModal from './AttendanceChangeRequestModal';
+import UserSearchInput from './UserSearchInput';
 
-const STATUSES = ['Present', 'Absent'];
-const STATUS_COLOR = { Present: 'success', Absent: 'danger' };
 function initials(name = '') { return (name || '?').split(' ').filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase(); }
 function fmtDate(d) {
   if (!d) return '—';
   const dt = new Date(d);
   return Number.isNaN(dt.getTime()) ? String(d) : dt.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
-}
-
-// Subtle, tinted status pill (not a solid red/amber/green dashboard fill) —
-// same restrained treatment the old AttendancePanel/ApprovalsPanel already
-// used for exactly this reason.
-function StatusChip({ status, theme }) {
-  if (!status) return <span style={{ fontSize: 11, color: theme.colors.ashLight, fontStyle: 'italic' }}>Not marked</span>;
-  const color = theme.colors[STATUS_COLOR[status]] || theme.colors.ash;
-  return (
-    <span style={{ fontSize: 11, fontWeight: 700, color, background: `${color}1a`, borderRadius: 10, padding: '3px 10px' }}>{status}</span>
-  );
 }
 
 function KpiCard({ label, value, theme, color }) {
@@ -37,10 +25,115 @@ function KpiCard({ label, value, theme, color }) {
 }
 
 /**
+ * AttendanceControls — the Manager-only, no-Edit-click attendance widget for
+ * one member row. Real <input type="radio"> elements (not pill buttons):
+ *   - Not Marked: both radios unchecked.
+ *   - Click Present → saves immediately, no reason needed.
+ *   - Click the ALREADY-checked Present radio again → clears back to Not
+ *     Marked (both radios unchecked again) — this is the "unselect" gesture.
+ *   - Click Absent → radio shows checked right away, but nothing is saved
+ *     yet; a mandatory reason box appears alongside it. Save is disabled
+ *     until non-empty, and nothing is written to the server before then.
+ *   - Click the already-saved Absent radio again → clears it the same way
+ *     Present does (symmetric "click again to unselect").
+ *   - Clicking the OTHER (currently unchecked) radio always just switches
+ *     straight to it — standard radio-group behavior.
+ * All of this is a UI convenience only; the server re-validates everything
+ * (mandatory reason for Absent, roster membership, Manager-only) regardless.
+ */
+function AttendanceControls({ member, busy, onSetPresent, onSaveAbsent, onClear, theme }) {
+  const [pendingAbsent, setPendingAbsent] = useState(false);
+  const [reason, setReason] = useState('');
+
+  // Reset the transient "typing a reason" state whenever the SERVER status
+  // actually changes (save/clear succeeded, or a reload brought in someone
+  // else's change) — otherwise a stale reason box could linger.
+  useEffect(() => { setPendingAbsent(false); setReason(''); }, [member.status]);
+
+  const presentChecked = member.status === 'Present';
+  const absentChecked = member.status === 'Absent' || pendingAbsent;
+
+  const clickPresent = () => {
+    if (busy) return;
+    if (presentChecked) { onClear(); return; } // click the selected radio again → unselect
+    setPendingAbsent(false); setReason('');
+    onSetPresent();
+  };
+  const clickAbsent = () => {
+    if (busy) return;
+    if (member.status === 'Absent') { onClear(); return; } // click the selected (saved) radio again → unselect
+    if (pendingAbsent) { setPendingAbsent(false); setReason(''); return; } // un-pick a not-yet-saved Absent
+    setPendingAbsent(true);
+  };
+
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: theme.colors.onyx, cursor: busy ? 'default' : 'pointer' }}>
+        <input
+          type="radio" name={`attendance-${member.userId}`} checked={presentChecked} disabled={busy}
+          onChange={() => {}} onClick={clickPresent}
+          style={{ width: 14, height: 14, accentColor: theme.colors.success, cursor: busy ? 'default' : 'pointer' }}
+        />
+        Present
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: theme.colors.onyx, cursor: busy ? 'default' : 'pointer' }}>
+        <input
+          type="radio" name={`attendance-${member.userId}`} checked={absentChecked} disabled={busy}
+          onChange={() => {}} onClick={clickAbsent}
+          style={{ width: 14, height: 14, accentColor: theme.colors.danger, cursor: busy ? 'default' : 'pointer' }}
+        />
+        Absent
+      </label>
+
+      {member.status === 'Absent' && !pendingAbsent && member.remarks && (
+        <span style={{ fontSize: 11, color: theme.colors.ash, fontStyle: 'italic', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={member.remarks}>"{member.remarks}"</span>
+      )}
+
+      {pendingAbsent && (
+        <>
+          <input value={reason} onChange={e => setReason(e.target.value)} autoFocus placeholder="Reason (required)"
+            style={{ fontSize: 12, width: 150, background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '4px 8px', color: theme.colors.onyx, outline: 'none', fontFamily: 'inherit' }} />
+          <BtnPrimary onClick={() => onSaveAbsent(reason.trim())} disabled={busy || !reason.trim()} style={{ fontSize: 11, padding: '4px 10px' }}>Save</BtnPrimary>
+        </>
+      )}
+    </span>
+  );
+}
+
+// ── "+ Add Project Participant" — a short, filterable list of current
+// project members not already on this meeting. No new API needed; the full
+// project roster is already loaded by the parent (ProjectDetailPage). ──────
+function PickFromList({ theme, candidates, onPick, busy, emptyText, filterPlaceholder, renderExtra }) {
+  const [search, setSearch] = useState('');
+  const filtered = candidates.filter(m => !search.trim() || (m.name || '').toLowerCase().includes(search.toLowerCase()) || (m.email || '').toLowerCase().includes(search.toLowerCase()));
+  return (
+    <div style={{ marginTop: 8, padding: 10, background: theme.colors.greige, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm }}>
+      <input value={search} onChange={e => setSearch(e.target.value)} placeholder={filterPlaceholder} autoFocus
+        style={{ width: '100%', marginBottom: 8, background: theme.colors.white, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '6px 10px', fontSize: 12, color: theme.colors.onyx, outline: 'none', fontFamily: 'inherit' }} />
+      <div style={{ maxHeight: 180, overflowY: 'auto' }}>
+        {candidates.length === 0 && <div style={{ fontSize: 12, color: theme.colors.ash, padding: '4px 2px' }}>{emptyText}</div>}
+        {candidates.length > 0 && filtered.length === 0 && <div style={{ fontSize: 12, color: theme.colors.ash, padding: '4px 2px' }}>No match.</div>}
+        {filtered.map(m => (
+          <MemberRow key={m.userId} as="button" type="button" onClick={() => onPick(m)} disabled={busy}
+            style={{ width: '100%', cursor: 'pointer', textAlign: 'left', border: `1px solid ${theme.colors.border}` }}>
+            <span style={{ width: 22, height: 22, flexShrink: 0, borderRadius: '50%', background: theme.colors.mid, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 700, color: theme.colors.onyx }}>{initials(m.name)}</span>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: theme.colors.onyx, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.name}</span>
+            {renderExtra?.(m)}
+          </MemberRow>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
  * MeetingDetailPanel — one meeting's attendance sheet: KPI summary + every
- * roster member's official status/remarks, with role-gated controls:
- *   - Manager: mark/edit any row directly, approve/reject pending requests,
- *     edit/cancel the meeting.
+ * participant's official status/remarks, with role-gated controls:
+ *   - Manager: mark attendance directly via Present/Absent radios (no Edit
+ *     click needed), add meeting-only participants (existing project
+ *     members OR guests) via the top toolbar, remove one via the single
+ *     "Remove Participant" picker (also top toolbar — no per-row icons),
+ *     approve/reject pending requests, edit/cancel the meeting.
  *   - Member: read-only for everyone else's row; on their OWN row, a
  *     "Request change" button (disabled with an explanatory tag while a
  *     request is already pending) instead of any direct edit control.
@@ -59,11 +152,9 @@ export default function MeetingDetailPanel({ projectId, meetingId, myUserId, myR
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busyKey, setBusyKey] = useState(null);
-  const [editingUserId, setEditingUserId] = useState(null);
-  const [editStatus, setEditStatus] = useState('Present');
-  const [editRemarks, setEditRemarks] = useState('');
   const [showEditMeeting, setShowEditMeeting] = useState(false);
   const [requestModalFor, setRequestModalFor] = useState(null); // member row while the request modal is open
+  const [toolPanel, setToolPanel] = useState(null); // null | 'add-project' | 'add-guest' | 'remove'
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -73,16 +164,20 @@ export default function MeetingDetailPanel({ projectId, meetingId, myUserId, myR
   }, [projectId, meetingId]);
   useEffect(() => { load(); }, [load]);
 
-  const startEdit = (m) => { setEditingUserId(m.userId); setEditStatus(m.status || 'Present'); setEditRemarks(m.remarks || ''); };
-
-  const saveMark = async (userId) => {
-    if (editStatus === 'Absent' && !editRemarks.trim()) { showToast('A remark/reason is required when marking someone Absent.'); return; }
+  const quickMark = async (userId, status, remarks) => {
     setBusyKey(`mark-${userId}`);
     try {
-      await meetingAttendanceApi.markAttendance(projectId, meetingId, userId, { status: editStatus, remarks: editRemarks.trim() || null });
-      setEditingUserId(null); await load(); onChanged?.();
-      showToast('Attendance updated.', 'success');
+      await meetingAttendanceApi.markAttendance(projectId, meetingId, userId, { status, remarks: remarks || null });
+      await load(); onChanged?.();
+      showToast(`Marked ${status}.`, 'success');
     } catch (err) { showToast(apiErrorMessage(err, 'Failed to update attendance.')); }
+    finally { setBusyKey(null); }
+  };
+
+  const clearMark = async (userId) => {
+    setBusyKey(`clear-${userId}`);
+    try { await meetingAttendanceApi.clearAttendance(projectId, meetingId, userId); await load(); onChanged?.(); }
+    catch (err) { showToast(apiErrorMessage(err, 'Failed to clear attendance.')); }
     finally { setBusyKey(null); }
   };
 
@@ -111,12 +206,47 @@ export default function MeetingDetailPanel({ projectId, meetingId, myUserId, myR
     finally { setBusyKey(null); }
   };
 
+  const addProjectParticipant = async (m) => {
+    setBusyKey(`add-${m.userId}`);
+    try { await meetingAttendanceApi.addParticipant(projectId, meetingId, m.userId, 'project'); await load(); onChanged?.(); showToast('Added to this meeting.', 'success'); }
+    catch (err) { showToast(apiErrorMessage(err, 'Failed to add that participant.')); }
+    finally { setBusyKey(null); }
+  };
+
+  const addGuest = async (user) => {
+    if (!user) return;
+    setBusyKey(`add-${user.userId}`);
+    try {
+      await meetingAttendanceApi.addParticipant(projectId, meetingId, user.userId, 'guest');
+      await load(); onChanged?.(); setToolPanel(null);
+      showToast('Guest added to this meeting.', 'success');
+    } catch (err) { showToast(apiErrorMessage(err, 'Failed to add that guest.')); }
+    finally { setBusyKey(null); }
+  };
+
+  const removeParticipant = async (m) => {
+    if (!window.confirm(`Remove ${m.name} from this meeting? Their attendance record for this meeting will be removed too.`)) return;
+    setBusyKey(`remove-${m.userId}`);
+    try { await meetingAttendanceApi.removeParticipant(projectId, meetingId, m.userId); await load(); onChanged?.(); }
+    catch (err) { showToast(apiErrorMessage(err, 'Failed to remove that participant.')); }
+    finally { setBusyKey(null); }
+  };
+
   if (loading) return <div style={{ padding: 20, color: theme.colors.ash, fontSize: 13 }}>Loading…</div>;
   if (error) return <Empty>{error}</Empty>;
   if (!data) return null;
 
   const { meeting, kpis, members } = data;
-  const currentMemberIds = members.map(m => m.userId);
+  // The Edit Meeting modal's checkbox roster is project-members-only — pass
+  // it only the currently-checked PROJECT-sourced members, never guests
+  // (guests aren't in that list at all and must never be affected by it).
+  const currentProjectMemberIds = members.filter(m => m.source === 'project').map(m => m.userId);
+  const meetingMemberIdSet = new Set(members.map(m => String(m.userId)));
+  const availableProjectMembers = (projectMembers || []).filter(m => !meetingMemberIdSet.has(String(m.userId)));
+  // A guest picker shouldn't offer people already on the meeting OR people
+  // who are already project members (those belong in "+ Add Project
+  // Participant" instead) — keeps the two flows meaningfully distinct.
+  const guestExcludeIds = [...meetingMemberIdSet, ...(projectMembers || []).map(m => String(m.userId))];
 
   return (
     <div>
@@ -148,11 +278,43 @@ export default function MeetingDetailPanel({ projectId, meetingId, myUserId, myR
         {kpis.notMarked > 0 && <KpiCard label="Not marked" value={kpis.notMarked} theme={theme} color={theme.colors.ashLight} />}
       </div>
 
+      {/* ── Participant management — top of the participant section, Manager
+          only. One "Remove Participant" picker here rather than a per-row
+          icon on every single row. ── */}
+      {canEdit && (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <BtnGhost type="button" onClick={() => setToolPanel(toolPanel === 'add-project' ? null : 'add-project')} style={{ fontSize: 11.5, padding: '6px 12px' }}>+ Add Project Participant</BtnGhost>
+            <BtnGhost type="button" onClick={() => setToolPanel(toolPanel === 'add-guest' ? null : 'add-guest')} style={{ fontSize: 11.5, padding: '6px 12px' }}>+ Add Guest Participant</BtnGhost>
+            <BtnGhost type="button" onClick={() => setToolPanel(toolPanel === 'remove' ? null : 'remove')} style={{ fontSize: 11.5, padding: '6px 12px' }}>Remove Participant</BtnGhost>
+          </div>
+
+          {toolPanel === 'add-project' && (
+            <PickFromList theme={theme} candidates={availableProjectMembers} onPick={addProjectParticipant}
+              busy={busyKey?.startsWith('add-')} emptyText="Every project member is already on this meeting."
+              filterPlaceholder="Filter project members…" />
+          )}
+          {toolPanel === 'add-guest' && (
+            <div style={{ marginTop: 8, padding: 10, background: theme.colors.greige, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm }}>
+              <div style={{ fontSize: 11, color: theme.colors.ash, marginBottom: 6 }}>
+                Search any user in the system — added to this meeting only, not to the project.
+              </div>
+              <UserSearchInput selectedUser={null} onSelect={addGuest} excludeUserIds={guestExcludeIds} placeholder="Search by name or email…" />
+            </div>
+          )}
+          {toolPanel === 'remove' && (
+            <PickFromList theme={theme} candidates={members} onPick={removeParticipant}
+              busy={busyKey?.startsWith('remove-')} emptyText="No participants on this meeting."
+              filterPlaceholder="Filter participants to remove…"
+              renderExtra={(m) => <X size={13} strokeWidth={2} color={theme.colors.danger} style={{ flexShrink: 0 }} />} />
+          )}
+        </div>
+      )}
+
       {/* ── Member rows ── */}
       <div style={{ border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, overflow: 'hidden' }}>
         {members.map(m => {
           const isMe = String(m.userId) === String(myUserId);
-          const isEditingThis = editingUserId === m.userId;
           const fullRequest = m.pendingRequest && m.pendingRequest.requestId ? m.pendingRequest : null;
           const bareRequestPending = m.pendingRequest && !m.pendingRequest.requestId; // { status: 'pending' } only
 
@@ -160,32 +322,30 @@ export default function MeetingDetailPanel({ projectId, meetingId, myUserId, myR
             <div key={m.userId} style={{ padding: '10px 12px', borderBottom: `1px solid ${theme.colors.border}`, background: theme.colors.white }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={{ width: 28, height: 28, flexShrink: 0, borderRadius: '50%', background: theme.colors.mid, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: theme.colors.onyx }}>{initials(m.name)}</span>
-                <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: theme.colors.onyx, fontWeight: isMe ? 700 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {m.name}{isMe && <span style={{ color: theme.colors.ash, fontWeight: 400 }}> (you)</span>}
+                <span style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
+                  <span style={{ fontSize: 13, color: theme.colors.onyx, fontWeight: isMe ? 700 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {m.name}{isMe && <span style={{ color: theme.colors.ash, fontWeight: 400 }}> (you)</span>}
+                  </span>
+                  {m.source === 'guest' && (
+                    <span style={{ fontSize: 9, fontWeight: 700, color: theme.colors.ash, background: theme.colors.mid, borderRadius: 8, padding: '2px 6px', textTransform: 'uppercase', letterSpacing: '.03em', flexShrink: 0 }}>Guest</span>
+                  )}
                 </span>
 
-                {isEditingThis ? (
-                  <>
-                    <select value={editStatus} onChange={e => setEditStatus(e.target.value)}
-                      style={{ fontSize: 12, background: theme.colors.mid, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '4px 8px', color: theme.colors.onyx, outline: 'none', fontFamily: 'inherit' }}>
-                      {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                    <input value={editRemarks} onChange={e => setEditRemarks(e.target.value)}
-                      placeholder={editStatus === 'Absent' ? 'Reason (required)' : 'Remarks (optional)'}
-                      style={{ fontSize: 12, width: 160, background: theme.colors.mid, border: `1px solid ${editStatus === 'Absent' && !editRemarks.trim() ? theme.colors.danger : theme.colors.border}`, borderRadius: theme.radius.sm, padding: '4px 8px', color: theme.colors.onyx, outline: 'none', fontFamily: 'inherit' }} />
-                    <BtnPrimary onClick={() => saveMark(m.userId)} disabled={busyKey === `mark-${m.userId}`} style={{ fontSize: 11, padding: '4px 10px' }}>Save</BtnPrimary>
-                    <button type="button" onClick={() => setEditingUserId(null)} style={{ background: 'none', border: 'none', color: theme.colors.ash, cursor: 'pointer', fontSize: 12 }}>Cancel</button>
-                  </>
+                {canEdit ? (
+                  <AttendanceControls
+                    member={m} theme={theme}
+                    busy={busyKey === `mark-${m.userId}` || busyKey === `clear-${m.userId}`}
+                    onSetPresent={() => quickMark(m.userId, 'Present')}
+                    onSaveAbsent={(reason) => quickMark(m.userId, 'Absent', reason)}
+                    onClear={() => clearMark(m.userId)}
+                  />
                 ) : (
                   <>
-                    <StatusChip status={m.status} theme={theme} />
+                    {!m.status && <span style={{ fontSize: 11, color: theme.colors.ashLight, fontStyle: 'italic' }}>Not marked</span>}
+                    {m.status === 'Present' && <span style={{ fontSize: 11, fontWeight: 700, color: theme.colors.success, background: `${theme.colors.success}1a`, borderRadius: 10, padding: '3px 10px' }}>Present</span>}
+                    {m.status === 'Absent' && <span style={{ fontSize: 11, fontWeight: 700, color: theme.colors.danger, background: `${theme.colors.danger}1a`, borderRadius: 10, padding: '3px 10px' }}>Absent</span>}
                     {m.remarks && (
-                      <span style={{ fontSize: 11, color: theme.colors.ash, fontStyle: 'italic', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.remarks}>
-                        "{m.remarks}"
-                      </span>
-                    )}
-                    {canEdit && (
-                      <button type="button" onClick={() => startEdit(m)} style={{ background: 'none', border: 'none', color: theme.colors.espresso, cursor: 'pointer', fontSize: 11.5, fontWeight: 600 }}>Edit</button>
+                      <span style={{ fontSize: 11, color: theme.colors.ash, fontStyle: 'italic', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.remarks}>"{m.remarks}"</span>
                     )}
                     {isMember && isMe && !fullRequest && !bareRequestPending && (
                       <button type="button" onClick={() => setRequestModalFor(m)} style={{ background: 'none', border: 'none', color: theme.colors.espresso, cursor: 'pointer', fontSize: 11.5, fontWeight: 600 }}>Request change</button>
@@ -228,7 +388,7 @@ export default function MeetingDetailPanel({ projectId, meetingId, myUserId, myR
 
       {showEditMeeting && (
         <MeetingFormModal
-          mode="edit" projectId={projectId} meeting={meeting} currentMemberIds={currentMemberIds}
+          mode="edit" projectId={projectId} meeting={meeting} currentMemberIds={currentProjectMemberIds}
           projectMembers={projectMembers} onClose={() => setShowEditMeeting(false)}
           onSaved={() => { load(); onChanged?.(); }}
         />
