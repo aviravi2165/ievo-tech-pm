@@ -224,6 +224,9 @@ export const meetingAttendanceApi = {
   removeParticipant: (projectId, meetingId, userId) => axiosInstance.delete(`${BASE}/${projectId}/meetings/${meetingId}/participants/${userId}`).then(r => r.data),
   markAttendance:  (projectId, meetingId, userId, body) => axiosInstance.put(`${BASE}/${projectId}/meetings/${meetingId}/attendance/${userId}`, body).then(r => r.data),
   clearAttendance: (projectId, meetingId, userId)  => axiosInstance.delete(`${BASE}/${projectId}/meetings/${meetingId}/attendance/${userId}`).then(r => r.data),
+  // Returns the meeting detail plus affectedUserIds (who actually changed) — pass those back to undo.
+  markAllPresent:  (projectId, meetingId, userIds) => axiosInstance.post(`${BASE}/${projectId}/meetings/${meetingId}/attendance/bulk-present`, { userIds }).then(r => r.data),
+  undoMarkAllPresent: (projectId, meetingId, userIds) => axiosInstance.post(`${BASE}/${projectId}/meetings/${meetingId}/attendance/bulk-present/undo`, { userIds }).then(r => r.data),
   requestChange:   (projectId, meetingId, body)    => axiosInstance.post(`${BASE}/${projectId}/meetings/${meetingId}/requests`, body).then(r => r.data),
   cancelRequest:   (projectId, requestId)          => axiosInstance.post(`${BASE}/${projectId}/meetings/requests/${requestId}/cancel`).then(r => r.data),
   approveRequest:  (projectId, requestId, note)    => axiosInstance.post(`${BASE}/${projectId}/meetings/requests/${requestId}/approve`, { note }).then(r => r.data),

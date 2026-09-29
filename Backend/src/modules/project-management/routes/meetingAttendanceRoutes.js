@@ -30,6 +30,9 @@ router.delete('/projects/:id/meetings/:meetingId/participants/:uid', setProjectI
 // ── Official attendance — Manager/admin only ────────────────────────────────
 router.put('/projects/:id/meetings/:meetingId/attendance/:uid',    setProjectId, requireRole('Manager'), ctrl.markAttendance);
 router.delete('/projects/:id/meetings/:meetingId/attendance/:uid', setProjectId, requireRole('Manager'), ctrl.clearAttendance);
+// Bulk "Mark all Present" + Undo (POST, so no clash with the :uid routes above).
+router.post('/projects/:id/meetings/:meetingId/attendance/bulk-present',      setProjectId, requireRole('Manager'), ctrl.markAllPresent);
+router.post('/projects/:id/meetings/:meetingId/attendance/bulk-present/undo', setProjectId, requireRole('Manager'), ctrl.undoMarkAllPresent);
 
 // ── Self attendance change requests ─────────────────────────────────────────
 // Submit — Member and above (excludes Viewer; a Manager could technically

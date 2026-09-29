@@ -58,11 +58,13 @@ export default function MeetingAttendancePanel({ projectId, myUserId, myRole, pr
   const [showAdd, setShowAdd] = useState(false);
   const [selectedMeetingId, setSelectedMeetingId] = useState(null);
 
-  const load = useCallback(async () => {
-    setLoading(true); setError('');
+  // `silent` refreshes keep the current list on screen instead of flashing
+  // "Loading…" — used for background refreshes after changes in a meeting.
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) { setLoading(true); setError(''); }
     try { setMeetings(await meetingAttendanceApi.list(projectId, { search: search || undefined, dateFrom: dateFrom || undefined, dateTo: dateTo || undefined })); }
-    catch (err) { setError(apiErrorMessage(err, 'Failed to load meetings.')); }
-    finally { setLoading(false); }
+    catch (err) { if (!silent) setError(apiErrorMessage(err, 'Failed to load meetings.')); }
+    finally { if (!silent) setLoading(false); }
   }, [projectId, search, dateFrom, dateTo]);
   useEffect(() => { load(); }, [load]);
 
@@ -70,7 +72,11 @@ export default function MeetingAttendancePanel({ projectId, myUserId, myRole, pr
     return (
       <MeetingDetailPanel
         projectId={projectId} meetingId={selectedMeetingId} myUserId={myUserId} myRole={myRole}
-        projectMembers={projectMembers} onBack={() => setSelectedMeetingId(null)} onChanged={load}
+        projectMembers={projectMembers}
+        // Refresh the list's Present/Absent counts on the way back, instead
+        // of on every single attendance click inside the meeting.
+        onBack={() => { setSelectedMeetingId(null); load({ silent: true }); }}
+        onChanged={() => load({ silent: true })}
       />
     );
   }
@@ -119,9 +125,9 @@ export default function MeetingAttendancePanel({ projectId, myUserId, myRole, pr
 
       {showAdd && (
         <MeetingFormModal
-          mode="create" projectId={projectId} projectMembers={projectMembers}
+          mode="create" projectId={projectId} projectMembers={projectMembers} myUserId={myUserId}
           onClose={() => setShowAdd(false)}
-          onSaved={(meetingId) => { load(); setSelectedMeetingId(meetingId); }}
+          onSaved={(meetingId) => { load({ silent: true }); setSelectedMeetingId(meetingId); }}
         />
       )}
     </div>
