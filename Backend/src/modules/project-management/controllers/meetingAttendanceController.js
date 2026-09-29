@@ -15,8 +15,8 @@ const listMeetings = async (req, res, next) => {
 // Manager only (route-gated).
 const createMeeting = async (req, res, next) => {
   try {
-    const { title, meetingDate, description, memberIds } = req.body;
-    res.status(201).json(await svc.createMeeting(req.pmProjectId, { title, meetingDate, description, memberIds }, req.user.userId));
+    const { title, meetingDate, description, memberIds, guestIds } = req.body;
+    res.status(201).json(await svc.createMeeting(req.pmProjectId, { title, meetingDate, description, memberIds, guestIds }, req.user.userId));
   } catch (e) { next(e); }
 };
 
@@ -68,6 +68,17 @@ const markAttendance = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
+// Manager only — bulk-mark the given (currently Not Marked) people Present,
+// and its Undo. See meetingAttendanceService for the exact safety rules.
+const markAllPresent = async (req, res, next) => {
+  try { res.json(await svc.markAllPresent(req.params.meetingId, req.pmProjectId, req.body.userIds, req.user.userId)); }
+  catch (e) { next(e); }
+};
+const undoMarkAllPresent = async (req, res, next) => {
+  try { res.json(await svc.undoMarkAllPresent(req.params.meetingId, req.pmProjectId, req.body.userIds, req.user.userId)); }
+  catch (e) { next(e); }
+};
+
 // Manager only — clear a mark back to Not Marked.
 const clearAttendance = async (req, res, next) => {
   try { res.json(await svc.clearAttendance(req.params.meetingId, req.pmProjectId, req.params.uid, req.user.userId)); }
@@ -104,5 +115,5 @@ const cancelChangeRequest = async (req, res, next) => {
 module.exports = {
   listMeetings, createMeeting, getMeeting, updateMeeting, updateMembers, cancelMeeting,
   addParticipant, removeParticipant,
-  markAttendance, clearAttendance, createChangeRequest, approveChangeRequest, rejectChangeRequest, cancelChangeRequest,
+  markAttendance, clearAttendance, markAllPresent, undoMarkAllPresent, createChangeRequest, approveChangeRequest, rejectChangeRequest, cancelChangeRequest,
 };

@@ -79,10 +79,20 @@ async function assertMembersOfProject(projectId, userIds) {
   }
 }
 
-async function createMeeting(projectId, { title, meetingDate, description, memberIds }, actorId) {
+// memberIds = current project members (source='project'); guestIds = any
+// other active, non-admin users added to THIS meeting only (source='guest',
+// never touches pm_members) — the same two kinds of participant the
+// meeting's own "+ Add Project/Guest Participant" controls add later.
+async function createMeeting(projectId, { title, meetingDate, description, memberIds = [], guestIds = [] }, actorId) {
   if (!title?.trim()) { const e = new Error('Meeting title is required.'); e.statusCode = 400; throw e; }
   if (!meetingDate) { const e = new Error('Meeting date is required.'); e.statusCode = 400; throw e; }
-  await assertMembersOfProject(projectId, memberIds);
+  memberIds = [...new Set((memberIds || []).map(String))];
+  // A guest who is actually a project member is just treated as a project
+  // participant; duplicates collapse.
+  guestIds = [...new Set((guestIds || []).map(String))].filter(id => !memberIds.includes(id));
+  if (!memberIds.length && !guestIds.length) { const e = new Error('Add at least one participant.'); e.statusCode = 400; throw e; }
+  if (memberIds.length) await assertMembersOfProject(projectId, memberIds);
+  for (const gid of guestIds) await assertActiveSelectableUser(gid);
 
   const meetingId = await withTransaction(async (req) => {
     const ins = await req()
@@ -98,12 +108,12 @@ async function createMeeting(projectId, { title, meetingDate, description, membe
       `);
     const id = ins.recordset[0].meetingId;
     for (const uid of memberIds) {
-      // source='project' — this is the Add Meeting form's roster picker,
-      // which only ever offers current project members (see
-      // addParticipant/updateMeetingMembers below for the meeting-only
-      // project-participant/guest paths added later).
       await req().input('meetingId', sql.Int, id).input('userId', sql.UniqueIdentifier, uid)
         .query(`INSERT INTO pm_meeting_members (meeting_id, user_id, source) VALUES (@meetingId, @userId, 'project')`);
+    }
+    for (const gid of guestIds) {
+      await req().input('meetingId', sql.Int, id).input('userId', sql.UniqueIdentifier, gid)
+        .query(`INSERT INTO pm_meeting_members (meeting_id, user_id, source) VALUES (@meetingId, @userId, 'guest')`);
     }
     return id;
   });
@@ -348,6 +358,70 @@ async function clearAttendance(meetingId, projectId, targetUserId, actorId) {
   return getMeetingDetail(meetingId, projectId, actorId, 'Manager');
 }
 
+// ── Bulk "Mark all Present" + its Undo — Manager/admin only (route-gated) ──
+//
+// markAllPresent only fills in rows that are currently NOT MARKED — it never
+// overwrites someone already marked Absent (with their mandatory reason) or
+// Present. Returns the exact userIds it changed so the client can offer a
+// precise Undo. undoMarkAllPresent clears only those userIds whose row is
+// STILL Present — a later deliberate change to Absent is left alone.
+async function assertRosterMembers(meetingId, userIds) {
+  if (!Array.isArray(userIds) || !userIds.length) { const e = new Error('No participants given.'); e.statusCode = 400; throw e; }
+  const pool = await getPool();
+  const req = pool.request().input('meetingId', sql.Int, meetingId);
+  const placeholders = userIds.map((id, i) => { req.input(`u${i}`, sql.UniqueIdentifier, id); return `@u${i}`; }).join(',');
+  const r = await req.query(`SELECT user_id AS userId FROM pm_meeting_members WHERE meeting_id=@meetingId AND user_id IN (${placeholders})`);
+  if (r.recordset.length !== new Set(userIds.map(String)).size) {
+    const e = new Error("One or more of those people aren't on this meeting's roster."); e.statusCode = 400; throw e;
+  }
+}
+
+async function markAllPresent(meetingId, projectId, userIds, actorId) {
+  const meeting = await getMeetingRow(meetingId, projectId);
+  if (!meeting) { const e = new Error('Meeting not found.'); e.statusCode = 404; throw e; }
+  await assertRosterMembers(meetingId, userIds);
+
+  const affectedUserIds = await withTransaction(async (req) => {
+    const changed = [];
+    for (const uid of userIds) {
+      const r = await req().input('meetingId', sql.Int, meetingId).input('userId', sql.UniqueIdentifier, uid)
+        .input('markedBy', sql.UniqueIdentifier, actorId)
+        .query(`
+          INSERT INTO pm_meeting_attendance (meeting_id, user_id, status, remarks, marked_by)
+          SELECT @meetingId, @userId, 'Present', NULL, @markedBy
+          WHERE NOT EXISTS (SELECT 1 FROM pm_meeting_attendance WHERE meeting_id=@meetingId AND user_id=@userId)
+        `);
+      if (r.rowsAffected[0] > 0) changed.push(uid);
+    }
+    return changed;
+  });
+  if (affectedUserIds.length) {
+    await audit.log({ entityType: 'meeting', entityId: meetingId, projectId, userId: actorId, action: 'attendance_bulk_present', newValue: String(affectedUserIds.length) });
+  }
+  const detail = await getMeetingDetail(meetingId, projectId, actorId, 'Manager');
+  return { ...detail, affectedUserIds };
+}
+
+async function undoMarkAllPresent(meetingId, projectId, userIds, actorId) {
+  const meeting = await getMeetingRow(meetingId, projectId);
+  if (!meeting) { const e = new Error('Meeting not found.'); e.statusCode = 404; throw e; }
+  if (!Array.isArray(userIds) || !userIds.length) { const e = new Error('Nothing to undo.'); e.statusCode = 400; throw e; }
+
+  const reverted = await withTransaction(async (req) => {
+    let count = 0;
+    for (const uid of userIds) {
+      const r = await req().input('meetingId', sql.Int, meetingId).input('userId', sql.UniqueIdentifier, uid)
+        .query(`DELETE FROM pm_meeting_attendance WHERE meeting_id=@meetingId AND user_id=@userId AND status='Present'`);
+      count += r.rowsAffected[0] || 0;
+    }
+    return count;
+  });
+  if (reverted) {
+    await audit.log({ entityType: 'meeting', entityId: meetingId, projectId, userId: actorId, action: 'attendance_bulk_present_undone', newValue: String(reverted) });
+  }
+  return getMeetingDetail(meetingId, projectId, actorId, 'Manager');
+}
+
 // ── Self attendance change requests ─────────────────────────────────────────
 
 // Member submits a request for THEIR OWN row only — requestedBy is always
@@ -453,5 +527,5 @@ async function cancelChangeRequest(requestId, projectId, actorId) {
 module.exports = {
   STATUSES, listMeetings, createMeeting, getMeetingDetail, updateMeeting, updateMeetingMembers, cancelMeeting,
   addParticipant, removeParticipant,
-  markAttendance, clearAttendance, createChangeRequest, decideChangeRequest, cancelChangeRequest,
+  markAttendance, clearAttendance, markAllPresent, undoMarkAllPresent, createChangeRequest, decideChangeRequest, cancelChangeRequest,
 };

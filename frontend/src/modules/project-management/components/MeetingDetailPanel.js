@@ -15,6 +15,16 @@ function fmtDate(d) {
   return Number.isNaN(dt.getTime()) ? String(d) : dt.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+// Same shape the server returns — recomputed locally for optimistic updates.
+function computeKpis(members) {
+  return {
+    total: members.length,
+    present: members.filter(m => m.status === 'Present').length,
+    absent: members.filter(m => m.status === 'Absent').length,
+    notMarked: members.filter(m => !m.status).length,
+  };
+}
+
 function KpiCard({ label, value, theme, color }) {
   return (
     <div style={{ flex: '1 1 100px', minWidth: 90, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, padding: '10px 12px', background: theme.colors.white }}>
@@ -70,7 +80,7 @@ function AttendanceControls({ member, busy, onSetPresent, onSaveAbsent, onClear,
     <span style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
       <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: theme.colors.onyx, cursor: busy ? 'default' : 'pointer' }}>
         <input
-          type="radio" name={`attendance-${member.userId}`} checked={presentChecked} disabled={busy}
+          type="radio" name={`attendance-${member.userId}`} checked={presentChecked}
           onChange={() => {}} onClick={clickPresent}
           style={{ width: 14, height: 14, accentColor: theme.colors.success, cursor: busy ? 'default' : 'pointer' }}
         />
@@ -78,7 +88,7 @@ function AttendanceControls({ member, busy, onSetPresent, onSaveAbsent, onClear,
       </label>
       <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: theme.colors.onyx, cursor: busy ? 'default' : 'pointer' }}>
         <input
-          type="radio" name={`attendance-${member.userId}`} checked={absentChecked} disabled={busy}
+          type="radio" name={`attendance-${member.userId}`} checked={absentChecked}
           onChange={() => {}} onClick={clickAbsent}
           style={{ width: 14, height: 14, accentColor: theme.colors.danger, cursor: busy ? 'default' : 'pointer' }}
         />
@@ -155,37 +165,94 @@ export default function MeetingDetailPanel({ projectId, meetingId, myUserId, myR
   const [showEditMeeting, setShowEditMeeting] = useState(false);
   const [requestModalFor, setRequestModalFor] = useState(null); // member row while the request modal is open
   const [toolPanel, setToolPanel] = useState(null); // null | 'add-project' | 'add-guest' | 'remove'
+  const [bulkUndoIds, setBulkUndoIds] = useState(null); // userIds the last "Mark all Present" actually changed
 
-  const load = useCallback(async () => {
-    setLoading(true); setError('');
+  // Only the FIRST load shows "Loading…". Every later refresh is silent and
+  // updates in place — previously each attendance click re-fetched with
+  // loading=true, which blanked the whole panel and read as a page reload.
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) { setLoading(true); setError(''); }
     try { setData(await meetingAttendanceApi.get(projectId, meetingId)); }
-    catch (err) { setError(apiErrorMessage(err, 'Failed to load this meeting.')); }
-    finally { setLoading(false); }
+    catch (err) {
+      if (silent) showToast(apiErrorMessage(err, 'Failed to refresh this meeting.'));
+      else setError(apiErrorMessage(err, 'Failed to load this meeting.'));
+    }
+    finally { if (!silent) setLoading(false); }
   }, [projectId, meetingId]);
   useEffect(() => { load(); }, [load]);
+  const refresh = () => load({ silent: true });
+
+  // Patch one member row locally (KPIs recomputed) — used for optimistic
+  // attendance updates so a radio click reflects instantly, and only that
+  // row changes when the server answers (no whole-panel swap, and no race
+  // where one row's response overwrites another row's in-flight click).
+  const patchMember = (userId, fields) => setData(prev => {
+    if (!prev) return prev;
+    const members = prev.members.map(m => (String(m.userId) === String(userId) ? { ...m, ...fields } : m));
+    return { ...prev, members, kpis: computeKpis(members) };
+  });
 
   const quickMark = async (userId, status, remarks) => {
+    const before = data.members.find(m => String(m.userId) === String(userId));
+    patchMember(userId, { status, remarks: remarks || null });
     setBusyKey(`mark-${userId}`);
     try {
-      await meetingAttendanceApi.markAttendance(projectId, meetingId, userId, { status, remarks: remarks || null });
-      await load(); onChanged?.();
-      showToast(`Marked ${status}.`, 'success');
-    } catch (err) { showToast(apiErrorMessage(err, 'Failed to update attendance.')); }
-    finally { setBusyKey(null); }
+      const res = await meetingAttendanceApi.markAttendance(projectId, meetingId, userId, { status, remarks: remarks || null });
+      const fresh = res.members.find(m => String(m.userId) === String(userId));
+      if (fresh) patchMember(userId, fresh);
+    } catch (err) {
+      patchMember(userId, { status: before?.status ?? null, remarks: before?.remarks ?? null });
+      showToast(apiErrorMessage(err, 'Failed to update attendance.'));
+    } finally { setBusyKey(null); }
   };
 
   const clearMark = async (userId) => {
+    const before = data.members.find(m => String(m.userId) === String(userId));
+    patchMember(userId, { status: null, remarks: null });
     setBusyKey(`clear-${userId}`);
-    try { await meetingAttendanceApi.clearAttendance(projectId, meetingId, userId); await load(); onChanged?.(); }
-    catch (err) { showToast(apiErrorMessage(err, 'Failed to clear attendance.')); }
+    try { await meetingAttendanceApi.clearAttendance(projectId, meetingId, userId); }
+    catch (err) {
+      patchMember(userId, { status: before?.status ?? null, remarks: before?.remarks ?? null });
+      showToast(apiErrorMessage(err, 'Failed to clear attendance.'));
+    } finally { setBusyKey(null); }
+  };
+
+  // Bulk: only people currently Not Marked — never overwrites an Absent (and
+  // its reason). The server enforces the same rule and reports exactly who
+  // it changed, which is what Undo sends back.
+  const markAllPresent = async (ids) => {
+    if (!ids.length) return;
+    const idSet = new Set(ids.map(String));
+    setData(prev => {
+      const members = prev.members.map(m => (idSet.has(String(m.userId)) && !m.status ? { ...m, status: 'Present', remarks: null } : m));
+      return { ...prev, members, kpis: computeKpis(members) };
+    });
+    setBusyKey('bulk');
+    try {
+      const { affectedUserIds, ...detail } = await meetingAttendanceApi.markAllPresent(projectId, meetingId, ids);
+      setData(detail);
+      setBulkUndoIds(affectedUserIds.length ? affectedUserIds : null);
+      showToast(`Marked ${affectedUserIds.length} Present.`, 'success');
+    } catch (err) { await refresh(); showToast(apiErrorMessage(err, 'Failed to mark everyone Present.')); }
+    finally { setBusyKey(null); }
+  };
+
+  const undoMarkAllPresent = async () => {
+    if (!bulkUndoIds?.length) return;
+    setBusyKey('bulk');
+    try {
+      setData(await meetingAttendanceApi.undoMarkAllPresent(projectId, meetingId, bulkUndoIds));
+      setBulkUndoIds(null);
+      showToast('Undone.', 'success');
+    } catch (err) { showToast(apiErrorMessage(err, 'Failed to undo.')); }
     finally { setBusyKey(null); }
   };
 
   const decide = async (requestId, action) => {
     setBusyKey(`req-${requestId}`);
     try {
-      await (action === 'approve' ? meetingAttendanceApi.approveRequest(projectId, requestId) : meetingAttendanceApi.rejectRequest(projectId, requestId));
-      await load(); onChanged?.();
+      setData(await (action === 'approve' ? meetingAttendanceApi.approveRequest(projectId, requestId) : meetingAttendanceApi.rejectRequest(projectId, requestId)));
+      onChanged?.();
       showToast(action === 'approve' ? 'Request approved — attendance updated.' : 'Request rejected.', 'success');
     } catch (err) { showToast(apiErrorMessage(err, 'Failed to decide this request.')); }
     finally { setBusyKey(null); }
@@ -193,7 +260,7 @@ export default function MeetingDetailPanel({ projectId, meetingId, myUserId, myR
 
   const cancelMyRequest = async (requestId) => {
     setBusyKey(`req-${requestId}`);
-    try { await meetingAttendanceApi.cancelRequest(projectId, requestId); await load(); showToast('Request cancelled.', 'success'); }
+    try { await meetingAttendanceApi.cancelRequest(projectId, requestId); await refresh(); showToast('Request cancelled.', 'success'); }
     catch (err) { showToast(apiErrorMessage(err, 'Failed to cancel your request.')); }
     finally { setBusyKey(null); }
   };
@@ -208,7 +275,7 @@ export default function MeetingDetailPanel({ projectId, meetingId, myUserId, myR
 
   const addProjectParticipant = async (m) => {
     setBusyKey(`add-${m.userId}`);
-    try { await meetingAttendanceApi.addParticipant(projectId, meetingId, m.userId, 'project'); await load(); onChanged?.(); showToast('Added to this meeting.', 'success'); }
+    try { setData(await meetingAttendanceApi.addParticipant(projectId, meetingId, m.userId, 'project')); onChanged?.(); showToast('Added to this meeting.', 'success'); }
     catch (err) { showToast(apiErrorMessage(err, 'Failed to add that participant.')); }
     finally { setBusyKey(null); }
   };
@@ -217,8 +284,8 @@ export default function MeetingDetailPanel({ projectId, meetingId, myUserId, myR
     if (!user) return;
     setBusyKey(`add-${user.userId}`);
     try {
-      await meetingAttendanceApi.addParticipant(projectId, meetingId, user.userId, 'guest');
-      await load(); onChanged?.(); setToolPanel(null);
+      setData(await meetingAttendanceApi.addParticipant(projectId, meetingId, user.userId, 'guest'));
+      onChanged?.(); setToolPanel(null);
       showToast('Guest added to this meeting.', 'success');
     } catch (err) { showToast(apiErrorMessage(err, 'Failed to add that guest.')); }
     finally { setBusyKey(null); }
@@ -227,7 +294,7 @@ export default function MeetingDetailPanel({ projectId, meetingId, myUserId, myR
   const removeParticipant = async (m) => {
     if (!window.confirm(`Remove ${m.name} from this meeting? Their attendance record for this meeting will be removed too.`)) return;
     setBusyKey(`remove-${m.userId}`);
-    try { await meetingAttendanceApi.removeParticipant(projectId, meetingId, m.userId); await load(); onChanged?.(); }
+    try { setData(await meetingAttendanceApi.removeParticipant(projectId, meetingId, m.userId)); onChanged?.(); }
     catch (err) { showToast(apiErrorMessage(err, 'Failed to remove that participant.')); }
     finally { setBusyKey(null); }
   };
@@ -247,6 +314,11 @@ export default function MeetingDetailPanel({ projectId, meetingId, myUserId, myR
   // who are already project members (those belong in "+ Add Project
   // Participant" instead) — keeps the two flows meaningfully distinct.
   const guestExcludeIds = [...meetingMemberIdSet, ...(projectMembers || []).map(m => String(m.userId))];
+  const notMarkedIds = members.filter(m => !m.status).map(m => m.userId);
+  // Undo stays offered while at least one person the bulk action marked is
+  // still Present (the server re-checks the same thing).
+  const undoIdSet = new Set((bulkUndoIds || []).map(String));
+  const undoAvailable = undoIdSet.size > 0 && members.some(m => undoIdSet.has(String(m.userId)) && m.status === 'Present');
 
   return (
     <div>
@@ -313,6 +385,25 @@ export default function MeetingDetailPanel({ projectId, meetingId, myUserId, myR
 
       {/* ── Member rows ── */}
       <div style={{ border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, overflow: 'hidden' }}>
+        {/* Bulk bar — Manager only. "Mark all Present" fills in everyone still
+            Not Marked (Absent entries are never overwritten); Undo reverts
+            exactly those people. */}
+        {canEdit && members.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '7px 12px', background: theme.colors.greige, borderBottom: `1px solid ${theme.colors.border}` }}>
+            <span style={{ fontSize: 11, color: theme.colors.ash }}>
+              {notMarkedIds.length ? `${notMarkedIds.length} not marked yet` : 'Everyone is marked'}
+            </span>
+            <span style={{ display: 'flex', gap: 6 }}>
+              {undoAvailable && (
+                <BtnGhost type="button" onClick={undoMarkAllPresent} disabled={busyKey === 'bulk'} style={{ fontSize: 11, padding: '4px 10px' }}>Undo mark all</BtnGhost>
+              )}
+              <BtnPrimary type="button" onClick={() => markAllPresent(notMarkedIds)} disabled={busyKey === 'bulk' || notMarkedIds.length === 0}
+                style={{ fontSize: 11, padding: '4px 10px' }}>
+                Mark all Present
+              </BtnPrimary>
+            </span>
+          </div>
+        )}
         {members.map(m => {
           const isMe = String(m.userId) === String(myUserId);
           const fullRequest = m.pendingRequest && m.pendingRequest.requestId ? m.pendingRequest : null;
@@ -334,7 +425,7 @@ export default function MeetingDetailPanel({ projectId, meetingId, myUserId, myR
                 {canEdit ? (
                   <AttendanceControls
                     member={m} theme={theme}
-                    busy={busyKey === `mark-${m.userId}` || busyKey === `clear-${m.userId}`}
+                    busy={busyKey === `mark-${m.userId}` || busyKey === `clear-${m.userId}` || busyKey === 'bulk'}
                     onSetPresent={() => quickMark(m.userId, 'Present')}
                     onSaveAbsent={(reason) => quickMark(m.userId, 'Absent', reason)}
                     onClear={() => clearMark(m.userId)}
@@ -388,15 +479,15 @@ export default function MeetingDetailPanel({ projectId, meetingId, myUserId, myR
 
       {showEditMeeting && (
         <MeetingFormModal
-          mode="edit" projectId={projectId} meeting={meeting} currentMemberIds={currentProjectMemberIds}
+          mode="edit" projectId={projectId} meeting={meeting} currentMemberIds={currentProjectMemberIds} myUserId={myUserId}
           projectMembers={projectMembers} onClose={() => setShowEditMeeting(false)}
-          onSaved={() => { load(); onChanged?.(); }}
+          onSaved={() => { refresh(); onChanged?.(); }}
         />
       )}
       {requestModalFor && (
         <AttendanceChangeRequestModal
           projectId={projectId} meetingId={meetingId} currentStatus={requestModalFor.status}
-          onClose={() => setRequestModalFor(null)} onSubmitted={load}
+          onClose={() => setRequestModalFor(null)} onSubmitted={refresh}
         />
       )}
     </div>
