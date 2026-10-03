@@ -43,6 +43,11 @@ const cancelRequest = async (req, res, next) => {
 // Every request ever addressed to the caller (any status) — the "who
 // requested this, and why" log a designated approver needs. Self-scoped
 // (req.user.userId), so no extra access check needed here.
+const getProjectRevisions = async (req, res, next) => {
+  try { res.json(await svc.getProjectDateRevisions(req.pmProjectId)); }
+  catch (e) { next(e); }
+};
+
 const listHistory = async (req, res, next) => {
   try { res.json(await svc.listHistoryForApprover(req.user.userId)); }
   catch (e) { next(e); }
@@ -71,6 +76,7 @@ const removeApprover = async (req, res, next) => {
 };
 
 module.exports = {
+  getProjectRevisions,
   create, listPending, listMine, listHistory, approve, reject, cancel: cancelRequest,
   listEligibleApprovers, listApprovers, addApprover, removeApprover,
 };

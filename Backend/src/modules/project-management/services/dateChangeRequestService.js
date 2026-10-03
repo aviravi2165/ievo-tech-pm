@@ -303,7 +303,80 @@ async function cancel(requestId, actorId) {
   return getRequestById(requestId);
 }
 
+
+// ── Date revision history ─────────────────────────────────────────────────
+// Every planned-date change on the project, per entity + field, oldest
+// first. Two sources:
+//   1. Approved date-change requests — carry old -> new, reason, requester
+//      and approver.
+//   2. Direct edits ('updated' audit rows on a date column — admins bypass
+//      the lock, and anyone may fill in a date that was still empty). The
+//      audit row only stores the NEW value, so the old one is the previous
+//      known value of that field; with no previous value it's the date being
+//      set for the first time, which is listed but not counted as a revision.
+const AUDIT_DATE_COLS = { due_date: 'dueDate', start_date: 'startDate', planned_start: 'plannedStart', planned_end: 'plannedEnd' };
+const FIELD_LABEL = { dueDate: 'Due date', startDate: 'Start date', plannedStart: 'Start date', plannedEnd: 'End date' };
+
+async function getProjectDateRevisions(projectId) {
+  const pool = await getPool();
+  const nameExpr = (a) => `COALESCE(NULLIF(TRIM(CONCAT(${a}.first_name,' ',${a}.last_name)),''), ${a}.email)`;
+  const [approved, direct] = await Promise.all([
+    pool.request().input('projectId', sql.Int, projectId).query(`
+      SELECT r.entity_type AS entityType, r.entity_id AS entityId, r.field_changed AS field,
+             CONVERT(varchar(10), r.old_value, 23) AS oldValue, CONVERT(varchar(10), r.new_value, 23) AS newValue,
+             r.reason, r.decision_note AS decisionNote, r.decided_at AS at, r.created_at AS requestedAt,
+             ${nameExpr('ru')} AS requestedByName, ${nameExpr('du')} AS approvedByName
+      FROM pm_date_change_requests r
+      LEFT JOIN auth_users ru ON ru.user_id = r.requested_by
+      LEFT JOIN auth_users du ON du.user_id = r.decided_by
+      WHERE r.project_id = @projectId AND r.status = 'approved'`),
+    pool.request().input('projectId', sql.Int, projectId).query(`
+      SELECT a.entity_type AS entityType, a.entity_id AS entityId, a.field_changed AS col,
+             LEFT(CAST(a.new_value AS nvarchar(40)), 10) AS newValue, a.changed_at AS at,
+             ${nameExpr('u')} AS byName
+      FROM pm_audit_log a
+      LEFT JOIN auth_users u ON u.user_id = a.user_id
+      WHERE a.project_id = @projectId AND a.action = 'updated'
+        AND a.field_changed IN ('due_date','start_date','planned_start','planned_end')`),
+  ]);
+
+  const events = [
+    ...approved.recordset.map(r => ({
+      entityType: r.entityType, entityId: r.entityId, field: r.field, kind: 'approved',
+      oldValue: r.oldValue, newValue: r.newValue, at: r.at, byName: r.requestedByName,
+      approvedByName: r.approvedByName, reason: r.reason, decisionNote: r.decisionNote,
+    })),
+    ...direct.recordset
+      .filter(r => AUDIT_DATE_COLS[r.col] && r.newValue && /^\d{4}-\d{2}-\d{2}$/.test(r.newValue))
+      .map(r => ({
+        entityType: r.entityType, entityId: r.entityId, field: AUDIT_DATE_COLS[r.col], kind: 'direct',
+        oldValue: null, newValue: r.newValue, at: r.at, byName: r.byName,
+      })),
+  ].sort((a, b) => new Date(a.at) - new Date(b.at));
+
+  const lastValue = new Map(); // `${type}:${id}:${field}` -> last known date
+  const entities = {};
+  for (const ev of events) {
+    const fieldKey = `${ev.entityType}:${ev.entityId}:${ev.field}`;
+    if (ev.kind === 'direct') ev.oldValue = lastValue.get(fieldKey) ?? null;
+    lastValue.set(fieldKey, ev.newValue);
+    if (ev.oldValue && ev.oldValue === ev.newValue) continue;
+    ev.isRevision = Boolean(ev.oldValue);
+    ev.fieldLabel = FIELD_LABEL[ev.field] || ev.field;
+    const key = `${ev.entityType}:${ev.entityId}`;
+    if (!entities[key]) entities[key] = { count: 0, events: [] };
+    entities[key].events.push(ev);
+    if (ev.isRevision) entities[key].count += 1;
+  }
+  for (const key of Object.keys(entities)) {
+    if (entities[key].count === 0) delete entities[key];
+    else entities[key].events.reverse(); // newest first for display
+  }
+  return { entities };
+}
+
 module.exports = {
+  getProjectDateRevisions,
   assertDateFieldsAllowed, createRequest, listForApprover, listHistoryForApprover, listMine, decide, cancel, getRequestById,
   isValidApprover, listEligibleApprovers, listApprovers, addApprover, removeApprover,
 };

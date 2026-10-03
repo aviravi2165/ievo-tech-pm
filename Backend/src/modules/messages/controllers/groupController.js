@@ -1,4 +1,5 @@
 const groupService = require('../services/groupService');
+const groupEmailService = require('../services/groupEmailService');
 
 function handleError(res, err) {
   const status = err.statusCode || 500;
@@ -205,6 +206,20 @@ async function hide(req, res) {
   }
 }
 
+// Any member — one email to the whole team (all in To:).
+async function emailTeam(req, res) {
+  try {
+    const groupId = parseInt(req.params.groupId, 10);
+    if (Number.isNaN(groupId)) {
+      return res.status(400).json({ error: 'Invalid group id' });
+    }
+    const { subject, message } = req.body || {};
+    return res.json(await groupEmailService.emailGroup(groupId, req.user.userId, { subject, message }));
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
 async function getGroupConversation(req, res) {
   try {
     const groupId = parseInt(req.params.groupId, 10);
@@ -310,6 +325,7 @@ module.exports = {
   create,
   updateGroup,
   getMembers,
+  emailTeam,
   addMembers,
   removeMember,
   setAdmin,

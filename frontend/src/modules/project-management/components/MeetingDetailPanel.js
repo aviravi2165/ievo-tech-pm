@@ -7,6 +7,7 @@ import { BtnPrimary, BtnGhost, IconBtn, IconBtnDanger, Empty, MemberRow } from '
 import MeetingFormModal from './MeetingFormModal';
 import AttendanceChangeRequestModal from './AttendanceChangeRequestModal';
 import UserSearchInput from './UserSearchInput';
+import MeetingMinutesModal from './MeetingMinutesModal';
 
 function initials(name = '') { return (name || '?').split(' ').filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase(); }
 function fmtDate(d) {
@@ -165,6 +166,7 @@ export default function MeetingDetailPanel({ projectId, meetingId, myUserId, myR
   const [showEditMeeting, setShowEditMeeting] = useState(false);
   const [requestModalFor, setRequestModalFor] = useState(null); // member row while the request modal is open
   const [toolPanel, setToolPanel] = useState(null); // null | 'add-project' | 'add-guest' | 'remove'
+  const [showMinutes, setShowMinutes] = useState(false);
   const [bulkUndoIds, setBulkUndoIds] = useState(null); // userIds the last "Mark all Present" actually changed
 
   // Only the FIRST load shows "Loading…". Every later refresh is silent and
@@ -350,15 +352,17 @@ export default function MeetingDetailPanel({ projectId, meetingId, myUserId, myR
         {kpis.notMarked > 0 && <KpiCard label="Not marked" value={kpis.notMarked} theme={theme} color={theme.colors.ashLight} />}
       </div>
 
-      {/* ── Participant management — top of the participant section, Manager
-          only. One "Remove Participant" picker here rather than a per-row
-          icon on every single row. ── */}
-      {canEdit && (
-        <div style={{ marginBottom: 10 }}>
+      {/* ── Toolbar — participant buttons are Manager-only (one "Remove
+          Participant" picker rather than per-row icons). Minutes of Meeting
+          is shown to everyone; the modal decides who may write. ── */}
+      <div style={{ marginBottom: 10 }}>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {canEdit && (<>
             <BtnGhost type="button" onClick={() => setToolPanel(toolPanel === 'add-project' ? null : 'add-project')} style={{ fontSize: 11.5, padding: '6px 12px' }}>+ Add Project Participant</BtnGhost>
             <BtnGhost type="button" onClick={() => setToolPanel(toolPanel === 'add-guest' ? null : 'add-guest')} style={{ fontSize: 11.5, padding: '6px 12px' }}>+ Add Guest Participant</BtnGhost>
             <BtnGhost type="button" onClick={() => setToolPanel(toolPanel === 'remove' ? null : 'remove')} style={{ fontSize: 11.5, padding: '6px 12px' }}>Remove Participant</BtnGhost>
+            </>)}
+            <BtnPrimary type="button" onClick={() => setShowMinutes(true)} style={{ fontSize: 11.5, padding: '6px 12px' }}>Minutes of Meeting</BtnPrimary>
           </div>
 
           {toolPanel === 'add-project' && (
@@ -381,7 +385,8 @@ export default function MeetingDetailPanel({ projectId, meetingId, myUserId, myR
               renderExtra={(m) => <X size={13} strokeWidth={2} color={theme.colors.danger} style={{ flexShrink: 0 }} />} />
           )}
         </div>
-      )}
+
+      {showMinutes && <MeetingMinutesModal projectId={projectId} meeting={meeting} onClose={() => setShowMinutes(false)} />}
 
       {/* ── Member rows ── */}
       <div style={{ border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, overflow: 'hidden' }}>

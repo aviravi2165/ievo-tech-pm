@@ -10,6 +10,8 @@ export const groupApi = {
   update:       (groupId, data)             => api.patch(`/api/groups/${groupId}`, data).then(r => r.data),
 
   getMembers:   (groupId)                   => api.get(`/api/groups/${groupId}/members`).then(r => r.data),
+  // One email to every member (all in To:).
+  emailTeam:    (groupId, subject, message) => api.post(`/api/groups/${groupId}/email`, { subject, message }).then(r => r.data),
   addMembers:   (groupId, userIds)          => api.post(`/api/groups/${groupId}/members`, { userIds }).then(r => r.data),
   removeMember: (groupId, userId)           => api.delete(`/api/groups/${groupId}/members/${userId}`).then(r => r.data),
 

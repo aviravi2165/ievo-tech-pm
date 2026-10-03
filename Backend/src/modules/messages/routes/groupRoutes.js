@@ -14,6 +14,8 @@ router.post('/',   groupController.create);
 router.get('/:groupId/admin', groupController.getOneForAdmin);
 
 router.get('/:groupId/members',         groupController.getMembers);
+// Any member — send one email to the whole team
+router.post('/:groupId/email',          groupController.emailTeam);
 router.post('/:groupId/members',        groupController.addMembers);
 router.delete('/:groupId/members/:userId', groupController.removeMember);
 

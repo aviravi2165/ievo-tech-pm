@@ -18,6 +18,9 @@ import ApprovalsPanel from '../components/ApprovalsPanel';
 // MeetingAttendancePanel below — left in place, untouched, along with its
 // backend/pm_attendance table, just no longer wired into this tab.
 import MeetingAttendancePanel from '../components/MeetingAttendancePanel';
+import BudgetPanel from '../components/BudgetPanel';
+import DateRevisionBadge, { DateRevisionsContext } from '../components/DateRevisionBadge';
+import { dateChangeRequestApi } from '../api/projectApi';
 import DateChangeRequestModal from '../components/DateChangeRequestModal';
 import { useProject } from '../hooks/useProject';
 import { useProjectAnalytics } from '../hooks/useProjectAnalytics';
@@ -52,6 +55,16 @@ function fmtDate(d) {
 export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
   const theme = useTheme();
   const { project, phases, loading, error, refetch } = useProject(projectId);
+  // Date revision history for every entity in this project; reloaded whenever
+  // the project refetches (approvals and date edits both trigger one).
+  const [dateRevisions, setDateRevisions] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    dateChangeRequestApi.projectRevisions(projectId)
+      .then(r => { if (!cancelled) setDateRevisions(r.entities || {}); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [projectId, project, phases]);
   const [tab,          setTab]          = useState('Phases');
   const [showAddPhase, setShowAddPhase] = useState(false);
   const [showEditProject, setShowEditProject] = useState(false);
@@ -219,6 +232,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
   })();
 
   return (
+    <DateRevisionsContext.Provider value={dateRevisions}>
     <Detail>
       {/* ── Header ── */}
       <DetailHeader>
@@ -239,6 +253,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
           <DetailSub>
             {project.ownerName && <span>Owner: {project.ownerName}</span>}
             {project.plannedStart && <span> · {fmtDate(project.plannedStart)} → {fmtDate(project.plannedEnd)}</span>}
+            {' '}<DateRevisionBadge entityType="project" entityId={projectId} title={project.name} />
             {project.isOverdue && <> · <OverdueBadge days={project.overdueDays} /></>}
           </DetailSub>
           {project.description && (
@@ -360,7 +375,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
       {/* ── Tabs ── The Report tab appears (after Audit) only for admins or
           people explicitly added to this project's report (reportAccess). ── */}
       <DetailTabs>
-        {[...(project.reportAccess ? [...TABS, 'Report'] : TABS), 'Approvals', 'Attendance'].map(t => (
+        {[...(project.reportAccess ? [...TABS, 'Report'] : TABS), 'Approvals', 'Attendance', 'Budget'].map(t => (
           <Tab key={t} active={tab === t} onClick={() => setTab(t)}>
             {t}
             {t === 'Phases'  && <span style={{ marginLeft:5, opacity:.6, fontSize:11 }}>({phases.length})</span>}
@@ -555,6 +570,8 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
         {tab === 'Attendance' && (
           <MeetingAttendancePanel projectId={projectId} myUserId={myUserId} myRole={project.myRole} projectMembers={project.members || []} />
         )}
+
+        {tab === 'Budget' && <BudgetPanel projectId={projectId} />}
       </DetailBody>
       )}
 
@@ -571,5 +588,6 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
         />
       )}
     </Detail>
+    </DateRevisionsContext.Provider>
   );
 }

@@ -187,6 +187,8 @@ export const dateChangeRequestApi = {
   cancel:       (requestId)           => axiosInstance.post(`/api/date-requests/${requestId}/cancel`).then(r => r.data),
   // The fixed list a requester picks from — admins + designated approvers.
   listEligible: ()                    => axiosInstance.get('/api/date-approvers/eligible').then(r => r.data),
+  // Every planned-date revision in a project, keyed 'type:id'.
+  projectRevisions: (projectId)       => axiosInstance.get(`/api/projects/${projectId}/date-revisions`).then(r => r.data),
 };
 
 // Admin-only: curate who can be picked as a date-change approver.
@@ -231,6 +233,39 @@ export const meetingAttendanceApi = {
   cancelRequest:   (projectId, requestId)          => axiosInstance.post(`${BASE}/${projectId}/meetings/requests/${requestId}/cancel`).then(r => r.data),
   approveRequest:  (projectId, requestId, note)    => axiosInstance.post(`${BASE}/${projectId}/meetings/requests/${requestId}/approve`, { note }).then(r => r.data),
   rejectRequest:   (projectId, requestId, note)    => axiosInstance.post(`${BASE}/${projectId}/meetings/requests/${requestId}/reject`, { note }).then(r => r.data),
+};
+
+// Triggers a browser Save-As for an authenticated GET that returns a file.
+async function saveBlob(url, filename) {
+  const r = await axiosInstance.get(url, { responseType: 'blob' });
+  const objectUrl = URL.createObjectURL(r.data);
+  const a = document.createElement('a');
+  a.href = objectUrl; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000);
+}
+
+// Budget — project expenses.
+export const budgetApi = {
+  list:      (projectId)                  => axiosInstance.get(`${BASE}/${projectId}/expenses`).then(r => r.data),
+  create:    (projectId, body)            => axiosInstance.post(`${BASE}/${projectId}/expenses`, body).then(r => r.data),
+  update:    (projectId, expenseId, body) => axiosInstance.patch(`${BASE}/${projectId}/expenses/${expenseId}`, body).then(r => r.data),
+  remove:    (projectId, expenseId)       => axiosInstance.delete(`${BASE}/${projectId}/expenses/${expenseId}`).then(r => r.data),
+  reimburse: (projectId, expenseId, reimbursed) => axiosInstance.post(`${BASE}/${projectId}/expenses/${expenseId}/reimburse`, { reimbursed }).then(r => r.data),
+};
+
+// Minutes of Meeting — chat-like notes + files per meeting.
+export const meetingMinutesApi = {
+  list:   (projectId, meetingId) => axiosInstance.get(`${BASE}/${projectId}/meetings/${meetingId}/minutes`).then(r => r.data),
+  add:    (projectId, meetingId, body, files = []) => {
+    const form = new FormData();
+    if (body) form.append('body', body);
+    files.forEach(f => form.append('files', f));
+    return axiosInstance.post(`${BASE}/${projectId}/meetings/${meetingId}/minutes`, form, { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data);
+  },
+  update: (projectId, meetingId, minuteId, body) => axiosInstance.patch(`${BASE}/${projectId}/meetings/${meetingId}/minutes/${minuteId}`, { body }).then(r => r.data),
+  remove: (projectId, meetingId, minuteId) => axiosInstance.delete(`${BASE}/${projectId}/meetings/${meetingId}/minutes/${minuteId}`).then(r => r.data),
+  download: (projectId, meetingId, file) => saveBlob(`${BASE}/${projectId}/meetings/${meetingId}/minutes/files/${file.fileId}/download`, file.originalName),
 };
 
 // User search — used by MemberManager and assignee picker

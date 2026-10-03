@@ -9,8 +9,8 @@ import TaskItem from './TaskItem';
 import UserSearchInput from './UserSearchInput';
 import ChatButton from './ChatButton';
 import ParticipantsPanel from './ParticipantsPanel';
+import DateRevisionBadge from './DateRevisionBadge';
 import { aggregateAssignees } from '../utils/aggregateAssignees';
-import { truncateName } from '../utils/truncateName';
 import { activityApi } from '../api/projectApi';
 import { showToast, apiErrorMessage } from '../hooks/toastStore';
 import { handleSaveError } from '../hooks/dateChangeRequestStore';
@@ -420,7 +420,7 @@ export default function ActivityRow({
             style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s', flexShrink: 0, color: theme.colors.ash }} />
 
           <ActivityName style={{ opacity: (isBlocked || isInactive) ? 0.5 : 1 }} title={activity.name}>
-            {truncateName(activity.name, 24)}
+            {activity.name}
           </ActivityName>
 
           {activity.dependsOn?.length > 0 && (
@@ -468,6 +468,7 @@ export default function ActivityRow({
           title={(canEdit && !isInactive) ? 'Click to edit dates / description' : undefined}
         >
           <span style={{ fontSize:10, color:theme.colors.ash, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'100%' }}>{fmtRange(activity.plannedStart, activity.plannedEnd)}</span>
+          <DateRevisionBadge entityType="activity" entityId={activity.activityId} title={activity.name} />
           <ScheduleBadge isOverdue={activity.isOverdue} overdueDays={activity.overdueDays} delayDays={activity.delayDays} delayLabel="Late by" />
         </div>
 
