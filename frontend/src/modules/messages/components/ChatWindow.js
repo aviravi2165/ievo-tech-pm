@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useMemo, useState, useCallback } fr
 import { useTheme } from '@emotion/react';
 import MessageBubble from './MessageBubble';
 import Composer      from './Composer';
+import EmailTeamModal from './EmailTeamModal';
 import { useThread }    from '../hooks/useThread';
 import { useMessaging } from '../context/MessagingContext';
 import { useSocket }    from '../context/SocketContext';
@@ -44,6 +45,7 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
 
   const [replyingTo,       setReplyingTo]       = useState(null);
   const [showParticipants, setShowParticipants]  = useState(false);
+  const [showEmailTeam, setShowEmailTeam]        = useState(false);
   const [descExpanded,     setDescExpanded]      = useState(false);
   const [isDescTruncated,  setIsDescTruncated]   = useState(false);
   const [removing,         setRemoving]          = useState(null);
@@ -704,6 +706,20 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
             </IconBtn>
           )}
 
+          {/* Email team — any member of a group thread */}
+          {isGroupThread && !isGroupDisabled && (conv.groupId || conv.group_id) && (
+            <IconBtn
+              title="Email team — send one email to every member"
+              onClick={() => setShowEmailTeam(true)}
+              style={{ width: 30, height: 30 }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="2" y="4" width="20" height="16" rx="2"/>
+                <path d="M22 7l-10 6L2 7"/>
+              </svg>
+            </IconBtn>
+          )}
+
           {/* Participants panel toggle — CC and group threads */}
           {(isCcThread || isGroupThread) && (
             <IconBtn
@@ -790,6 +806,14 @@ export default function ChatWindow({ conversation, onBack, onDisableGroup, onEna
       </ThreadHeader>
 
       {/* ── Group edit panel ── */}
+      {showEmailTeam && (
+        <EmailTeamModal
+          groupId={conv.groupId || conv.group_id}
+          groupName={liveGroupName || conv.groupName || conv.subject}
+          onClose={() => setShowEmailTeam(false)}
+        />
+      )}
+
       {isGroupThread && editingGroup && isGroupAdmin && (
         <GroupEditPanel>
           <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>

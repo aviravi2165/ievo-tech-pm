@@ -5,6 +5,7 @@ import StatusBadge, { InactiveBadge, statusLabel } from './StatusBadge';
 import PriorityBadge from './PriorityBadge';
 import UserSearchInput from './UserSearchInput';
 import ChatButton from './ChatButton';
+import DateRevisionBadge from './DateRevisionBadge';
 import { taskApi } from '../api/projectApi';
 import { showToast, apiErrorMessage } from '../hooks/toastStore';
 import { openDateChangeRequest } from '../hooks/dateChangeRequestStore';
@@ -66,10 +67,42 @@ function initials(name = '') { return (name || '?').split(' ').map(w => w[0]).jo
 // stacked (date on top, the late/due-soon detail right under it) — the row's
 // min-height (not a fixed height) lets it grow the extra few px without
 // disturbing sibling rows.
-function DueDateBadge({ dueDate, status }) {
+// Timestamps (completedAt etc.) are full ISO instants — format them in the
+// viewer's local time, not by slicing the UTC date like parseLocalDate does.
+function fmtStamp(ts, withTime = false) {
+  const dt = new Date(ts);
+  const dd = String(dt.getDate()).padStart(2, '0');
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const date = `${dd}/${mm}/${dt.getFullYear()}`;
+  return withTime ? `${date} ${dt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}` : date;
+}
+
+// Complete tasks show WHEN they were actually finished under the due date,
+// flagged red if that was after the due date — so a late finish (e.g. the
+// prerequisite only completed at the last moment) is visible to everyone.
+function CompletedBadge({ dueDate, completedAt, completedByName }) {
   const theme = useTheme();
+  const done = completedAt ? new Date(completedAt) : new Date();
+  const doneDay = new Date(done.getFullYear(), done.getMonth(), done.getDate());
+  const due = parseLocalDate(dueDate);
+  const lateDays = due ? Math.round((doneDay - due) / 86400000) : 0;
+  const title = `Completed on ${fmtStamp(done, true)}${completedByName ? ` by ${completedByName}` : ''}`
+    + (lateDays > 0 ? ` — ${lateDays} day${lateDays === 1 ? '' : 's'} after the due date` : '');
+  const tagColor = lateDays > 0 ? theme.colors.danger : theme.colors.success;
+  return (
+    <div title={title} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+      <span style={{ fontSize: 11, color: theme.colors.ashLight }}>{dueDate ? fmtDate(dueDate) : '—'}</span>
+      <span style={{ fontSize: 9.5, fontWeight: 700, whiteSpace: 'nowrap', color: tagColor, background: `${tagColor}1a`, borderRadius: 6, padding: '1px 5px' }}>
+        {lateDays > 0 ? `Done ${lateDays}d late` : `Done ${fmtStamp(done).slice(0, 5)}`}
+      </span>
+    </div>
+  );
+}
+
+function DueDateBadge({ dueDate, status, completedAt, completedByName }) {
+  const theme = useTheme();
+  if (status === 'Complete') return <CompletedBadge dueDate={dueDate} completedAt={completedAt} completedByName={completedByName} />;
   if (!dueDate) return <span style={{ fontSize: 11, color: theme.colors.ashLight }}>—</span>;
-  if (status === 'Complete') return <span style={{ fontSize: 11, color: theme.colors.ashLight }}>{fmtDate(dueDate)}</span>;
   const dt   = parseLocalDate(dueDate);
   const now  = new Date(); now.setHours(0, 0, 0, 0);
   const diff = Math.round((dt - now) / 86400000);
@@ -359,10 +392,19 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
             {isInactive && <InactiveBadge />}
             {task.dependsOn?.length > 0 && (
               <DepBadge onClick={e => { e.stopPropagation(); setDepsAnchorEl(e.currentTarget); togglePanel('deps'); }}
-                title="This task has prerequisites" style={{ cursor: 'pointer', flexShrink: 0 }}>
+                title={task.prereqsDoneAt
+                  ? `Prerequisites completed on ${fmtStamp(task.prereqsDoneAt, true)} — this task was unblocked then`
+                  : 'This task has prerequisites — blocked until they are complete'}
+                style={{ cursor: 'pointer', flexShrink: 0 }}>
                 <ArrowRight size={10} strokeWidth={2.5} />
                 {task.dependsOn.length}
               </DepBadge>
+            )}
+            {task.dependsOn?.length > 0 && task.prereqsDoneAt && localStatus !== 'Complete' && (
+              <span title={`Prerequisites completed on ${fmtStamp(task.prereqsDoneAt, true)}`}
+                style={{ fontSize: 9.5, fontWeight: 600, color: theme.colors.ash, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                Unblocked {fmtStamp(task.prereqsDoneAt).slice(0, 5)}
+              </span>
             )}
             {/* Weightage moved out of the name cell into its own column
                 (between Priority and Status) — see below. */}
@@ -425,10 +467,11 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
             Members) is deliberately NOT used here. */}
         <Cell w={COL.due} center ref={dateRef}
           onClick={(canManager && !isInactive) ? (e) => { e.stopPropagation(); togglePanel('date'); } : undefined}
-          style={{ cursor: (canManager && !isInactive) ? 'pointer' : 'default' }}
+          style={{ cursor: (canManager && !isInactive) ? 'pointer' : 'default', flexDirection: 'column', gap: 2 }}
           title={(canManager && !isInactive) ? 'Click to edit due date' : undefined}
         >
-          <DueDateBadge dueDate={task.dueDate} status={localStatus} />
+          <DueDateBadge dueDate={task.dueDate} status={localStatus} completedAt={task.completedAt} completedByName={task.completedByName} />
+          <DateRevisionBadge entityType="task" entityId={task.taskId} title={task.name} />
         </Cell>
 
         {/* Priority column */}

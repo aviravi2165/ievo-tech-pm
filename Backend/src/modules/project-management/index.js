@@ -16,6 +16,7 @@ const reportRoutes   = require('./routes/reportRoutes');
 const dateChangeRequestRoutes = require('./routes/dateChangeRequestRoutes');
 const attendanceRoutes = require('./routes/attendanceRoutes');
 const meetingAttendanceRoutes = require('./routes/meetingAttendanceRoutes');
+const budgetRoutes = require('./routes/budgetRoutes');
 const { initPmSocket, closePmSocket } = require('./socket/socketHandler');
 const { startActivityInsightsCron } = require('./cron/activityInsightsCron');
 
@@ -43,6 +44,7 @@ function register(app) {
   // current Attendance tab. Every attendance record belongs to a specific
   // meeting (title + date), not just a bare date.
   app.use('/api', meetingAttendanceRoutes);
+  app.use('/api', budgetRoutes);
 }
 
 /**

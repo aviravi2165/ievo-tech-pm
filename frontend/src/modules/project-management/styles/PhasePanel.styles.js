@@ -4,7 +4,11 @@ const t = (fn) => (props) => fn(props.theme);
 
 export const PhaseName = styled.span`
   font-size: 11px; font-weight: 700; color: ${t(th => th.colors.onyx)};
-  min-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 60px;
+  /* Full name always visible — wrap to a second line if the Name column is
+     too narrow to fit it, instead of truncating with an ellipsis. */
+  white-space: normal; word-break: break-word; overflow-wrap: anywhere;
+  line-height: 1.25;
 `;
 
 // Pastel copper — Phase is the copper "family" throughout (header strip,

@@ -7,8 +7,8 @@ import ScheduleBadge from './ScheduleBadge';
 import EmptyStateHint from './EmptyStateHint';
 import ActivityRow from './ActivityRow';
 import ParticipantsPanel from './ParticipantsPanel';
+import DateRevisionBadge from './DateRevisionBadge';
 import { aggregateAssignees } from '../utils/aggregateAssignees';
-import { truncateName } from '../utils/truncateName';
 import { phaseApi, activityApi } from '../api/projectApi';
 import { showToast, apiErrorMessage } from '../hooks/toastStore';
 import { handleSaveError } from '../hooks/dateChangeRequestStore';
@@ -409,7 +409,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
           {/* min-width:70 (not 0) — same latent bug TaskName had: with no
               floor, this shrinkable element can compress all the way to
               invisible under space pressure instead of just truncating. */}
-          <PhaseName style={{ flex:'0 1 auto', maxWidth:220, minWidth:70 }} title={phase.name}>{truncateName(phase.name, 30)}</PhaseName>
+          <PhaseName style={{ flex:'1 1 auto', minWidth:70 }} title={phase.name}>{phase.name}</PhaseName>
 
           {/* Dependency badge — same spot TaskName puts its own dependsOn
               badge, not forced into a column that otherwise has nothing to
@@ -471,6 +471,7 @@ export default function PhasePanel({ phase, projectId, allPhases = [], projectMe
           title={(canEdit && !isInactive) ? 'Click to edit dates / weightage' : undefined}
         >
           <span style={{ fontSize:10, color:theme.colors.ash, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'100%' }}>{dateRange}</span>
+          <DateRevisionBadge entityType="phase" entityId={phase.phaseId} title={phase.name} />
           <ScheduleBadge isOverdue={phase.isOverdue} overdueDays={phase.overdueDays} delayDays={phase.delayDays} delayLabel="Late by" />
         </div>
 

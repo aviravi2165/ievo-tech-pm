@@ -12,8 +12,11 @@ const t = (fn) => (props) => fn(props.theme);
 // pressure instead of just truncating with its ellipsis.
 export const ActivityName = styled.span`
   font-size: 10.5px; font-weight: 600; color: ${t(th => th.colors.onyx)};
-  flex: 0 1 auto; max-width: 260px; min-width: 70px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 0 1 auto; min-width: 70px;
+  /* Full name always visible — wrap to a second line if the Name column is
+     too narrow to fit it, instead of truncating with an ellipsis. */
+  white-space: normal; word-break: break-word; overflow-wrap: anywhere;
+  line-height: 1.25;
 `;
 
 // Pastel navy — Activity's own color family (see PhasePanel.styles.js's

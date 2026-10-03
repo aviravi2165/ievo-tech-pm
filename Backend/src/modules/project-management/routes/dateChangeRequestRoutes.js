@@ -3,6 +3,9 @@
 const router = require('express').Router();
 const { authenticate, requireAdmin } = require('../../../middleware/auth');
 const ctrl = require('../controllers/dateChangeRequestController');
+const { requireRole } = require('../middleware/projectRole');
+
+const setProjectId = (req, _, next) => { req.pmProjectId = req.params.id; next(); };
 
 router.use(authenticate);
 
@@ -25,6 +28,9 @@ router.post('/date-requests/:id/cancel', ctrl.cancel);
 // The fixed list a requester picks an approver from (admins ∪ designated
 // approvers) — any authenticated user can read this.
 router.get('/date-approvers/eligible', ctrl.listEligibleApprovers);
+
+// Revision history of every planned date in a project — anyone on the project.
+router.get('/projects/:id/date-revisions', setProjectId, requireRole('Viewer'), ctrl.getProjectRevisions);
 
 // ── Approver management — admin only ────────────────────────────────────────
 router.get('/date-approvers',             requireAdmin, ctrl.listApprovers);

@@ -4,6 +4,8 @@ const router = require('express').Router();
 const { authenticate } = require('../../../middleware/auth');
 const { requireRole } = require('../middleware/projectRole');
 const ctrl = require('../controllers/meetingAttendanceController');
+const minutes = require('../controllers/meetingMinutesController');
+const { uploadMultiple, handleUploadError } = require('../../../middleware/upload');
 
 const setProjectId = (req, _, next) => { req.pmProjectId = req.params.id; next(); };
 
@@ -42,5 +44,14 @@ router.post('/projects/:id/meetings/requests/:requestId/cancel',         setProj
 // Decide — Manager/admin only (service also blocks deciding your own request).
 router.post('/projects/:id/meetings/requests/:requestId/approve',        setProjectId, requireRole('Manager'), ctrl.approveChangeRequest);
 router.post('/projects/:id/meetings/requests/:requestId/reject',         setProjectId, requireRole('Manager'), ctrl.rejectChangeRequest);
+
+// ── Minutes of Meeting ──────────────────────────────────────────────────────
+// Viewer floor here; the service narrows writes to meeting participants +
+// Managers, and edit/delete to the entry's author (Manager can also delete).
+router.get('/projects/:id/meetings/:meetingId/minutes',                      setProjectId, requireRole('Viewer'), minutes.listMinutes);
+router.post('/projects/:id/meetings/:meetingId/minutes',                     setProjectId, requireRole('Viewer'), uploadMultiple, handleUploadError, minutes.addMinute);
+router.patch('/projects/:id/meetings/:meetingId/minutes/:minuteId',          setProjectId, requireRole('Viewer'), minutes.updateMinute);
+router.delete('/projects/:id/meetings/:meetingId/minutes/:minuteId',         setProjectId, requireRole('Viewer'), minutes.deleteMinute);
+router.get('/projects/:id/meetings/:meetingId/minutes/files/:fileId/download', setProjectId, requireRole('Viewer'), minutes.downloadFile);
 
 module.exports = router;

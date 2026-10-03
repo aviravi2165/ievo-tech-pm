@@ -126,12 +126,39 @@ async function getTasksForActivity(activityId, userId) {
              -- to decide whether to show "Open Chat" vs "Chat available once assigned")
              (
                SELECT CAST(CASE WHEN EXISTS (SELECT 1 FROM pm_task_threads WHERE task_id = t.task_id) THEN 1 ELSE 0 END AS BIT)
-             ) AS hasThread
+             ) AS hasThread,
+             -- Actual completion: the latest status_changed -> Complete audit
+             -- row (a reopened-then-recompleted task keeps its newest one).
+             CASE WHEN t.status = 'Complete' THEN done.changed_at END AS completedAt,
+             CASE WHEN t.status = 'Complete' THEN
+               COALESCE(NULLIF(TRIM(CONCAT(du.first_name,' ',du.last_name)),''), du.email) END AS completedByName,
+             -- When the LAST prerequisite was completed = when this task's
+             -- blocker actually cleared. NULL while any prerequisite is open.
+             (
+               SELECT CASE WHEN COUNT(*) = COUNT(pc.completedAt) THEN MAX(pc.completedAt) END
+               FROM pm_task_deps d
+               INNER JOIN pm_tasks pt ON pt.task_id = d.depends_on_task_id AND pt.is_deleted = 0
+               OUTER APPLY (
+                 SELECT CASE WHEN pt.status = 'Complete' THEN MAX(al.changed_at) END AS completedAt
+                 FROM pm_audit_log al
+                 WHERE al.entity_type = 'task' AND al.entity_id = pt.task_id
+                   AND al.action = 'status_changed' AND al.field_changed = 'status' AND al.new_value = 'Complete'
+               ) pc
+               WHERE d.task_id = t.task_id
+             ) AS prereqsDoneAt
       FROM pm_tasks t
       INNER JOIN pm_activities pa ON pa.activity_id = t.activity_id
       INNER JOIN pm_phases     pph ON pph.phase_id  = pa.phase_id
       INNER JOIN pm_projects   pproj ON pproj.project_id = pph.project_id
       LEFT JOIN pm_task_threads ptt ON ptt.task_id = t.task_id
+      OUTER APPLY (
+        SELECT TOP 1 al.changed_at, al.user_id
+        FROM pm_audit_log al
+        WHERE al.entity_type = 'task' AND al.entity_id = t.task_id
+          AND al.action = 'status_changed' AND al.field_changed = 'status' AND al.new_value = 'Complete'
+        ORDER BY al.changed_at DESC
+      ) done
+      LEFT JOIN auth_users du ON du.user_id = done.user_id
       WHERE t.activity_id = @activityId AND t.is_deleted = 0
       ORDER BY t.is_active DESC, t.created_at
     `);
