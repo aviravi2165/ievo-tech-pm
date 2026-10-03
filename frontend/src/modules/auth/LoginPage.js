@@ -250,9 +250,18 @@ export default function LoginPage() {
                 If <strong>{fpEmail}</strong> is registered and active, a temporary password
                 has been sent. Use it to sign in — you'll be prompted to set a new password immediately.
               </p>
-              <p style={{ fontSize: 13, color: theme.colors.ash, lineHeight: 1.6, marginBottom: 28 }}>
-                Didn't receive it? Check your spam folder or contact your administrator.
-              </p>
+              {/* Reset emails currently tend to land in Spam/Junk (they're sent
+                  from a Gmail account), so this is a highlighted note rather
+                  than small grey print that's easy to miss. */}
+              <div style={{
+                fontSize: 13, color: theme.colors.onyx, lineHeight: 1.6, textAlign: 'left',
+                background: `${theme.colors.warning}1a`, border: `1px solid ${theme.colors.warning}59`,
+                borderRadius: theme.radius.sm, padding: '10px 14px', marginBottom: 28,
+              }}>
+                <strong>Don't see it?</strong> Please check your <strong>Spam / Junk</strong> folder too —
+                the email often lands there. If it's there, mark it as "Not spam" so future emails reach
+                your inbox. Still nothing after a few minutes? Contact your administrator.
+              </div>
 
               <SubmitBtn type="button" onClick={() => switchView('login')}>
                 Back to Sign In
