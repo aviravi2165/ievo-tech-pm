@@ -93,9 +93,9 @@ async function getTransporter() {
  * sender addresses, so we never set `from` to an address different from
  * the auth user.
  *
- * @param {{ to: string, subject: string, html: string, text?: string, replyTo?: string }} opts
+ * @param {{ to: string, subject: string, html: string, text?: string, replyTo?: string, attachments?: object[] }} opts
  */
-async function sendMail({ to, subject, html, text, replyTo }) {
+async function sendMail({ to, subject, html, text, replyTo, attachments }) {
   const transporter = await getTransporter();
 
   const displayName = process.env.SMTP_FROM
@@ -104,7 +104,11 @@ async function sendMail({ to, subject, html, text, replyTo }) {
 
   const from = `"${displayName}" <${process.env.SMTP_USER}>`;
 
-  await transporter.sendMail({ from, to, subject, html, text, ...(replyTo ? { replyTo } : {}) });
+  await transporter.sendMail({
+    from, to, subject, html, text,
+    ...(replyTo ? { replyTo } : {}),
+    ...(attachments && attachments.length ? { attachments } : {}),
+  });
   console.log(`[mailer] Email sent to ${to} — "${subject}"`);
 }
 
