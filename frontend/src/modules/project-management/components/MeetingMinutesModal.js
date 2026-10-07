@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTheme } from '@emotion/react';
-import { X, Paperclip, Send, Pencil, Trash2, FileText } from 'lucide-react';
+import { X, Paperclip, Send, Pencil, Trash2, FileText, Mail, Maximize2, Minimize2 } from 'lucide-react';
 import { meetingMinutesApi } from '../api/projectApi';
 import { showToast, apiErrorMessage } from '../hooks/toastStore';
 import { ModalOverlay, Modal, BtnPrimary, BtnGhost } from '../styles/shared.styles';
@@ -18,13 +18,18 @@ function fmtSize(bytes) {
 }
 
 /**
- * Minutes of Meeting — a chat-like log for one meeting. Participants and
- * Managers post notes and/or files; everyone who can open the meeting reads.
+ * Minutes of Meeting — a chat-like log for one meeting. Only the meeting's
+ * creator writes (and can email the minutes to every participant); everyone
+ * who can open the meeting reads.
  */
 export default function MeetingMinutesModal({ projectId, meeting, onClose }) {
   const theme = useTheme();
   const [entries, setEntries] = useState([]);
   const [canWrite, setCanWrite] = useState(false);
+  const [canEmail, setCanEmail] = useState(false);
+  const [creatorName, setCreatorName] = useState('');
+  const [enlarged, setEnlarged] = useState(false);
+  const [emailing, setEmailing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState('');
   const [files, setFiles] = useState([]);
@@ -37,7 +42,7 @@ export default function MeetingMinutesModal({ projectId, meeting, onClose }) {
   const load = useCallback(async () => {
     try {
       const r = await meetingMinutesApi.list(projectId, meeting.meetingId);
-      setEntries(r.entries); setCanWrite(r.canWrite);
+      setEntries(r.entries); setCanWrite(r.canWrite); setCanEmail(Boolean(r.canEmail)); setCreatorName(r.createdByName || '');
     } catch (err) { showToast(apiErrorMessage(err, 'Failed to load minutes.')); }
     finally { setLoading(false); }
   }, [projectId, meeting.meetingId]);
@@ -79,6 +84,17 @@ export default function MeetingMinutesModal({ projectId, meeting, onClose }) {
     catch (err) { showToast(apiErrorMessage(err, 'Download failed.')); }
   };
 
+  const emailParticipants = async () => {
+    if (!window.confirm('Email these minutes to every participant of this meeting?')) return;
+    setEmailing(true);
+    try {
+      const r = await meetingMinutesApi.email(projectId, meeting.meetingId);
+      const skipped = r.notAttached ? ` ${r.notAttached} large file(s) were listed by name instead of attached.` : '';
+      showToast(`Minutes emailed to ${r.recipientCount} participant${r.recipientCount === 1 ? '' : 's'}.${skipped}`, 'success');
+    } catch (err) { showToast(apiErrorMessage(err, 'Failed to email the minutes.')); }
+    finally { setEmailing(false); }
+  };
+
   const pickFiles = (e) => {
     const picked = Array.from(e.target.files || []);
     setFiles(prev => [...prev, ...picked].slice(0, 10));
@@ -89,13 +105,27 @@ export default function MeetingMinutesModal({ projectId, meeting, onClose }) {
 
   return (
     <ModalOverlay onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <Modal style={{ maxWidth: 640, padding: 0, display: 'flex', flexDirection: 'column', height: '80vh', overflow: 'hidden' }}>
+      <Modal style={{
+        maxWidth: enlarged ? 'none' : 640, padding: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        height: enlarged ? 'calc(100vh - 40px)' : '80vh', maxHeight: enlarged ? 'none' : undefined,
+      }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, padding: '18px 22px 12px', borderBottom: `1px solid ${theme.colors.border}` }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 11, color: theme.colors.ash, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>Minutes of Meeting</div>
             <div style={{ fontFamily: theme.font.display, fontSize: 16, fontWeight: 800, color: theme.colors.onyx, marginTop: 2 }}>{meeting.title}</div>
           </div>
-          <button type="button" onClick={onClose} title="Close" style={linkBtn}><X size={18} strokeWidth={2} /></button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            {canEmail && (
+              <button type="button" onClick={emailParticipants} disabled={emailing} title="Email the minutes to all participants"
+                style={{ ...linkBtn, padding: 4, opacity: emailing ? 0.5 : 1 }}>
+                <Mail size={17} strokeWidth={2} />
+              </button>
+            )}
+            <button type="button" onClick={() => setEnlarged(v => !v)} title={enlarged ? 'Restore size' : 'Enlarge'} style={{ ...linkBtn, padding: 4 }}>
+              {enlarged ? <Minimize2 size={16} strokeWidth={2} /> : <Maximize2 size={16} strokeWidth={2} />}
+            </button>
+            <button type="button" onClick={onClose} title="Close" style={{ ...linkBtn, padding: 4 }}><X size={18} strokeWidth={2} /></button>
+          </div>
         </div>
 
         <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: '14px 22px', background: theme.colors.greige }}>
@@ -179,7 +209,7 @@ export default function MeetingMinutesModal({ projectId, meeting, onClose }) {
           </div>
         ) : (
           <div style={{ padding: '10px 22px', borderTop: `1px solid ${theme.colors.border}`, fontSize: 11.5, color: theme.colors.ash }}>
-            Only meeting participants and the project Manager can add minutes.
+            Only the meeting's creator{creatorName ? ` (${creatorName})` : ''} can write the minutes.
           </div>
         )}
       </Modal>

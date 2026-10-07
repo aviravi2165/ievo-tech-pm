@@ -39,6 +39,9 @@ const CATALOG = [
   { key: 'weeklyCompletions', label: 'Completions — Last 6 Weeks', description: 'Tasks currently marked Complete, bucketed by the week they actually finished.', default: true },
   { key: 'onTimeCompletion',  label: 'On-Time Completion',       description: 'Completed tasks, by whether they finished at or before their due date.', default: true },
   { key: 'projectJourney',    label: 'Project Journey',          description: 'Cumulative tasks completed over time, against an ideal pace when planned dates exist.', default: true },
+  // Data comes from the Budget tab's own endpoint (so it follows the same
+  // visibility rule: Managers see project-wide spend, others their own).
+  { key: 'spendByCategory',   label: 'Spend by Category',        description: 'Total money spent on this project, split by expense category.', default: true },
   // ── Optional additions — hidden until added ────────────────────────────
   {
     key: 'cfd',

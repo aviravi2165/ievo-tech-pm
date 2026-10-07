@@ -1,8 +1,9 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { useTheme } from '@emotion/react';
 import { useProjectAnalytics } from '../hooks/useProjectAnalytics';
 import { useProjectInsights } from '../hooks/useProjectInsights';
 import { INSIGHT_RENDERERS } from './InsightWidgets';
+import { budgetApi } from '../api/projectApi';
 import FloatingPopover from '../../shared/components/FloatingPopover';
 import { BtnPrimary, BtnGhost, IconBtnDanger } from '../styles/shared.styles';
 import {
@@ -32,7 +33,7 @@ const PRIORITY_COLOR = { Low: '#79726B', Medium: '#256293', High: '#d38a3c', Cri
 
 function initials(name = '') { return (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(); }
 
-function Donut({ segments, size = 130 }) {
+function Donut({ segments, size = 130, centerValue, centerLabel, formatValue = (v) => v }) {
   const theme = useTheme();
   const total = segments.reduce((s, x) => s + x.count, 0);
   const r = 48;
@@ -57,7 +58,7 @@ function Donut({ segments, size = 130 }) {
             <circle key={s.label} cx="60" cy="60" r={r} fill="none"
               stroke={s.color} strokeWidth="14" strokeDasharray={`${dash} ${c - dash}`}
               strokeDashoffset={-offset} strokeLinecap="butt">
-              <title>{s.label}: {s.count} ({Math.round(frac * 100)}%)</title>
+              <title>{s.label}: {formatValue(s.count)} ({Math.round(frac * 100)}%)</title>
             </circle>
           );
           offset += frac * c;
@@ -65,16 +66,33 @@ function Donut({ segments, size = 130 }) {
         })}
       </g>
       <text x="60" y="56" textAnchor="middle" fontSize="20" fontWeight="700" fontFamily="Georgia, serif" fill={theme.colors.onyx}>
-        {total}
+        {centerValue ?? total}
       </text>
       <text x="60" y="72" textAnchor="middle" fontSize="9" fill={theme.colors.ash}>
-        task{total !== 1 ? 's' : ''}
+        {centerLabel ?? `task${total !== 1 ? 's' : ''}`}
       </text>
     </svg>
   );
 }
 
 const ONTIME_COLOR = { 'On Time': '#446f17', Late: '#c12d16' };
+
+// One fixed color per expense category (color follows the category, never its
+// rank). Validated with the dataviz skill's validate_palette.js on white: all
+// checks pass (worst adjacent CVD ΔE 13.0); the orange's sub-3:1 contrast is
+// relieved by the legend's text values. "Other" is the neutral catch-all.
+const CATEGORY_COLOR = {
+  Travel: '#256293', Food: '#d38a3c', Accommodation: '#446f17', 'Local Conveyance': '#7d5ba6',
+  Materials: '#c12d16', 'Printing & Stationery': '#00938c', 'Software / Subscription': '#b47027', Other: '#8a847d',
+};
+const rupees = (n) => `₹${Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+// Compact Indian units for the donut centre, where space is tight.
+function rupeesShort(n) {
+  if (n >= 1e7) return `₹${(n / 1e7).toFixed(n >= 1e8 ? 0 : 1)}Cr`;
+  if (n >= 1e5) return `₹${(n / 1e5).toFixed(n >= 1e6 ? 0 : 1)}L`;
+  if (n >= 1e3) return `₹${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}K`;
+  return `₹${Math.round(n)}`;
+}
 
 // SectionHeader — title/hint + a remove (×) button, used on every catalog
 // section (the original fixed ones AND the optional "+ Add Insight" ones)
@@ -155,6 +173,17 @@ export default function ProjectAnalytics({ project, phases, active }) {
   } = useProjectInsights(project.projectId, active);
   const [pickerOpen, setPickerOpen] = useState(false);
   const addBtnRef = useRef(null);
+  // Budget data for "Spend by Category" — the Budget endpoint already scopes
+  // it: a Manager gets the whole project, anyone else only their own entries.
+  const [spend, setSpend] = useState(null);
+  useEffect(() => {
+    if (!active) return undefined;
+    let cancelled = false;
+    budgetApi.list(project.projectId)
+      .then(r => { if (!cancelled) setSpend({ items: r.items || [], scope: r.scope }); })
+      .catch(() => { if (!cancelled) setSpend({ items: [], scope: null, failed: true }); });
+    return () => { cancelled = true; };
+  }, [project.projectId, active]);
   // Add/remove is Manager-gated on the backend (same as every other change
   // to what a project looks like for everyone viewing it) — hide the
   // controls for non-Managers entirely rather than showing them a button
@@ -345,6 +374,38 @@ export default function ProjectAnalytics({ project, phases, active }) {
           )}
         </Section>
       )}
+
+      {isVisible('spendByCategory') && (() => {
+        const byCat = new Map();
+        for (const e of spend?.items || []) byCat.set(e.category, (byCat.get(e.category) || 0) + e.amount);
+        const rows = [...byCat.entries()].map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount);
+        const totalSpend = rows.reduce((t, r) => t + r.amount, 0);
+        const scopeNote = spend?.scope === 'mine' ? ' Showing only the expenses you added.' : '';
+        return (
+          <Section>
+            <SectionHeader title="Spend by Category" hint={`Total money spent on this project, split by expense category.${scopeNote}`}
+              onRemove={() => removeInsight('spendByCategory')} mutating={insightsMutating} canRemove={canManageInsights} />
+            {!spend ? <EmptyHint>Loading expenses…</EmptyHint>
+              : spend.failed ? <EmptyHint>Could not load expenses.</EmptyHint>
+              : rows.length === 0 ? <EmptyHint>No expenses recorded yet — add them in the Budget tab.</EmptyHint>
+              : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
+                  <Donut size={150} centerValue={rupeesShort(totalSpend)} centerLabel="total spent" formatValue={rupees}
+                    segments={rows.map(r => ({ label: r.category, count: r.amount, color: CATEGORY_COLOR[r.category] || CATEGORY_COLOR.Other }))} />
+                  <div style={{ flex: 1, minWidth: 220 }}>
+                    {rows.map(r => (
+                      <LegendRow key={r.category}>
+                        <LegendDot color={CATEGORY_COLOR[r.category] || CATEGORY_COLOR.Other} />
+                        <LegendLabel>{r.category}</LegendLabel>
+                        <LegendValue>{rupees(r.amount)} <span style={{ color: theme.colors.ash, fontWeight: 400 }}>· {Math.round((r.amount / totalSpend) * 100)}%</span></LegendValue>
+                      </LegendRow>
+                    ))}
+                  </div>
+                </div>
+              )}
+          </Section>
+        );
+      })()}
 
       <AnalyticsGrid>
         {isVisible('weeklyCompletions') && (

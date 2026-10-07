@@ -248,11 +248,21 @@ async function saveBlob(url, filename) {
 // Budget — project expenses.
 export const budgetApi = {
   list:      (projectId)                  => axiosInstance.get(`${BASE}/${projectId}/expenses`).then(r => r.data),
-  create:    (projectId, body)            => axiosInstance.post(`${BASE}/${projectId}/expenses`, body).then(r => r.data),
-  update:    (projectId, expenseId, body) => axiosInstance.patch(`${BASE}/${projectId}/expenses/${expenseId}`, body).then(r => r.data),
+  // body fields + invoice File[] (required on create); on update, removeFileIds drops existing invoices.
+  create:    (projectId, body, files)     => axiosInstance.post(`${BASE}/${projectId}/expenses`, expenseForm(body, files), { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data),
+  update:    (projectId, expenseId, body, files, removeFileIds) => axiosInstance.patch(`${BASE}/${projectId}/expenses/${expenseId}`, expenseForm({ ...body, removeFileIds: JSON.stringify(removeFileIds || []) }, files), { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data),
   remove:    (projectId, expenseId)       => axiosInstance.delete(`${BASE}/${projectId}/expenses/${expenseId}`).then(r => r.data),
   reimburse: (projectId, expenseId, reimbursed) => axiosInstance.post(`${BASE}/${projectId}/expenses/${expenseId}/reimburse`, { reimbursed }).then(r => r.data),
+  bulkReimburse: (projectId, expenseIds)  => axiosInstance.post(`${BASE}/${projectId}/expenses/reimburse`, { expenseIds }).then(r => r.data),
+  downloadInvoice: (projectId, expenseId, file) => saveBlob(`${BASE}/${projectId}/expenses/${expenseId}/invoices/${file.fileId}`, file.originalName),
 };
+
+function expenseForm(body, files = []) {
+  const form = new FormData();
+  Object.entries(body).forEach(([k, v]) => { if (v !== null && v !== undefined) form.append(k, v); });
+  files.forEach(f => form.append('files', f));
+  return form;
+}
 
 // Minutes of Meeting — chat-like notes + files per meeting.
 export const meetingMinutesApi = {
@@ -266,6 +276,8 @@ export const meetingMinutesApi = {
   update: (projectId, meetingId, minuteId, body) => axiosInstance.patch(`${BASE}/${projectId}/meetings/${meetingId}/minutes/${minuteId}`, { body }).then(r => r.data),
   remove: (projectId, meetingId, minuteId) => axiosInstance.delete(`${BASE}/${projectId}/meetings/${meetingId}/minutes/${minuteId}`).then(r => r.data),
   download: (projectId, meetingId, file) => saveBlob(`${BASE}/${projectId}/meetings/${meetingId}/minutes/files/${file.fileId}/download`, file.originalName),
+  // Creator only — one email with all posted minutes to every participant.
+  email:  (projectId, meetingId) => axiosInstance.post(`${BASE}/${projectId}/meetings/${meetingId}/minutes/email`).then(r => r.data),
 };
 
 // User search — used by MemberManager and assignee picker

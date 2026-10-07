@@ -22,6 +22,11 @@ const deleteMinute = async (req, res, next) => {
   catch (e) { next(e); }
 };
 
+const emailMinutes = async (req, res, next) => {
+  try { res.json(await svc.emailMinutes(req.params.meetingId, req.pmProjectId, req.user.userId)); }
+  catch (e) { next(e); }
+};
+
 const downloadFile = async (req, res, next) => {
   try {
     const f = await svc.getFileForDownload(req.params.meetingId, req.pmProjectId, req.params.fileId);
@@ -29,4 +34,4 @@ const downloadFile = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
-module.exports = { listMinutes, addMinute, updateMinute, deleteMinute, downloadFile };
+module.exports = { listMinutes, addMinute, updateMinute, deleteMinute, downloadFile, emailMinutes };
