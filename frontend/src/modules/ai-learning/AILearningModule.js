@@ -3,6 +3,7 @@ import { useTheme } from '@emotion/react';
 import { ChevronLeft } from 'lucide-react';
 import { aiLearningApi } from './api/aiLearningApi';
 import ChatBox from '../project-management/components/ChatBox';
+import AIStoriesPanel from './AIStoriesPanel';
 
 function initials(name = '') { return (name || '?').split(' ').filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase(); }
 
@@ -97,7 +98,7 @@ function EmployeeList({ theme, employees, loading, error, search, setSearch, sel
  * already uses for project reports) — reusing ChatBox for the actual
  * conversation either way.
  */
-export default function AILearningModule() {
+function LearningJournal() {
   const theme = useTheme();
   const narrow = useIsNarrow();
 
@@ -219,6 +220,37 @@ export default function AILearningModule() {
     <div style={{ display: 'flex', height: '100%', minHeight: 0, background: theme.colors.greige }}>
       <div style={{ width: 300, minWidth: 240, flexShrink: 0, borderRight: `1px solid ${theme.colors.border}` }}>{listPane}</div>
       <div style={{ flex: 1, minWidth: 0 }}>{conversationPane}</div>
+    </div>
+  );
+}
+
+// Two tabs: the existing per-employee journal chat, and AI Stories (use cases
+// shared through the open form).
+export default function AILearningModule() {
+  const theme = useTheme();
+  const [tab, setTab] = useState(() => {
+    try { return sessionStorage.getItem('ai_learning_tab') || 'journal'; } catch { return 'journal'; }
+  });
+  const choose = (t) => { setTab(t); try { sessionStorage.setItem('ai_learning_tab', t); } catch { /* ignore */ } };
+  const tabs = [['journal', 'Learning Journal'], ['stories', 'AI Stories']];
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <div style={{ display: 'flex', gap: 4, padding: '0 16px', borderBottom: `1px solid ${theme.colors.border}`, background: theme.colors.white, flexShrink: 0 }}>
+        {tabs.map(([key, label]) => (
+          <button key={key} type="button" onClick={() => choose(key)}
+            style={{
+              background: 'none', border: 'none', borderBottom: `2px solid ${tab === key ? theme.colors.onyx : 'transparent'}`,
+              padding: '10px 12px', fontSize: 12.5, fontWeight: tab === key ? 800 : 600,
+              color: tab === key ? theme.colors.onyx : theme.colors.ash, cursor: 'pointer',
+            }}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <div style={{ flex: 1, minHeight: 0 }}>
+        {tab === 'stories' ? <AIStoriesPanel /> : <LearningJournal />}
+      </div>
     </div>
   );
 }

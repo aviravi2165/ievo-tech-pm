@@ -10,6 +10,15 @@ const aiLearning  = require('./ai-learning');
 const MODULES = [auth, messages, projectManagement, aiLearning];
 
 function registerAllModules(app) {
+  // Public (no-login) routes go first: several modules mount routers at
+  // '/api' that run authenticate() on EVERY request passing through them, so
+  // a public path registered after those would be rejected with 401 before
+  // it is ever reached.
+  for (const mod of MODULES) {
+    if (typeof mod.registerPublic === 'function') {
+      mod.registerPublic(app);
+    }
+  }
   for (const mod of MODULES) {
     if (typeof mod.register === 'function') {
       mod.register(app);

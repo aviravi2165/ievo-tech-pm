@@ -10,9 +10,17 @@
  * endpoints untouched.
  */
 const aiLearningRoutes = require('./routes/aiLearningRoutes');
+const aiStoryPublicRoutes = require('./routes/aiStoryPublicRoutes');
+
+// Public "Share your AI story" form — no login (see aiStoryPublicRoutes).
+// Registered via registerPublic so it runs before other modules' auth-guarded
+// '/api' routers.
+function registerPublic(app) {
+  app.use('/api/public/ai-stories', aiStoryPublicRoutes);
+}
 
 function register(app) {
   app.use('/api/ai-learning', aiLearningRoutes);
 }
 
-module.exports = { register };
+module.exports = { register, registerPublic };
