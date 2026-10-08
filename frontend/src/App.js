@@ -1,10 +1,12 @@
 import { ThemeProvider, Global, css } from '@emotion/react';
+import { Routes, Route } from 'react-router-dom';
 import theme from './theme';
 import { AuthProvider, useAuth } from './modules/auth/AuthContext';
 import { SocketProvider } from './modules/messages/context/SocketContext';
 import LoginPage from './modules/auth/LoginPage';
 import ForceChangePasswordPage from './modules/auth/ForceChangePasswordPage';
 import AppShell from './shell/AppShell';
+import PublicAIStoryPage from './modules/ai-learning/PublicAIStoryPage';
 
 /**
  * Inner component — reads from AuthContext.
@@ -82,9 +84,16 @@ export default function App() {
   return (
     <ThemeProvider theme={theme}>
       <Global styles={globalStyles(theme)} />
-      <AuthProvider>
-        <AuthGate />
-      </AuthProvider>
+      <Routes>
+        {/* Public — no login: the open "Share your AI story" form. Must sit
+            outside AuthProvider/AuthGate, which would show the login page. */}
+        <Route path="/ai-story" element={<PublicAIStoryPage />} />
+        <Route path="*" element={(
+          <AuthProvider>
+            <AuthGate />
+          </AuthProvider>
+        )} />
+      </Routes>
     </ThemeProvider>
   );
 }

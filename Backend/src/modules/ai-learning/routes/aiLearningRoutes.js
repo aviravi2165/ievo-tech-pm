@@ -1,8 +1,9 @@
 'use strict';
 
 const router = require('express').Router();
-const { authenticate } = require('../../../middleware/auth');
+const { authenticate, requireAdmin } = require('../../../middleware/auth');
 const ctrl = require('../controllers/aiLearningController');
+const stories = require('../controllers/aiStoryController');
 
 router.use(authenticate);
 
@@ -14,5 +15,12 @@ router.get('/employees', ctrl.listEmployees);
 // manager, or admin). Actual messages come from the existing generic
 // /api/messages/:conversationId/thread + /reply endpoints once you have this id.
 router.get('/employees/:employeeId/thread', ctrl.getEmployeeThread);
+
+// ── AI Stories (submitted through the public form) ──
+// Everyone logged in sees approved stories; admins see every status and review.
+router.get('/stories',                                stories.list);
+router.get('/stories/:storyId/files/:fileId',         stories.download);
+router.post('/stories/:storyId/review', requireAdmin, stories.review);
+router.delete('/stories/:storyId',      requireAdmin, stories.remove);
 
 module.exports = router;
