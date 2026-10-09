@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useTheme } from '@emotion/react';
 import { FileText, X, ExternalLink, Link2, Search, Clock } from 'lucide-react';
 import { storyApi, STORY_FORM_PATH } from './api/aiStoryApi';
+import { copyText } from './copyText';
 
 const fmtDate = (iso) => {
   const d = new Date(iso);
@@ -129,7 +130,7 @@ export default function AIStoriesPanel() {
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(null);
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState(null); // null | 'copied' | 'failed'
 
   // Debounce typing into the search box.
   useEffect(() => { const t = setTimeout(() => setQuery(search.trim()), 300); return () => clearTimeout(t); }, [search]);
@@ -145,7 +146,9 @@ export default function AIStoriesPanel() {
 
   const formUrl = `${window.location.origin}${STORY_FORM_PATH}`;
   const copyLink = async () => {
-    try { await navigator.clipboard.writeText(formUrl); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* clipboard blocked */ }
+    const ok = await copyText(formUrl);
+    setCopyState(ok ? 'copied' : 'failed');
+    if (ok) setTimeout(() => setCopyState(null), 2500);
   };
 
   const review = async (story, action, note) => {
@@ -171,7 +174,7 @@ export default function AIStoriesPanel() {
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button type="button" onClick={copyLink} title={formUrl}
               style={{ display: 'flex', alignItems: 'center', gap: 6, background: c.white, color: c.onyx, border: `1px solid ${c.border}`, borderRadius: theme.radius.sm, padding: '8px 12px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
-              <Link2 size={14} /> {copied ? 'Link copied!' : 'Copy form link'}
+              <Link2 size={14} /> {copyState === 'copied' ? 'Link copied!' : 'Copy form link'}
             </button>
             <a href={STORY_FORM_PATH} target="_blank" rel="noopener noreferrer"
               style={{ display: 'flex', alignItems: 'center', gap: 6, background: c.onyx, color: c.white, borderRadius: theme.radius.sm, padding: '8px 14px', fontSize: 12.5, fontWeight: 700, textDecoration: 'none' }}>
@@ -179,6 +182,15 @@ export default function AIStoriesPanel() {
             </a>
           </div>
         </div>
+
+        {copyState === 'failed' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12.5, color: c.ash, marginBottom: 12 }}>
+            Your browser blocked copying — select the link and copy it:
+            <input readOnly value={formUrl} onFocus={e => e.target.select()} autoFocus
+              style={{ flex: '1 1 260px', maxWidth: 420, fontSize: 12.5, padding: '6px 8px', border: `1px solid ${c.border}`, borderRadius: theme.radius.sm, background: c.white, color: c.onyx }} />
+            <button type="button" onClick={() => setCopyState(null)} style={{ background: 'none', border: 'none', color: c.ash, cursor: 'pointer', fontSize: 12.5 }}>Close</button>
+          </div>
+        )}
 
         {isAdmin && (
           <div style={{ display: 'flex', gap: 4, marginBottom: 12, borderBottom: `1px solid ${c.border}` }}>

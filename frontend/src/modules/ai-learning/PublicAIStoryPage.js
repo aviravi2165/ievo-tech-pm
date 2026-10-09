@@ -3,6 +3,7 @@ import { useTheme } from '@emotion/react';
 import { Paperclip, X, CheckCircle2 } from 'lucide-react';
 import logoIcon from '../../shell/assets/specula-icon.png';
 import { publicStoryApi } from './api/aiStoryApi';
+import { copyText } from './copyText';
 
 // "Share your AI story" — the OPEN form (no Specula login). Rendered by
 // App.js for /ai-story before the login gate.
@@ -48,6 +49,8 @@ export default function PublicAIStoryPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
+  const [copyState, setCopyState] = useState(null); // null | 'copied' | 'failed'
+  const formUrl = `${window.location.origin}${window.location.pathname}`;
 
   useEffect(() => {
     document.title = 'Share your AI story · Specula';
@@ -65,9 +68,15 @@ export default function PublicAIStoryPage() {
     setter([...current, ...picked].slice(0, MAX_FILES));
   };
 
+  const copyLink = async () => {
+    const ok = await copyText(formUrl);
+    setCopyState(ok ? 'copied' : 'failed');
+    if (ok) setTimeout(() => setCopyState(null), 2500);
+  };
+
   const resetStory = () => {
     setTitle(''); setAiModel(''); setAiModelOther(''); setDescription(''); setInputDetails(''); setOutputDetails('');
-    setHoursSaved(''); setBeforeFiles([]); setAfterFiles([]); setError(''); setDone(false);
+    setHoursSaved(''); setBeforeFiles([]); setAfterFiles([]); setError(''); setDone(false); setCopyState(null);
   };
 
   const submit = async (e) => {
@@ -153,11 +162,18 @@ export default function PublicAIStoryPage() {
                   style={{ background: c.onyx, color: c.white, border: 'none', borderRadius: theme.radius.sm, padding: '10px 18px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>
                   Share another story
                 </button>
-                <button type="button" onClick={() => navigator.clipboard?.writeText(window.location.href)}
-                  style={{ background: c.white, color: c.onyx, border: `1px solid ${c.border}`, borderRadius: theme.radius.sm, padding: '10px 18px', fontSize: 13.5, fontWeight: 600, cursor: 'pointer' }}>
-                  Copy link to share with colleagues
+                <button type="button" onClick={copyLink}
+                  style={{ background: c.white, color: copyState === 'copied' ? c.success : c.onyx, border: `1px solid ${copyState === 'copied' ? c.success : c.border}`, borderRadius: theme.radius.sm, padding: '10px 18px', fontSize: 13.5, fontWeight: 600, cursor: 'pointer' }}>
+                  {copyState === 'copied' ? 'Link copied!' : 'Copy link to share with colleagues'}
                 </button>
               </div>
+              {copyState === 'failed' && (
+                <div style={{ marginTop: 14, fontSize: 12.5, color: c.ash }}>
+                  Your browser blocked copying — select the link below and copy it:
+                  <input readOnly value={formUrl} onFocus={e => e.target.select()} autoFocus
+                    style={{ display: 'block', width: '100%', maxWidth: 420, margin: '6px auto 0', boxSizing: 'border-box', fontSize: 13, padding: '8px 10px', border: `1px solid ${c.border}`, borderRadius: theme.radius.sm, background: c.mid, color: c.onyx, textAlign: 'center' }} />
+                </div>
+              )}
             </div>
           ) : (
             <form onSubmit={submit} noValidate>
