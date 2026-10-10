@@ -20,6 +20,7 @@ router.get('/employees/:employeeId/thread', ctrl.getEmployeeThread);
 // Everyone logged in sees approved stories; admins see every status and review.
 router.get('/stories',                                stories.list);
 router.get('/stories/:storyId/files/:fileId',         stories.download);
+router.get('/stories/:storyId/pdf',                   stories.pdf);
 router.post('/stories/:storyId/review', requireAdmin, stories.review);
 router.delete('/stories/:storyId',      requireAdmin, stories.remove);
 

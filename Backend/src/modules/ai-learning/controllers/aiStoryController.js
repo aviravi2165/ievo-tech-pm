@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const svc = require('../services/aiStoryService');
+const { buildStoryPdf } = require('../services/aiStoryPdf');
 
 const wrap = (fn) => async (req, res, next) => { try { await fn(req, res); } catch (e) { next(e); } };
 const isAdmin = (req) => req.user?.userType === 'admin';
@@ -26,6 +27,14 @@ module.exports = {
   }),
   review: wrap(async (req, res) => res.json(await svc.reviewStory(req.params.storyId, req.body?.action, req.body?.note, req.user.userId))),
   remove: wrap(async (req, res) => res.json(await svc.deleteStory(req.params.storyId))),
+  pdf: wrap(async (req, res) => {
+    const story = await svc.getStoryForPdf(req.params.storyId, isAdmin(req));
+    const buf = await buildStoryPdf(story);
+    const safeTitle = story.title.replace(/[^\w\- ]+/g, '').trim().slice(0, 60) || 'story';
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="Your AI Story - ${safeTitle}.pdf"`);
+    res.send(buf);
+  }),
   download: wrap(async (req, res) => {
     const f = await svc.getFileForDownload(req.params.storyId, req.params.fileId, isAdmin(req));
     res.download(f.fullPath, f.originalName);

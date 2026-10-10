@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * aiStoryService — "AI Stories": employees share AI use cases.
+ * aiStoryService — "Your AI Story": employees share how they use AI.
  *
  * Submitting is OPEN (no Specula login) — name/email/department are plain
  * form values, not linked to auth_users. Every story starts 'pending'; an
@@ -13,10 +13,15 @@ const fs = require('fs');
 const path = require('path');
 const { getPool, sql, withTransaction } = require('../../../config/db');
 const { STORAGE_ROOT } = require('../../../middleware/upload');
+const { sendAcknowledgement } = require('./aiStoryEmail');
 
-const AI_MODELS = ['ChatGPT', 'Claude', 'Gemini', 'Microsoft Copilot', 'Perplexity', 'Other'];
+const AI_MODELS = ['ChatGPT', 'Claude', 'Gemini', 'Manus', 'Meta AI', 'Perplexity', 'Other'];
+// No longer offered on the form, but older stories may carry it — still
+// valid as a filter value so those stories stay findable.
+const LEGACY_MODELS = ['Microsoft Copilot'];
 const STATUSES = ['pending', 'approved', 'rejected'];
-const LIMITS = { name: 100, email: 150, title: 200, description: 4000, modelOther: 50, input: 4000, output: 4000, note: 500 };
+const LIMITS = { name: 100, email: 150, title: 200, description: 4000, modelOther: 50, input: 4000, output: 4000, note: 500, activities: 2000, deliverables: 2000, impact: 1000 };
+const truthy = (v) => v === true || v === 'true' || v === '1' || v === 1 || v === 'on';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function httpError(status, message) { const e = new Error(message); e.statusCode = status; return e; }
@@ -55,13 +60,14 @@ async function validate(body) {
   const aiModelOther = body.aiModel === 'Other' ? text(body.aiModelOther, LIMITS.modelOther, 'AI model name') : null;
   const inputDetails = text(body.inputDetails, LIMITS.input, 'Input details');
   const outputDetails = text(body.outputDetails, LIMITS.output, 'Output details');
-  let hours = null;
-  if (body.hoursSaved !== undefined && body.hoursSaved !== null && String(body.hoursSaved).trim() !== '') {
-    hours = Number(body.hoursSaved);
-    if (!Number.isFinite(hours) || hours < 0 || hours > 168) throw httpError(400, 'Hours saved per week must be between 0 and 168.');
-    hours = Math.round(hours * 100) / 100;
-  }
-  return { name, email, deptId, title, description, aiModel: body.aiModel, aiModelOther, inputDetails, outputDetails, hours };
+  const dailyActivities = text(body.dailyActivities, LIMITS.activities, 'Daily activities', false);
+  const deliverables = text(body.deliverables, LIMITS.deliverables, 'Deliverables', false);
+  const impactDescription = text(body.impactDescription, LIMITS.impact, 'Impact description', false);
+  return {
+    name, email, deptId, title, description, aiModel: body.aiModel, aiModelOther, inputDetails, outputDetails,
+    dailyActivities, deliverables, impactDescription,
+    improvedProductivity: truthy(body.improvedProductivity), improvedAccuracy: truthy(body.improvedAccuracy),
+  };
 }
 
 // Public — create a pending story with optional before/after files.
@@ -69,9 +75,9 @@ async function submitStory(body, filesByField) {
   const before = filesByField?.beforeFiles || [];
   const after = filesByField?.afterFiles || [];
   const all = [...before, ...after];
+  let storyId;
   try {
     const v = await validate(body);
-    let storyId;
     await withTransaction(async (req) => {
       const r = await req()
         .input('name', sql.NVarChar(100), v.name).input('email', sql.NVarChar(150), v.email)
@@ -79,11 +85,14 @@ async function submitStory(body, filesByField) {
         .input('description', sql.NVarChar(4000), v.description)
         .input('aiModel', sql.NVarChar(50), v.aiModel).input('aiModelOther', sql.NVarChar(50), v.aiModelOther)
         .input('input', sql.NVarChar(4000), v.inputDetails).input('output', sql.NVarChar(4000), v.outputDetails)
-        .input('hours', sql.Decimal(6, 2), v.hours)
+        .input('activities', sql.NVarChar(2000), v.dailyActivities).input('deliverables', sql.NVarChar(2000), v.deliverables)
+        .input('productivity', sql.Bit, v.improvedProductivity ? 1 : 0).input('accuracy', sql.Bit, v.improvedAccuracy ? 1 : 0)
+        .input('impact', sql.NVarChar(1000), v.impactDescription)
         .query(`INSERT INTO ai_stories (submitter_name, submitter_email, dept_id, title, description, ai_model, ai_model_other,
-                  input_details, output_details, hours_saved_per_week)
+                  input_details, output_details, daily_activities, deliverables, improved_productivity, improved_accuracy, impact_description)
                 OUTPUT INSERTED.story_id
-                VALUES (@name, @email, @deptId, @title, @description, @aiModel, @aiModelOther, @input, @output, @hours)`);
+                VALUES (@name, @email, @deptId, @title, @description, @aiModel, @aiModelOther, @input, @output,
+                        @activities, @deliverables, @productivity, @accuracy, @impact)`);
       storyId = r.recordset[0].story_id;
       const add = async (f, kind) => req()
         .input('storyId', sql.Int, storyId).input('kind', sql.NVarChar(10), kind)
@@ -97,11 +106,17 @@ async function submitStory(body, filesByField) {
       for (const f of before) await add(f, 'before');
       for (const f of after) await add(f, 'after');
     });
-    return { submitted: true, storyId };
   } catch (e) {
     removeUploaded(all);
     throw e;
   }
+  // Acknowledgement email (with the PDF summary) goes out in the background:
+  // a mail problem must never turn a saved story into a failed submission.
+  setImmediate(async () => {
+    try { await sendAcknowledgement(await getFullStory(storyId)); }
+    catch (err) { console.error(`[ai-story] acknowledgement email for story ${storyId} failed:`, err.message); }
+  });
+  return { submitted: true, storyId };
 }
 
 const SELECT = `
@@ -110,6 +125,8 @@ const SELECT = `
          s.ai_model AS aiModel, s.ai_model_other AS aiModelOther,
          s.input_details AS inputDetails, s.output_details AS outputDetails,
          s.hours_saved_per_week AS hoursSaved, s.status, s.review_note AS reviewNote,
+         s.daily_activities AS dailyActivities, s.deliverables, s.impact_description AS impactDescription,
+         s.improved_productivity AS improvedProductivity, s.improved_accuracy AS improvedAccuracy,
          s.reviewed_at AS reviewedAt, s.created_at AS createdAt,
          COALESCE(NULLIF(TRIM(CONCAT(ru.first_name,' ',ru.last_name)),''), ru.email) AS reviewedByName
   FROM ai_stories s
@@ -129,7 +146,11 @@ async function attachFiles(stories) {
     if (!byStory.has(f.storyId)) byStory.set(f.storyId, []);
     byStory.get(f.storyId).push({ ...f, fileSize: Number(f.fileSize) });
   }
-  return stories.map(s => ({ ...s, hoursSaved: s.hoursSaved == null ? null : Number(s.hoursSaved), files: byStory.get(s.storyId) || [] }));
+  return stories.map(s => ({
+    ...s, hoursSaved: s.hoursSaved == null ? null : Number(s.hoursSaved),
+    improvedProductivity: Boolean(s.improvedProductivity), improvedAccuracy: Boolean(s.improvedAccuracy),
+    files: byStory.get(s.storyId) || [],
+  }));
 }
 
 // Logged-in list. Non-admins only ever get approved stories.
@@ -143,7 +164,7 @@ async function listStories({ status, deptId, aiModel, search } = {}, isAdmin) {
     where.push(`s.status = 'approved'`);
   }
   if (deptId && Number.isInteger(Number(deptId))) { where.push('s.dept_id = @deptId'); req.input('deptId', sql.Int, Number(deptId)); }
-  if (aiModel && AI_MODELS.includes(aiModel)) { where.push('s.ai_model = @aiModel'); req.input('aiModel', sql.NVarChar(50), aiModel); }
+  if (aiModel && [...AI_MODELS, ...LEGACY_MODELS].includes(aiModel)) { where.push('s.ai_model = @aiModel'); req.input('aiModel', sql.NVarChar(50), aiModel); }
   const q = String(search || '').trim();
   if (q) {
     where.push(`(s.title LIKE @q OR s.description LIKE @q OR s.submitter_name LIKE @q OR s.ai_model_other LIKE @q)`);
@@ -158,7 +179,7 @@ async function listStories({ status, deptId, aiModel, search } = {}, isAdmin) {
     counts = { pending: 0, approved: 0, rejected: 0 };
     for (const row of c.recordset) counts[row.status] = row.n;
   }
-  return { stories, counts, isAdmin: Boolean(isAdmin), departments: await getActiveDepartments(), aiModels: AI_MODELS };
+  return { stories, counts, isAdmin: Boolean(isAdmin), departments: await getActiveDepartments(), aiModels: [...AI_MODELS, ...LEGACY_MODELS] };
 }
 
 async function getStoryRow(storyId) {
@@ -167,6 +188,17 @@ async function getStoryRow(storyId) {
   const row = r.recordset[0];
   if (!row) throw httpError(404, 'Story not found.');
   return row;
+}
+
+async function getFullStory(storyId) {
+  return (await attachFiles([await getStoryRow(storyId)]))[0];
+}
+
+// Logged-in: an approved story's PDF for everyone, any story's PDF for admins.
+async function getStoryForPdf(storyId, isAdmin) {
+  const story = await getFullStory(storyId);
+  if (!isAdmin && story.status !== 'approved') throw httpError(404, 'Story not found.');
+  return story;
 }
 
 // Admin only (route-gated).
@@ -206,4 +238,4 @@ async function getFileForDownload(storyId, fileId, isAdmin) {
   return { originalName: f.originalName, fullPath: full };
 }
 
-module.exports = { AI_MODELS, getFormOptions, submitStory, listStories, reviewStory, deleteStory, getFileForDownload };
+module.exports = { AI_MODELS, getFormOptions, submitStory, listStories, reviewStory, deleteStory, getFileForDownload, getFullStory, getStoryForPdf };
