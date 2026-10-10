@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTheme } from '@emotion/react';
-import { FileText, X, ExternalLink, Link2, Search, Clock } from 'lucide-react';
+import { FileText, X, ExternalLink, Link2, Search, Download } from 'lucide-react';
 import { storyApi, STORY_FORM_PATH } from './api/aiStoryApi';
 import { copyText } from './copyText';
 
@@ -11,6 +11,7 @@ const fmtDate = (iso) => {
 const modelLabel = (s) => (s.aiModel === 'Other' ? (s.aiModelOther || 'Other') : s.aiModel);
 const errMsg = (err, fallback) => err?.response?.data?.error || fallback;
 const STATUS_TABS = [['pending', 'Pending'], ['approved', 'Approved'], ['rejected', 'Rejected']];
+const impactsOf = (s) => [s.improvedProductivity && 'Productivity ↑', s.improvedAccuracy && 'Accuracy ↑'].filter(Boolean);
 
 function Chip({ children, theme, tone }) {
   const color = tone || theme.colors.ash;
@@ -68,19 +69,32 @@ function StoryModal({ story, isAdmin, onClose, onReview, onDelete }) {
             </div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
               <Chip theme={theme} tone={c.espresso}>{modelLabel(story)}</Chip>
-              {story.hoursSaved != null && <Chip theme={theme} tone={c.success}>Saves {story.hoursSaved} h/week</Chip>}
+              {impactsOf(story).map(t => <Chip key={t} theme={theme} tone={c.success}>{t}</Chip>)}
               {isAdmin && <Chip theme={theme} tone={story.status === 'approved' ? c.success : story.status === 'rejected' ? c.danger : c.warning}>{story.status}</Chip>}
             </div>
           </div>
-          <button type="button" onClick={onClose} title="Close" style={{ background: 'none', border: 'none', cursor: 'pointer', color: c.ash, display: 'flex' }}><X size={18} /></button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            <button type="button" onClick={() => act(() => storyApi.downloadPdf(story))} disabled={busy} title="Download the one-page PDF"
+              style={{ display: 'flex', alignItems: 'center', gap: 5, background: c.white, color: c.onyx, border: `1px solid ${c.border}`, borderRadius: theme.radius.sm, padding: '6px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+              <Download size={13} /> PDF
+            </button>
+            <button type="button" onClick={onClose} title="Close" style={{ background: 'none', border: 'none', cursor: 'pointer', color: c.ash, display: 'flex' }}><X size={18} /></button>
+          </div>
         </div>
 
         <div style={{ marginTop: 18 }}>
-          {block('Description', story.description)}
+          {block('Their AI story', story.description)}
+          {(story.dailyActivities || story.deliverables) && (
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+              {story.dailyActivities && <div style={{ flex: '1 1 240px', minWidth: 0 }}>{block('Daily activities handed to AI', story.dailyActivities)}</div>}
+              {story.deliverables && <div style={{ flex: '1 1 240px', minWidth: 0 }}>{block('Deliverables made with AI', story.deliverables)}</div>}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
             <div style={{ flex: '1 1 240px', minWidth: 0 }}>{block('Input', story.inputDetails)}</div>
             <div style={{ flex: '1 1 240px', minWidth: 0 }}>{block('Output', story.outputDetails)}</div>
           </div>
+          {story.impactDescription && block('Impact', story.impactDescription)}
           {story.files.length > 0 && (
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 14 }}>
               {files('before', 'Before')}
@@ -169,7 +183,7 @@ export default function AIStoriesPanel() {
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
           <div style={{ flex: '1 1 300px' }}>
             <div style={{ fontFamily: theme.font.display, fontSize: 16, fontWeight: 800, color: c.onyx }}>AI Stories</div>
-            <div style={{ fontSize: 12.5, color: c.ash, marginTop: 2 }}>How colleagues are using AI in their work. Anyone can share a story — no login needed.</div>
+            <div style={{ fontSize: 12.5, color: c.ash, marginTop: 2 }}>How colleagues are using AI in their work. Anyone can share Your AI Story — no login needed.</div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button type="button" onClick={copyLink} title={formUrl}
@@ -178,7 +192,7 @@ export default function AIStoriesPanel() {
             </button>
             <a href={STORY_FORM_PATH} target="_blank" rel="noopener noreferrer"
               style={{ display: 'flex', alignItems: 'center', gap: 6, background: c.onyx, color: c.white, borderRadius: theme.radius.sm, padding: '8px 14px', fontSize: 12.5, fontWeight: 700, textDecoration: 'none' }}>
-              <ExternalLink size={14} /> Share your story
+              <ExternalLink size={14} /> Share Your AI Story
             </a>
           </div>
         </div>
@@ -236,7 +250,7 @@ export default function AIStoriesPanel() {
                   <div style={{ fontSize: 12.5, color: c.ash, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>{s.description}</div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 'auto' }}>
                     <Chip theme={theme} tone={c.espresso}>{modelLabel(s)}</Chip>
-                    {s.hoursSaved != null && <Chip theme={theme} tone={c.success}><Clock size={9} style={{ verticalAlign: '-1px' }} /> {s.hoursSaved} h/week</Chip>}
+                    {impactsOf(s).map(t => <Chip key={t} theme={theme} tone={c.success}>{t}</Chip>)}
                     {s.files.length > 0 && <Chip theme={theme}>{s.files.length} file{s.files.length === 1 ? '' : 's'}</Chip>}
                   </div>
                   <div style={{ fontSize: 11.5, color: c.ashLight }}>{s.submitterName} · {s.deptName} · {fmtDate(s.createdAt)}</div>

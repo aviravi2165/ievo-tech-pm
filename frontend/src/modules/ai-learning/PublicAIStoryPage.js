@@ -1,18 +1,21 @@
 import { useState, useEffect } from 'react';
 import { useTheme } from '@emotion/react';
-import { Paperclip, X, CheckCircle2 } from 'lucide-react';
-import logoIcon from '../../shell/assets/specula-icon.png';
+import { Paperclip, X, CheckCircle2, PlayCircle } from 'lucide-react';
+import ievoLogo from '../../shell/assets/logo.png';
+import speculaIcon from '../../shell/assets/specula-icon.png';
 import { publicStoryApi } from './api/aiStoryApi';
 import { copyText } from './copyText';
+import StoryTutorial, { tutorialSeen, markTutorialSeen } from './StoryTutorial';
 
-// "Share your AI story" — the OPEN form (no Specula login). Rendered by
+// "Your AI Story" — the OPEN form (no Specula login). Rendered by
 // App.js for /ai-story before the login gate.
 
 const PROFILE_KEY = 'specula_ai_story_profile';
 const MAX_FILES = 3;
 const MAX_FILE_MB = 20;
 const ALLOWED_EXT = ['.xlsx', '.xls', '.xlsm', '.csv', '.pdf', '.doc', '.docx', '.ppt', '.pptx', '.txt', '.png', '.jpg', '.jpeg', '.gif', '.webp'];
-const DESCRIPTION_GUIDE = 'What was the problem or task?\nHow did you use AI to solve it?\nWhat changed — time saved, quality, fewer errors?';
+const DESCRIPTION_GUIDE = 'What were you working on?\nHow did AI help you with it?\nWhat changed for you?';
+const IMPACT_GUIDE = 'e.g. Deliverable preparation time reduced by 20% or 50%';
 
 function loadProfile() {
   try { return JSON.parse(localStorage.getItem(PROFILE_KEY) || 'null') || {}; } catch { return {}; }
@@ -41,7 +44,12 @@ export default function PublicAIStoryPage() {
   const [description, setDescription] = useState('');
   const [inputDetails, setInputDetails] = useState('');
   const [outputDetails, setOutputDetails] = useState('');
-  const [hoursSaved, setHoursSaved] = useState('');
+  const [dailyActivities, setDailyActivities] = useState('');
+  const [deliverables, setDeliverables] = useState('');
+  const [improvedProductivity, setImprovedProductivity] = useState(false);
+  const [improvedAccuracy, setImprovedAccuracy] = useState(false);
+  const [impactDescription, setImpactDescription] = useState('');
+  const [submittedEmail, setSubmittedEmail] = useState('');
   const [beforeFiles, setBeforeFiles] = useState([]);
   const [afterFiles, setAfterFiles] = useState([]);
   const [website, setWebsite] = useState(''); // honeypot — hidden from people
@@ -49,11 +57,14 @@ export default function PublicAIStoryPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
+  // First visit on this device → open the guide once automatically.
+  const [showTutorial, setShowTutorial] = useState(() => !tutorialSeen());
+  const closeTutorial = () => { setShowTutorial(false); markTutorialSeen(); };
   const [copyState, setCopyState] = useState(null); // null | 'copied' | 'failed'
   const formUrl = `${window.location.origin}${window.location.pathname}`;
 
   useEffect(() => {
-    document.title = 'Share your AI story · Specula';
+    document.title = 'Your AI Story · I.EVO';
     publicStoryApi.options().then(setOptions).catch(() => setOptionsError('Could not load the form. Please refresh the page.'));
   }, []);
 
@@ -76,7 +87,8 @@ export default function PublicAIStoryPage() {
 
   const resetStory = () => {
     setTitle(''); setAiModel(''); setAiModelOther(''); setDescription(''); setInputDetails(''); setOutputDetails('');
-    setHoursSaved(''); setBeforeFiles([]); setAfterFiles([]); setError(''); setDone(false); setCopyState(null);
+    setDailyActivities(''); setDeliverables(''); setImprovedProductivity(false); setImprovedAccuracy(false); setImpactDescription('');
+    setBeforeFiles([]); setAfterFiles([]); setError(''); setDone(false); setCopyState(null);
   };
 
   const submit = async (e) => {
@@ -87,7 +99,6 @@ export default function PublicAIStoryPage() {
     if (missing) { setError(`Please enter ${missing[1]}.`); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setError('Please enter a valid email address.'); return; }
     if (aiModel === 'Other' && !aiModelOther.trim()) { setError('Please write which AI model you used.'); return; }
-    if (hoursSaved !== '' && !(Number(hoursSaved) >= 0 && Number(hoursSaved) <= 168)) { setError('Hours saved per week must be between 0 and 168.'); return; }
 
     setSubmitting(true); setError('');
     try {
@@ -95,8 +106,11 @@ export default function PublicAIStoryPage() {
         name: name.trim(), email: email.trim(), deptId, title: title.trim(), aiModel,
         aiModelOther: aiModel === 'Other' ? aiModelOther.trim() : null,
         description: description.trim(), inputDetails: inputDetails.trim(), outputDetails: outputDetails.trim(),
-        hoursSaved: hoursSaved === '' ? null : hoursSaved, website,
+        dailyActivities: dailyActivities.trim() || null, deliverables: deliverables.trim() || null,
+        improvedProductivity: improvedProductivity ? 'true' : 'false', improvedAccuracy: improvedAccuracy ? 'true' : 'false',
+        impactDescription: impactDescription.trim() || null, website,
       }, beforeFiles, afterFiles);
+      setSubmittedEmail(email.trim());
       if (remember) saveProfile({ name: name.trim(), email: email.trim(), deptId: Number(deptId) });
       else forgetProfile();
       setDone(true);
@@ -109,7 +123,8 @@ export default function PublicAIStoryPage() {
   // ── styles ──
   const c = theme.colors;
   const label = { display: 'block', fontSize: 11, color: c.ash, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700, marginBottom: 5 };
-  const input = { width: '100%', boxSizing: 'border-box', background: c.mid, border: `1px solid ${c.border}`, borderRadius: theme.radius.sm, padding: '10px 12px', color: c.onyx, fontSize: 14, fontFamily: 'inherit', outline: 'none' };
+  const input = { width: '100%', boxSizing: 'border-box', background: c.mid, border: `1px solid ${c.border}`, borderRadius: theme.radius.sm, padding: '10px 12px', color: c.onyx, fontSize: 16, fontFamily: 'inherit', outline: 'none' };
+  const checkRow = { display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, color: c.onyx, cursor: 'pointer', padding: '6px 0' };
   const field = { marginBottom: 16 };
   const req = <span style={{ color: c.espresso }}>*</span>;
   const sectionTitle = { fontSize: 13, fontWeight: 800, color: c.onyx, margin: '8px 0 12px', paddingBottom: 6, borderBottom: `1px solid ${c.border}` };
@@ -141,21 +156,25 @@ export default function PublicAIStoryPage() {
   return (
     <div style={{ height: '100%', overflowY: 'auto', background: c.greige }}>
       <div style={{ maxWidth: 760, margin: '0 auto', padding: '28px 16px 48px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
-          <img src={logoIcon} alt="" style={{ width: 34, height: 34 }} />
-          <div>
-            <div style={{ fontFamily: theme.font.display, fontSize: 20, fontWeight: 800, letterSpacing: '0.08em', color: c.onyx }}>SPECULA</div>
-            <div style={{ fontSize: 12, color: c.ash }}>AI Stories</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 18 }}>
+          {/* Specula (the product) on the left, I.EVO (the company) on the right. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+            <img src={speculaIcon} alt="" style={{ width: 34, height: 34, flexShrink: 0 }} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontFamily: theme.font.display, fontSize: 20, fontWeight: 800, letterSpacing: '0.08em', color: c.onyx, lineHeight: 1.1 }}>SPECULA</div>
+              <div style={{ fontSize: 12, color: c.ash }}>Your AI Story</div>
+            </div>
           </div>
+          <img src={ievoLogo} alt="I.EVO" style={{ height: 26, width: 'auto', maxWidth: '40%', flexShrink: 1 }} />
         </div>
 
-        <div style={{ background: c.white, border: `1px solid ${c.border}`, borderRadius: theme.radius.lg, padding: '24px 24px 28px' }}>
+        <div style={{ background: c.white, border: `1px solid ${c.border}`, borderRadius: theme.radius.lg, padding: 'clamp(16px, 4vw, 24px) clamp(14px, 4vw, 24px) 28px' }}>
           {done ? (
             <div style={{ textAlign: 'center', padding: '24px 8px' }}>
               <CheckCircle2 size={44} color={c.success} strokeWidth={1.8} />
               <div style={{ fontSize: 20, fontWeight: 800, color: c.onyx, margin: '10px 0 6px' }}>Thank you for sharing!</div>
               <div style={{ fontSize: 14, color: c.ash, lineHeight: 1.6, maxWidth: 460, margin: '0 auto 22px' }}>
-                Your AI story was submitted. It will appear in Specula's AI Stories once an admin has reviewed it.
+                Your AI story was submitted. A confirmation email is on its way{submittedEmail ? <> to <strong>{submittedEmail}</strong></> : ''} — if you don't see it, check your Spam folder. It will appear in Specula's AI Stories once it has been reviewed.
               </div>
               <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
                 <button type="button" onClick={resetStory}
@@ -177,9 +196,15 @@ export default function PublicAIStoryPage() {
             </div>
           ) : (
             <form onSubmit={submit} noValidate>
-              <h1 style={{ fontSize: 22, fontWeight: 800, color: c.onyx, margin: '0 0 6px' }}>Share your AI story</h1>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+                <h1 style={{ fontSize: 'clamp(20px, 5vw, 24px)', fontWeight: 800, color: c.onyx, margin: 0 }}>Your AI Story</h1>
+                <button type="button" onClick={() => setShowTutorial(true)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: c.white, color: c.onyx, border: `1px solid ${c.border}`, borderRadius: 20, padding: '7px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                  <PlayCircle size={16} /> How it works · Demo
+                </button>
+              </div>
               <p style={{ fontSize: 14, color: c.ash, lineHeight: 1.6, margin: '0 0 20px' }}>
-                Used AI to get something done faster or better? Tell us how — your story helps colleagues learn. No login needed.
+                Used AI to get something done faster or better? Tell us your story — big or small, it helps colleagues learn. No login needed.
               </p>
 
               {optionsError && <div style={{ color: c.danger, fontSize: 13, marginBottom: 12 }}>{optionsError}</div>}
@@ -207,9 +232,9 @@ export default function PublicAIStoryPage() {
                 Remember my name, email and department on this device
               </label>
 
-              <div style={sectionTitle}>Your AI use case</div>
+              <div style={sectionTitle}>Your story</div>
               <div style={field}>
-                <label style={label} htmlFor="s-title">Title of the use case {req}</label>
+                <label style={label} htmlFor="s-title">Give your story a title {req}</label>
                 <input id="s-title" style={input} value={title} onChange={e => setTitle(e.target.value)} maxLength={200} placeholder="e.g. Monthly P&L variance summary in 10 minutes" />
               </div>
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
@@ -228,7 +253,7 @@ export default function PublicAIStoryPage() {
                 )}
               </div>
               <div style={field}>
-                <label style={label} htmlFor="s-desc">Description {req}</label>
+                <label style={label} htmlFor="s-desc">Tell us your AI story {req}</label>
                 <textarea id="s-desc" style={{ ...input, resize: 'vertical' }} rows={5} value={description} onChange={e => setDescription(e.target.value)} maxLength={4000} placeholder={DESCRIPTION_GUIDE} />
               </div>
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
@@ -241,9 +266,32 @@ export default function PublicAIStoryPage() {
                   <textarea id="s-output" style={{ ...input, resize: 'vertical' }} rows={4} value={outputDetails} onChange={e => setOutputDetails(e.target.value)} maxLength={4000} placeholder="The result and how you used it" />
                 </div>
               </div>
-              <div style={{ ...field, maxWidth: 260 }}>
-                <label style={label} htmlFor="s-hours">Hours saved per week (optional)</label>
-                <input id="s-hours" type="number" min="0" max="168" step="0.5" style={input} value={hoursSaved} onChange={e => setHoursSaved(e.target.value)} placeholder="e.g. 3" />
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ ...field, flex: '1 1 260px' }}>
+                  <label style={label} htmlFor="s-activities">Daily activities handed to AI (optional)</label>
+                  <textarea id="s-activities" style={{ ...input, resize: 'vertical' }} rows={3} value={dailyActivities} onChange={e => setDailyActivities(e.target.value)} maxLength={2000} placeholder="e.g. Drafting emails, comparing quotations, formatting reports" />
+                </div>
+                <div style={{ ...field, flex: '1 1 260px' }}>
+                  <label style={label} htmlFor="s-deliverables">Deliverables made with AI (optional)</label>
+                  <textarea id="s-deliverables" style={{ ...input, resize: 'vertical' }} rows={3} value={deliverables} onChange={e => setDeliverables(e.target.value)} maxLength={2000} placeholder="e.g. BOQ summary, P&L variance note, site report" />
+                </div>
+              </div>
+
+              <div style={sectionTitle}>Impact (optional)</div>
+              {/* Checkboxes, not radios — productivity and accuracy can both improve. */}
+              <div style={{ display: 'flex', gap: '4px 24px', flexWrap: 'wrap', marginBottom: 10 }}>
+                <label style={checkRow}>
+                  <input type="checkbox" checked={improvedProductivity} onChange={e => setImprovedProductivity(e.target.checked)} style={{ margin: 0, width: 17, height: 17 }} />
+                  Productivity improved
+                </label>
+                <label style={checkRow}>
+                  <input type="checkbox" checked={improvedAccuracy} onChange={e => setImprovedAccuracy(e.target.checked)} style={{ margin: 0, width: 17, height: 17 }} />
+                  Accuracy improved
+                </label>
+              </div>
+              <div style={field}>
+                <label style={label} htmlFor="s-impact">Describe the impact</label>
+                <textarea id="s-impact" style={{ ...input, resize: 'vertical' }} rows={2} value={impactDescription} onChange={e => setImpactDescription(e.target.value)} maxLength={1000} placeholder={IMPACT_GUIDE} />
               </div>
 
               <div style={sectionTitle}>Before &amp; after (optional)</div>
@@ -263,12 +311,13 @@ export default function PublicAIStoryPage() {
               {error && <div role="alert" style={{ color: c.danger, fontSize: 13, marginBottom: 12 }}>{error}</div>}
               <button type="submit" disabled={submitting || !options}
                 style={{ width: '100%', background: c.onyx, color: c.white, border: 'none', borderRadius: theme.radius.sm, padding: '12px 18px', fontSize: 14.5, fontWeight: 700, cursor: submitting ? 'default' : 'pointer', opacity: submitting || !options ? 0.6 : 1 }}>
-                {submitting ? 'Submitting…' : 'Submit my AI story'}
+                {submitting ? 'Submitting…' : 'Submit Your AI Story'}
               </button>
             </form>
           )}
         </div>
       </div>
+      {showTutorial && <StoryTutorial onClose={closeTutorial} />}
     </div>
   );
 }

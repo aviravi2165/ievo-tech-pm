@@ -24,14 +24,19 @@ export const storyApi = {
   list:   (params) => axiosInstance.get('/api/ai-learning/stories', { params }).then(r => r.data),
   review: (storyId, action, note) => axiosInstance.post(`/api/ai-learning/stories/${storyId}/review`, { action, note }).then(r => r.data),
   remove: (storyId) => axiosInstance.delete(`/api/ai-learning/stories/${storyId}`).then(r => r.data),
-  download: async (storyId, file) => {
-    const r = await axiosInstance.get(`/api/ai-learning/stories/${storyId}/files/${file.fileId}`, { responseType: 'blob' });
-    const url = URL.createObjectURL(r.data);
-    const a = document.createElement('a');
-    a.href = url; a.download = file.originalName;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
-  },
+  download: (storyId, file) => saveBlob(`/api/ai-learning/stories/${storyId}/files/${file.fileId}`, file.originalName),
+  // One-page "Your AI Story" summary (I.EVO header + border).
+  downloadPdf: (story) => saveBlob(`/api/ai-learning/stories/${story.storyId}/pdf`,
+    `Your AI Story - ${story.title.replace(/[^\w\- ]+/g, '').trim().slice(0, 60) || 'story'}.pdf`),
 };
+
+async function saveBlob(url, filename) {
+  const r = await axiosInstance.get(url, { responseType: 'blob' });
+  const objectUrl = URL.createObjectURL(r.data);
+  const a = document.createElement('a');
+  a.href = objectUrl; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000);
+}
 
 export const STORY_FORM_PATH = '/ai-story';
