@@ -29,7 +29,7 @@ const TEMPLATES = {
   A: ({ greet, fullName, firstName, title }) => ({
     subject: `Thank you for sharing Your AI Story, ${firstName}!`,
     paragraphs: [
-      `${greet}, ${fullName},`,
+      `${greet}, ${fullName}`,
       `Thank you for sharing your AI story, <b>"${title}"</b>.`,
       `Stories like yours show what becomes possible when we work smarter with AI — and they inspire others to try it too.`,
       `Your one-page summary is attached. Keep exploring, and keep sharing!`,
@@ -39,7 +39,7 @@ const TEMPLATES = {
   B: ({ greet, firstName, title, model }) => ({
     subject: `Your AI Story is in, ${firstName}!`,
     paragraphs: [
-      `${greet}, ${firstName},`,
+      `${greet}, ${firstName}`,
       `Thanks for sharing <b>"${title}"</b> — great use of ${model}!`,
       `Every story like this makes it easier for a colleague to take their first step with AI.`,
       `Your one-page summary is attached. What will you try next?`,
@@ -73,7 +73,7 @@ async function sendAcknowledgement(story) {
     <div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;color:#222;max-width:560px;line-height:1.65">
       ${paragraphs.map(p => `<p style="margin:0 0 14px">${p}</p>`).join('')}
       <p style="margin:22px 0 0;font-size:17px;font-weight:bold;color:#d22630">Stay Curious!</p>
-      <p style="margin:2px 0 0;color:#555">Team I.EVO</p>
+      <p style="margin:2px 0 0;color:#555">Team CTO Office</p>
     </div>`;
   const toText = (h) => h.replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
   const text = `${paragraphs.map(toText).join('\n\n')}\n\nStay Curious!\nTeam CTO Office\n`;
