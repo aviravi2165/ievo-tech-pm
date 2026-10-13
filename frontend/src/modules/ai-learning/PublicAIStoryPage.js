@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useTheme } from '@emotion/react';
 import { Paperclip, X, CheckCircle2, PlayCircle } from 'lucide-react';
-import ievoLogo from '../../shell/assets/logo.png';
+// Transparent copy of the I.EVO wordmark — the original logo.png has a solid
+// white background that showed as a white box on this page.
+import ievoLogo from '../../shell/assets/ievo-logo-transparent.png';
 import speculaIcon from '../../shell/assets/specula-icon.png';
 import { publicStoryApi } from './api/aiStoryApi';
 import { copyText } from './copyText';
@@ -154,14 +156,21 @@ export default function PublicAIStoryPage() {
   );
 
   return (
-    <div style={{ height: '100%', overflowY: 'auto', background: c.greige }}>
-      <div style={{ maxWidth: 760, margin: '0 auto', padding: '28px 16px 48px' }}>
+    <div style={{ height: '100%', overflowY: 'auto', background: c.greige, position: 'relative' }}>
+      {/* Large faded I.EVO watermark — fixed, so it stays put while the form scrolls. */}
+      <div aria-hidden="true" style={{
+        position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none',
+        backgroundImage: `url(${ievoLogo})`, backgroundRepeat: 'no-repeat', backgroundPosition: 'center',
+        backgroundSize: 'min(80vw, 760px) auto', opacity: 0.07,
+      }} />
+      <div style={{ maxWidth: 760, margin: '0 auto', padding: '28px 16px 48px', position: 'relative', zIndex: 1 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 18 }}>
           {/* Specula (the product) on the left, I.EVO (the company) on the right. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
             <img src={speculaIcon} alt="" style={{ width: 34, height: 34, flexShrink: 0 }} />
+                   
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontFamily: theme.font.display, fontSize: 20, fontWeight: 800, letterSpacing: '0.08em', color: c.onyx, lineHeight: 1.1 }}>SPECULA</div>
+              <div style={{ fontFamily: theme.font.display, fontSize: 20, fontWeight: 800, letterSpacing: '0.08em', color: c.onyx, lineHeight: 1.1 }} onClick={() => window.open('/Naming_Proposal_Specula_OnePage.pdf', '_blank', 'noopener,noreferrer')}>SPECULA</div>
               <div style={{ fontSize: 12, color: c.ash }}>Your AI Story</div>
             </div>
           </div>

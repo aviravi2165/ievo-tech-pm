@@ -29,29 +29,29 @@ const TEMPLATES = {
   A: ({ greet, fullName, firstName, title }) => ({
     subject: `Thank you for sharing Your AI Story, ${firstName}!`,
     paragraphs: [
-      `${greet}, ${fullName},`,
-      `Thank you for sharing <b>"${title}"</b>. Every story like yours helps a colleague discover a smarter way to work.`,
-      `Our team will review it shortly. Once approved, it will be featured in Specula's AI Stories for everyone to learn from. Your one-page summary is attached for your records.`,
-      `Keep experimenting, keep sharing.`,
+      `${greet} ${fullName},`,
+      `Thank you for sharing your AI story, <b>"${title}"</b>.`,
+      `Stories like yours show what becomes possible when we work smarter with AI — and they inspire others to try it too.`,
+      `Your one-page summary is attached. Keep exploring, and keep sharing!`,
     ],
   }),
-  // B — energetic explorer
+  // B — energetic
   B: ({ greet, firstName, title, model }) => ({
-    subject: `Your AI Story has landed, ${firstName}!`,
+    subject: `Your AI Story is in, ${firstName}!`,
     paragraphs: [
       `${greet} ${firstName},`,
-      `You just turned a smart shortcut into something the whole team can learn from — that's exactly how a curious culture grows.`,
-      `We've received <b>"${title}"</b>, powered by ${model}. It's now with our team for a quick review before it goes live in Specula's AI Stories. A one-page summary is attached.`,
-      `So… what's the next task you'll hand over to AI?`,
+      `Thanks for sharing <b>"${title}"</b> — great use of ${model}!`,
+      `Every story like this makes it easier for a colleague to take their first step with AI.`,
+      `Your one-page summary is attached. What will you try next?`,
     ],
   }),
-  // C — short and crisp
-  C: ({ greet, fullName, title }) => ({
-    subject: `Received: Your AI Story — ${title}`,
+  // C — short and simple
+  C: ({ greet, fullName, firstName, title }) => ({
+    subject: `Thank you, ${firstName} — Your AI Story`,
     paragraphs: [
-      `${greet}, ${fullName}.`,
-      `We've received your AI story <b>"${title}"</b>. It will appear in Specula's AI Stories after a quick review. The one-page summary is attached.`,
-      `Thank you for leading the way.`,
+      `${greet} ${fullName},`,
+      `Thank you for sharing <b>"${title}"</b>. Your one-page summary is attached.`,
+      `Keep experimenting!`,
     ],
   }),
 };
@@ -70,13 +70,13 @@ async function sendAcknowledgement(story) {
   const { subject, paragraphs } = template(ctx);
 
   const html = `
-    <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;max-width:600px;line-height:1.6">
-      ${paragraphs.map(p => `<p style="margin:0 0 12px">${p}</p>`).join('')}
-      <p style="margin:20px 0 0;font-size:16px;font-weight:bold;color:#d22630">Stay Curious!</p>
-      <p style="margin:4px 0 0">— Team I.EVO</p>
+    <div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;color:#222;max-width:560px;line-height:1.65">
+      ${paragraphs.map(p => `<p style="margin:0 0 14px">${p}</p>`).join('')}
+      <p style="margin:22px 0 0;font-size:17px;font-weight:bold;color:#d22630">Stay Curious!</p>
+      <p style="margin:2px 0 0;color:#555">Team I.EVO</p>
     </div>`;
   const toText = (h) => h.replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-  const text = `${paragraphs.map(toText).join('\n\n')}\n\nStay Curious!\n— Team I.EVO\n`;
+  const text = `${paragraphs.map(toText).join('\n\n')}\n\nStay Curious!\nTeam I.EVO\n`;
 
   const pdf = await buildStoryPdf(story);
   const safeTitle = story.title.replace(/[^\w\- ]+/g, '').trim().slice(0, 60) || 'story';
