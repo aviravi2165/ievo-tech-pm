@@ -8,6 +8,7 @@ import speculaIcon from '../../shell/assets/specula-icon.png';
 import { publicStoryApi } from './api/aiStoryApi';
 import { copyText } from './copyText';
 import StoryTutorial, { tutorialSeen, markTutorialSeen } from './StoryTutorial';
+import { modelsFor } from './aiModelCatalog';
 
 // "Your AI Story" — the OPEN form (no Specula login). Rendered by
 // App.js for /ai-story before the login gate.
@@ -43,6 +44,10 @@ export default function PublicAIStoryPage() {
   const [title, setTitle] = useState('');
   const [aiModel, setAiModel] = useState('');
   const [aiModelOther, setAiModelOther] = useState('');
+  // Specific model + version within the chosen provider (e.g. Claude →
+  // "Opus 5.5") — options come from the LOCAL aiModelCatalog.js, so this is
+  // required only for providers that have a catalog entry.
+  const [aiModelVersion, setAiModelVersion] = useState('');
   const [description, setDescription] = useState('');
   const [inputDetails, setInputDetails] = useState('');
   const [outputDetails, setOutputDetails] = useState('');
@@ -50,6 +55,7 @@ export default function PublicAIStoryPage() {
   const [deliverables, setDeliverables] = useState('');
   const [improvedProductivity, setImprovedProductivity] = useState(false);
   const [improvedAccuracy, setImprovedAccuracy] = useState(false);
+  const [customerAppreciation, setCustomerAppreciation] = useState(false);
   const [impactDescription, setImpactDescription] = useState('');
   const [submittedEmail, setSubmittedEmail] = useState('');
   const [beforeFiles, setBeforeFiles] = useState([]);
@@ -88,8 +94,8 @@ export default function PublicAIStoryPage() {
   };
 
   const resetStory = () => {
-    setTitle(''); setAiModel(''); setAiModelOther(''); setDescription(''); setInputDetails(''); setOutputDetails('');
-    setDailyActivities(''); setDeliverables(''); setImprovedProductivity(false); setImprovedAccuracy(false); setImpactDescription('');
+    setTitle(''); setAiModel(''); setAiModelOther(''); setAiModelVersion(''); setDescription(''); setInputDetails(''); setOutputDetails('');
+    setDailyActivities(''); setDeliverables(''); setImprovedProductivity(false); setImprovedAccuracy(false); setCustomerAppreciation(false); setImpactDescription('');
     setBeforeFiles([]); setAfterFiles([]); setError(''); setDone(false); setCopyState(null);
   };
 
@@ -97,6 +103,7 @@ export default function PublicAIStoryPage() {
     e.preventDefault();
     const req = [[name, 'your name'], [email, 'your email'], [deptId, 'your department'], [title, 'a title'], [aiModel, 'the AI model'],
       [description, 'a description'], [inputDetails, 'the input details'], [outputDetails, 'the output details']];
+    if (modelsFor(aiModel)) req.push([aiModelVersion, 'the model & version']);
     const missing = req.find(([v]) => !String(v).trim());
     if (missing) { setError(`Please enter ${missing[1]}.`); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setError('Please enter a valid email address.'); return; }
@@ -107,9 +114,16 @@ export default function PublicAIStoryPage() {
       await publicStoryApi.submit({
         name: name.trim(), email: email.trim(), deptId, title: title.trim(), aiModel,
         aiModelOther: aiModel === 'Other' ? aiModelOther.trim() : null,
+        // Sent for forward-compat — the backend currently whitelists its
+        // fields on submit, so this is ignored server-side until it learns
+        // to store it (that change comes after this UI is tested).
+        aiModelVersion: modelsFor(aiModel) ? aiModelVersion.trim() : null,
         description: description.trim(), inputDetails: inputDetails.trim(), outputDetails: outputDetails.trim(),
         dailyActivities: dailyActivities.trim() || null, deliverables: deliverables.trim() || null,
         improvedProductivity: improvedProductivity ? 'true' : 'false', improvedAccuracy: improvedAccuracy ? 'true' : 'false',
+        // Sent for forward-compat like aiModelVersion — ignored server-side
+        // until the backend learns to store it (column not added yet).
+        customerAppreciation: customerAppreciation ? 'true' : 'false',
         impactDescription: impactDescription.trim() || null, website,
       }, beforeFiles, afterFiles);
       setSubmittedEmail(email.trim());
@@ -249,7 +263,7 @@ export default function PublicAIStoryPage() {
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                 <div style={{ ...field, flex: '1 1 220px' }}>
                   <label style={label} htmlFor="s-model">AI model used {req}</label>
-                  <select id="s-model" style={input} value={aiModel} onChange={e => setAiModel(e.target.value)} disabled={!options}>
+                  <select id="s-model" style={input} value={aiModel} onChange={e => { setAiModel(e.target.value); setAiModelVersion(''); }} disabled={!options}>
                     <option value="">Select…</option>
                     {(options?.aiModels || []).map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
@@ -258,6 +272,17 @@ export default function PublicAIStoryPage() {
                   <div style={{ ...field, flex: '1 1 220px' }}>
                     <label style={label} htmlFor="s-model-other">Which AI model? {req}</label>
                     <input id="s-model-other" style={input} value={aiModelOther} onChange={e => setAiModelOther(e.target.value)} maxLength={50} placeholder="e.g. DeepSeek" />
+                  </div>
+                )}
+                {/* Appears only after a provider with a local catalog entry is
+                    chosen — switching providers resets it (see onChange above). */}
+                {modelsFor(aiModel) && (
+                  <div style={{ ...field, flex: '1 1 220px' }}>
+                    <label style={label} htmlFor="s-model-version">Model &amp; version {req}</label>
+                    <select id="s-model-version" style={input} value={aiModelVersion} onChange={e => setAiModelVersion(e.target.value)}>
+                      <option value="">Select…</option>
+                      {modelsFor(aiModel).map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
                   </div>
                 )}
               </div>
@@ -287,7 +312,8 @@ export default function PublicAIStoryPage() {
               </div>
 
               <div style={sectionTitle}>Impact (optional)</div>
-              {/* Checkboxes, not radios — productivity and accuracy can both improve. */}
+              {/* Checkboxes, not radios — productivity, accuracy and customer
+                  appreciation can all apply at once. */}
               <div style={{ display: 'flex', gap: '4px 24px', flexWrap: 'wrap', marginBottom: 10 }}>
                 <label style={checkRow}>
                   <input type="checkbox" checked={improvedProductivity} onChange={e => setImprovedProductivity(e.target.checked)} style={{ margin: 0, width: 17, height: 17 }} />
@@ -296,6 +322,10 @@ export default function PublicAIStoryPage() {
                 <label style={checkRow}>
                   <input type="checkbox" checked={improvedAccuracy} onChange={e => setImprovedAccuracy(e.target.checked)} style={{ margin: 0, width: 17, height: 17 }} />
                   Accuracy improved
+                </label>
+                <label style={checkRow}>
+                  <input type="checkbox" checked={customerAppreciation} onChange={e => setCustomerAppreciation(e.target.checked)} style={{ margin: 0, width: 17, height: 17 }} />
+                  Customer Appreciation
                 </label>
               </div>
               <div style={field}>

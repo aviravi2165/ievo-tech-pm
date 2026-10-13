@@ -29,7 +29,7 @@ const TEMPLATES = {
   A: ({ greet, fullName, firstName, title }) => ({
     subject: `Thank you for sharing Your AI Story, ${firstName}!`,
     paragraphs: [
-      `${greet} ${fullName},`,
+      `${greet}, ${fullName},`,
       `Thank you for sharing your AI story, <b>"${title}"</b>.`,
       `Stories like yours show what becomes possible when we work smarter with AI — and they inspire others to try it too.`,
       `Your one-page summary is attached. Keep exploring, and keep sharing!`,
@@ -39,7 +39,7 @@ const TEMPLATES = {
   B: ({ greet, firstName, title, model }) => ({
     subject: `Your AI Story is in, ${firstName}!`,
     paragraphs: [
-      `${greet} ${firstName},`,
+      `${greet}, ${firstName},`,
       `Thanks for sharing <b>"${title}"</b> — great use of ${model}!`,
       `Every story like this makes it easier for a colleague to take their first step with AI.`,
       `Your one-page summary is attached. What will you try next?`,
@@ -49,7 +49,7 @@ const TEMPLATES = {
   C: ({ greet, fullName, firstName, title }) => ({
     subject: `Thank you, ${firstName} — Your AI Story`,
     paragraphs: [
-      `${greet} ${fullName},`,
+      `${greet}, ${fullName},`,
       `Thank you for sharing <b>"${title}"</b>. Your one-page summary is attached.`,
       `Keep experimenting!`,
     ],
@@ -76,7 +76,7 @@ async function sendAcknowledgement(story) {
       <p style="margin:2px 0 0;color:#555">Team I.EVO</p>
     </div>`;
   const toText = (h) => h.replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-  const text = `${paragraphs.map(toText).join('\n\n')}\n\nStay Curious!\nTeam I.EVO\n`;
+  const text = `${paragraphs.map(toText).join('\n\n')}\n\nStay Curious!\nTeam CTO Office\n`;
 
   const pdf = await buildStoryPdf(story);
   const safeTitle = story.title.replace(/[^\w\- ]+/g, '').trim().slice(0, 60) || 'story';
