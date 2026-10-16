@@ -2,6 +2,7 @@ import ProjectManagementModule from '../../modules/project-management/ProjectMan
 import DashboardModule from '../../modules/dashboard/DashboardModule';
 import ApprovalsModule from '../../modules/approvals/ApprovalsModule';
 import AILearningModule from '../../modules/ai-learning/AILearningModule';
+import DPRModule from '../../modules/dpr/DPRModule';
 // DPRModule import intentionally unused — DPR is back to coming-soon (see
 // below); the component file itself is untouched, just not wired in.
 
@@ -39,9 +40,9 @@ export const ERP_MODULES = [
     label: 'Daily Progress Report',
     shortLabel: 'DPR',
     description: 'Project report chats across projects (admins + added members)',
-    status: 'coming-soon',
+    status: 'active',
     path: '/dpr',
-    component: null,
+    component:DPRModule,
   },
   {
     id: 'approvals',
