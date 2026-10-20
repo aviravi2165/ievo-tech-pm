@@ -54,7 +54,7 @@ export default function TopBanner({ currentUser, activeModule }) {
         onMouseDown={(e) => { if (e.detail > 1) e.preventDefault(); }}
         style={{ userSelect: 'none', cursor: 'default' }}
       >
-        <TopbarLogoImg src={logo} alt="" draggable={false} onClick={() => window.open('/Naming_Proposal_Specula_OnePage.pdf', '_blank', 'noopener,noreferrer')}/>
+        <TopbarLogoImg src={logo} alt="" draggable={false} onClick={() => window.open('/Specula_The_Name.pdf', '_blank', 'noopener,noreferrer')}/>
         <TopbarWordmark>SPECULA</TopbarWordmark>
         <TopbarDivider />
         <TopbarModule>{activeModule?.label ?? 'ERP'}</TopbarModule>

@@ -4,7 +4,9 @@ import { Paperclip, X, CheckCircle2, PlayCircle } from 'lucide-react';
 // Transparent copy of the I.EVO wordmark — the original logo.png has a solid
 // white background that showed as a white box on this page.
 import ievoLogo from '../../shell/assets/ievo-logo-transparent.png';
-import speculaIcon from '../../shell/assets/specula-icon.png';
+// Tightly cropped copy: the original PNG has ~25% empty transparent margin on each
+// side, which showed up as a big gap before the logo and between logo and text.
+import speculaIcon from '../../shell/assets/specula-icon-cropped.png';
 import { publicStoryApi } from './api/aiStoryApi';
 import { copyText } from './copyText';
 import RichTextBox from './RichTextBox';
@@ -193,14 +195,19 @@ export default function PublicAIStoryPage() {
         backgroundSize: 'min(80vw, 760px) auto', opacity: 0.07,
       }} />
       <div style={{ maxWidth: 760, margin: '0 auto', padding: '28px 16px 48px', position: 'relative', zIndex: 1 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 18 }}>
+        {/* Logo band — a very subtle outline, a touch softer than the form card's. */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 18,
+          background: c.white, border: '1px solid #DDD6CC', borderRadius: theme.radius.lg,
+          padding: '8px clamp(12px, 3vw, 18px)',
+        }}>
           {/* Specula (the product) on the left, I.EVO (the company) on the right. */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-            <img src={speculaIcon} alt="" style={{ width: 34, height: 34, flexShrink: 0 }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+            <img src={speculaIcon} alt="Specula" style={{ height: 'clamp(34px, 7vw, 40px)', width: 'auto', flexShrink: 0 }} />
                    
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontFamily: theme.font.display, fontSize: 20, fontWeight: 800, letterSpacing: '0.08em', color: c.onyx, lineHeight: 1.1 }} onClick={() => window.open('/Naming_Proposal_Specula_OnePage.pdf', '_blank', 'noopener,noreferrer')}>SPECULA</div>
-              <div style={{ fontSize: 12, color: c.ash }}>Your AI Story</div>
+              <div style={{ fontFamily: theme.font.display, fontSize: 19, fontWeight: 800, letterSpacing: '0.08em', color: c.onyx, lineHeight: 1.1 }} onClick={() => window.open('/Specula_The_Name.pdf', '_blank', 'noopener,noreferrer')}>SPECULA</div>
+              <div style={{ fontSize: 10, color: c.ash, marginTop: 1 }}>Your AI Story</div>
             </div>
           </div>
           <img src={ievoLogo} alt="I.EVO" style={{ height: 26, width: 'auto', maxWidth: '40%', flexShrink: 1 }} />
