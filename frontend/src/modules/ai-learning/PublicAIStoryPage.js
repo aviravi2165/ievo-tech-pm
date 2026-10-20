@@ -7,6 +7,7 @@ import ievoLogo from '../../shell/assets/ievo-logo-transparent.png';
 import speculaIcon from '../../shell/assets/specula-icon.png';
 import { publicStoryApi } from './api/aiStoryApi';
 import { copyText } from './copyText';
+import RichTextBox from './RichTextBox';
 import StoryTutorial, { tutorialSeen, markTutorialSeen } from './StoryTutorial';
 import { modelsFor } from './aiModelCatalog';
 
@@ -132,18 +133,32 @@ export default function PublicAIStoryPage() {
       setDone(true);
       window.scrollTo?.(0, 0);
     } catch (err) {
-      setError(err?.response?.data?.error || 'Could not submit your story. Please try again.');
+      console.error('[AI story] submit failed', err);
+      const status = err?.response?.status;
+      setError(
+        err?.response?.data?.error
+        || (status
+          ? `The server could not accept your story (error ${status}). Please try again in a minute.`
+          : 'Could not reach the server, so we are not sure your story was received. Please check your connection and refresh the page. If it keeps happening, tell IT.'),
+      );
     } finally { setSubmitting(false); }
   };
 
   // ── styles ──
   const c = theme.colors;
+  const edge = '#C4BBAF';   // field + card outline: soft warm grey, clearly visible on white and on the field fill
   const label = { display: 'block', fontSize: 11, color: c.ash, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700, marginBottom: 5 };
-  const input = { width: '100%', boxSizing: 'border-box', background: c.mid, border: `1px solid ${c.border}`, borderRadius: theme.radius.sm, padding: '10px 12px', color: c.onyx, fontSize: 16, fontFamily: 'inherit', outline: 'none' };
+  const input = { width: '100%', boxSizing: 'border-box', background: c.mid, border: `1px solid ${edge}`, borderRadius: theme.radius.sm, padding: '10px 12px', color: c.onyx, fontSize: 16, fontFamily: 'inherit', outline: 'none' };
   const checkRow = { display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, color: c.onyx, cursor: 'pointer', padding: '6px 0' };
   const field = { marginBottom: 16 };
+  const focusIn = (e) => { e.target.style.borderColor = c.espresso; e.target.style.boxShadow = `0 0 0 3px ${c.espresso}22`; };
+  const focusOut = (e) => { e.target.style.borderColor = edge; e.target.style.boxShadow = 'none'; };
+  const rtb = (id, value, onChange, placeholder, minHeight, maxChars) => (
+    <RichTextBox id={id} value={value} onChange={onChange} placeholder={placeholder} minHeight={minHeight} maxChars={maxChars}
+      borderColor={edge} accent={c.espresso} background={c.mid} radius={parseInt(theme.radius.sm, 10) || 6} textColor={c.onyx} />
+  );
   const req = <span style={{ color: c.espresso }}>*</span>;
-  const sectionTitle = { fontSize: 13, fontWeight: 800, color: c.onyx, margin: '8px 0 12px', paddingBottom: 6, borderBottom: `1px solid ${c.border}` };
+  const sectionTitle = { fontSize: 13, fontWeight: 800, color: c.onyx, margin: '8px 0 12px', paddingBottom: 6, borderBottom: `1px solid ${edge}` };
 
   const fileBox = (labelText, hint, files, setter) => (
     <div style={{ flex: '1 1 260px', minWidth: 0 }}>
@@ -152,7 +167,7 @@ export default function PublicAIStoryPage() {
       {files.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 6 }}>
           {files.map((f, i) => (
-            <span key={`${f.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, background: c.mid, border: `1px solid ${c.border}`, borderRadius: theme.radius.sm, padding: '5px 8px', minWidth: 0 }}>
+            <span key={`${f.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, background: c.mid, border: `1px solid ${edge}`, borderRadius: theme.radius.sm, padding: '5px 8px', minWidth: 0 }}>
               <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
               <button type="button" aria-label={`Remove ${f.name}`} onClick={() => setter(files.filter((_, j) => j !== i))}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: c.ash, display: 'flex', padding: 0 }}><X size={14} /></button>
@@ -161,7 +176,7 @@ export default function PublicAIStoryPage() {
         </div>
       )}
       {files.length < MAX_FILES && (
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: c.onyx, border: `1px dashed ${c.border}`, borderRadius: theme.radius.sm, padding: '8px 12px', cursor: 'pointer', background: c.white }}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: c.onyx, border: `1px dashed ${edge}`, borderRadius: theme.radius.sm, padding: '8px 12px', cursor: 'pointer', background: c.white }}>
           <Paperclip size={14} /> Attach file
           <input type="file" multiple accept={ALLOWED_EXT.join(',')} onChange={pickFiles(setter, files)} style={{ display: 'none' }} />
         </label>
@@ -191,7 +206,7 @@ export default function PublicAIStoryPage() {
           <img src={ievoLogo} alt="I.EVO" style={{ height: 26, width: 'auto', maxWidth: '40%', flexShrink: 1 }} />
         </div>
 
-        <div style={{ background: c.white, border: `1px solid ${c.border}`, borderRadius: theme.radius.lg, padding: 'clamp(16px, 4vw, 24px) clamp(14px, 4vw, 24px) 28px' }}>
+        <div style={{ background: c.white, border: `1px solid ${edge}`, borderRadius: theme.radius.lg, padding: 'clamp(16px, 4vw, 24px) clamp(14px, 4vw, 24px) 28px' }}>
           {done ? (
             <div style={{ textAlign: 'center', padding: '24px 8px' }}>
               <CheckCircle2 size={44} color={c.success} strokeWidth={1.8} />
@@ -205,7 +220,7 @@ export default function PublicAIStoryPage() {
                   Share another story
                 </button>
                 <button type="button" onClick={copyLink}
-                  style={{ background: c.white, color: copyState === 'copied' ? c.success : c.onyx, border: `1px solid ${copyState === 'copied' ? c.success : c.border}`, borderRadius: theme.radius.sm, padding: '10px 18px', fontSize: 13.5, fontWeight: 600, cursor: 'pointer' }}>
+                  style={{ background: c.white, color: copyState === 'copied' ? c.success : c.onyx, border: `1px solid ${copyState === 'copied' ? c.success : edge}`, borderRadius: theme.radius.sm, padding: '10px 18px', fontSize: 13.5, fontWeight: 600, cursor: 'pointer' }}>
                   {copyState === 'copied' ? 'Link copied!' : 'Copy link to share with colleagues'}
                 </button>
               </div>
@@ -213,7 +228,7 @@ export default function PublicAIStoryPage() {
                 <div style={{ marginTop: 14, fontSize: 12.5, color: c.ash }}>
                   Your browser blocked copying — select the link below and copy it:
                   <input readOnly value={formUrl} onFocus={e => e.target.select()} autoFocus
-                    style={{ display: 'block', width: '100%', maxWidth: 420, margin: '6px auto 0', boxSizing: 'border-box', fontSize: 13, padding: '8px 10px', border: `1px solid ${c.border}`, borderRadius: theme.radius.sm, background: c.mid, color: c.onyx, textAlign: 'center' }} />
+                    style={{ display: 'block', width: '100%', maxWidth: 420, margin: '6px auto 0', boxSizing: 'border-box', fontSize: 13, padding: '8px 10px', border: `1px solid ${edge}`, borderRadius: theme.radius.sm, background: c.mid, color: c.onyx, textAlign: 'center' }} />
                 </div>
               )}
             </div>
@@ -222,7 +237,7 @@ export default function PublicAIStoryPage() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
                 <h1 style={{ fontSize: 'clamp(20px, 5vw, 24px)', fontWeight: 800, color: c.onyx, margin: 0 }}>Your AI Story</h1>
                 <button type="button" onClick={() => setShowTutorial(true)}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: c.white, color: c.onyx, border: `1px solid ${c.border}`, borderRadius: 20, padding: '7px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: c.white, color: c.onyx, border: `1px solid ${edge}`, borderRadius: 20, padding: '7px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
                   <PlayCircle size={16} /> How it works · Demo
                 </button>
               </div>
@@ -236,16 +251,16 @@ export default function PublicAIStoryPage() {
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                 <div style={{ ...field, flex: '1 1 220px' }}>
                   <label style={label} htmlFor="s-name">Name {req}</label>
-                  <input id="s-name" style={input} value={name} onChange={e => setName(e.target.value)} maxLength={100} autoComplete="name" />
+                  <input id="s-name" style={input} onFocus={focusIn} onBlur={focusOut} value={name} onChange={e => setName(e.target.value)} maxLength={100} autoComplete="name" />
                 </div>
                 <div style={{ ...field, flex: '1 1 220px' }}>
                   <label style={label} htmlFor="s-email">Email {req}</label>
-                  <input id="s-email" type="email" style={input} value={email} onChange={e => setEmail(e.target.value)} maxLength={150} autoComplete="email" />
+                  <input id="s-email" type="email" style={input} onFocus={focusIn} onBlur={focusOut} value={email} onChange={e => setEmail(e.target.value)} maxLength={150} autoComplete="email" />
                 </div>
               </div>
               <div style={field}>
                 <label style={label} htmlFor="s-dept">Department {req}</label>
-                <select id="s-dept" style={input} value={deptId} onChange={e => setDeptId(e.target.value)} disabled={!options}>
+                <select id="s-dept" style={input} onFocus={focusIn} onBlur={focusOut} value={deptId} onChange={e => setDeptId(e.target.value)} disabled={!options}>
                   <option value="">{options ? 'Select your department…' : 'Loading…'}</option>
                   {(options?.departments || []).map(d => <option key={d.deptId} value={d.deptId}>{d.deptName}</option>)}
                 </select>
@@ -258,12 +273,12 @@ export default function PublicAIStoryPage() {
               <div style={sectionTitle}>Your story</div>
               <div style={field}>
                 <label style={label} htmlFor="s-title">Give your story a title {req}</label>
-                <input id="s-title" style={input} value={title} onChange={e => setTitle(e.target.value)} maxLength={200} placeholder="e.g. Monthly P&L variance summary in 10 minutes" />
+                <input id="s-title" style={input} onFocus={focusIn} onBlur={focusOut} value={title} onChange={e => setTitle(e.target.value)} maxLength={200} placeholder="e.g. Monthly P&L variance summary in 10 minutes" />
               </div>
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                 <div style={{ ...field, flex: '1 1 220px' }}>
                   <label style={label} htmlFor="s-model">AI model used {req}</label>
-                  <select id="s-model" style={input} value={aiModel} onChange={e => { setAiModel(e.target.value); setAiModelVersion(''); }} disabled={!options}>
+                  <select id="s-model" style={input} onFocus={focusIn} onBlur={focusOut} value={aiModel} onChange={e => { setAiModel(e.target.value); setAiModelVersion(''); }} disabled={!options}>
                     <option value="">Select…</option>
                     {(options?.aiModels || []).map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
@@ -271,7 +286,7 @@ export default function PublicAIStoryPage() {
                 {aiModel === 'Other' && (
                   <div style={{ ...field, flex: '1 1 220px' }}>
                     <label style={label} htmlFor="s-model-other">Which AI model? {req}</label>
-                    <input id="s-model-other" style={input} value={aiModelOther} onChange={e => setAiModelOther(e.target.value)} maxLength={50} placeholder="e.g. DeepSeek" />
+                    <input id="s-model-other" style={input} onFocus={focusIn} onBlur={focusOut} value={aiModelOther} onChange={e => setAiModelOther(e.target.value)} maxLength={50} placeholder="e.g. DeepSeek" />
                   </div>
                 )}
                 {/* Appears only after a provider with a local catalog entry is
@@ -279,7 +294,7 @@ export default function PublicAIStoryPage() {
                 {modelsFor(aiModel) && (
                   <div style={{ ...field, flex: '1 1 220px' }}>
                     <label style={label} htmlFor="s-model-version">Model &amp; version {req}</label>
-                    <select id="s-model-version" style={input} value={aiModelVersion} onChange={e => setAiModelVersion(e.target.value)}>
+                    <select id="s-model-version" style={input} onFocus={focusIn} onBlur={focusOut} value={aiModelVersion} onChange={e => setAiModelVersion(e.target.value)}>
                       <option value="">Select…</option>
                       {modelsFor(aiModel).map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
@@ -288,26 +303,26 @@ export default function PublicAIStoryPage() {
               </div>
               <div style={field}>
                 <label style={label} htmlFor="s-desc">Tell us your AI story {req}</label>
-                <textarea id="s-desc" style={{ ...input, resize: 'vertical' }} rows={5} value={description} onChange={e => setDescription(e.target.value)} maxLength={4000} placeholder={DESCRIPTION_GUIDE} />
+                {rtb('s-desc', description, setDescription, DESCRIPTION_GUIDE, 120, 4000)}
               </div>
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                 <div style={{ ...field, flex: '1 1 260px' }}>
                   <label style={label} htmlFor="s-input">Input — what you gave the AI {req}</label>
-                  <textarea id="s-input" style={{ ...input, resize: 'vertical' }} rows={4} value={inputDetails} onChange={e => setInputDetails(e.target.value)} maxLength={4000} placeholder="The data, file or prompt you used" />
+                  {rtb('s-input', inputDetails, setInputDetails, "The data, file or prompt you used", 90, 4000)}
                 </div>
                 <div style={{ ...field, flex: '1 1 260px' }}>
                   <label style={label} htmlFor="s-output">Output — what you got back {req}</label>
-                  <textarea id="s-output" style={{ ...input, resize: 'vertical' }} rows={4} value={outputDetails} onChange={e => setOutputDetails(e.target.value)} maxLength={4000} placeholder="The result and how you used it" />
+                  {rtb('s-output', outputDetails, setOutputDetails, "The result and how you used it", 90, 4000)}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                 <div style={{ ...field, flex: '1 1 260px' }}>
                   <label style={label} htmlFor="s-activities">Daily activities handed to AI (optional)</label>
-                  <textarea id="s-activities" style={{ ...input, resize: 'vertical' }} rows={3} value={dailyActivities} onChange={e => setDailyActivities(e.target.value)} maxLength={2000} placeholder="e.g. Drafting emails, comparing quotations, formatting reports" />
+                  {rtb('s-activities', dailyActivities, setDailyActivities, "e.g. Drafting emails, comparing quotations, formatting reports", 80, 2000)}
                 </div>
                 <div style={{ ...field, flex: '1 1 260px' }}>
                   <label style={label} htmlFor="s-deliverables">Deliverables made with AI (optional)</label>
-                  <textarea id="s-deliverables" style={{ ...input, resize: 'vertical' }} rows={3} value={deliverables} onChange={e => setDeliverables(e.target.value)} maxLength={2000} placeholder="e.g. BOQ summary, P&L variance note, site report" />
+                  {rtb('s-deliverables', deliverables, setDeliverables, "e.g. BOQ summary, P&L variance note, site report", 80, 2000)}
                 </div>
               </div>
 
@@ -330,7 +345,7 @@ export default function PublicAIStoryPage() {
               </div>
               <div style={field}>
                 <label style={label} htmlFor="s-impact">Describe the impact</label>
-                <textarea id="s-impact" style={{ ...input, resize: 'vertical' }} rows={2} value={impactDescription} onChange={e => setImpactDescription(e.target.value)} maxLength={1000} placeholder={IMPACT_GUIDE} />
+                {rtb('s-impact', impactDescription, setImpactDescription, IMPACT_GUIDE, 60, 1000)}
               </div>
 
               <div style={sectionTitle}>Before &amp; after (optional)</div>

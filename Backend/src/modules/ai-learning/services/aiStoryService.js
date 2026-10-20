@@ -14,6 +14,7 @@ const path = require('path');
 const { getPool, sql, withTransaction } = require('../../../config/db');
 const { STORAGE_ROOT } = require('../../../middleware/upload');
 const { sendAcknowledgement } = require('./aiStoryEmail');
+const { toSafeHtml, toPlainText } = require('./richText');
 
 const AI_MODELS = ['ChatGPT', 'Claude', 'Gemini', 'Manus', 'Meta AI', 'Perplexity', 'Other'];
 // No longer offered on the form, but older stories may carry it — still
@@ -47,6 +48,18 @@ function text(v, max, label, required = true) {
   return s || null;
 }
 
+// Rich-text box: the visible text is what counts against the limit (not the
+// HTML markup), and what is stored is always sanitised HTML.
+const RICH_HTML_MAX = 60000;
+function rich(v, max, label, required = true) {
+  const plain = toPlainText(v);
+  if (required && !plain) throw httpError(400, `${label} is required.`);
+  if (plain.length > max) throw httpError(400, `${label} is too long (max ${max} characters).`);
+  const html = toSafeHtml(v);
+  if (html.length > RICH_HTML_MAX) throw httpError(400, `${label} has too much formatting — please simplify it.`);
+  return plain ? html : null;
+}
+
 async function validate(body) {
   const name = text(body.name, LIMITS.name, 'Name');
   const email = text(body.email, LIMITS.email, 'Email');
@@ -55,14 +68,14 @@ async function validate(body) {
   const depts = await getActiveDepartments();
   if (!depts.some(d => d.deptId === deptId)) throw httpError(400, 'Choose your department.');
   const title = text(body.title, LIMITS.title, 'Title');
-  const description = text(body.description, LIMITS.description, 'Description');
+  const description = rich(body.description, LIMITS.description, 'Description');
   if (!AI_MODELS.includes(body.aiModel)) throw httpError(400, 'Choose the AI model you used.');
   const aiModelOther = body.aiModel === 'Other' ? text(body.aiModelOther, LIMITS.modelOther, 'AI model name') : null;
-  const inputDetails = text(body.inputDetails, LIMITS.input, 'Input details');
-  const outputDetails = text(body.outputDetails, LIMITS.output, 'Output details');
-  const dailyActivities = text(body.dailyActivities, LIMITS.activities, 'Daily activities', false);
-  const deliverables = text(body.deliverables, LIMITS.deliverables, 'Deliverables', false);
-  const impactDescription = text(body.impactDescription, LIMITS.impact, 'Impact description', false);
+  const inputDetails = rich(body.inputDetails, LIMITS.input, 'Input details');
+  const outputDetails = rich(body.outputDetails, LIMITS.output, 'Output details');
+  const dailyActivities = rich(body.dailyActivities, LIMITS.activities, 'Daily activities', false);
+  const deliverables = rich(body.deliverables, LIMITS.deliverables, 'Deliverables', false);
+  const impactDescription = rich(body.impactDescription, LIMITS.impact, 'Impact description', false);
   return {
     name, email, deptId, title, description, aiModel: body.aiModel, aiModelOther, inputDetails, outputDetails,
     dailyActivities, deliverables, impactDescription,
@@ -82,12 +95,12 @@ async function submitStory(body, filesByField) {
       const r = await req()
         .input('name', sql.NVarChar(100), v.name).input('email', sql.NVarChar(150), v.email)
         .input('deptId', sql.Int, v.deptId).input('title', sql.NVarChar(200), v.title)
-        .input('description', sql.NVarChar(4000), v.description)
+        .input('description', sql.NVarChar(sql.MAX), v.description)
         .input('aiModel', sql.NVarChar(50), v.aiModel).input('aiModelOther', sql.NVarChar(50), v.aiModelOther)
-        .input('input', sql.NVarChar(4000), v.inputDetails).input('output', sql.NVarChar(4000), v.outputDetails)
-        .input('activities', sql.NVarChar(2000), v.dailyActivities).input('deliverables', sql.NVarChar(2000), v.deliverables)
+        .input('input', sql.NVarChar(sql.MAX), v.inputDetails).input('output', sql.NVarChar(sql.MAX), v.outputDetails)
+        .input('activities', sql.NVarChar(sql.MAX), v.dailyActivities).input('deliverables', sql.NVarChar(sql.MAX), v.deliverables)
         .input('productivity', sql.Bit, v.improvedProductivity ? 1 : 0).input('accuracy', sql.Bit, v.improvedAccuracy ? 1 : 0)
-        .input('impact', sql.NVarChar(1000), v.impactDescription)
+        .input('impact', sql.NVarChar(sql.MAX), v.impactDescription)
         .query(`INSERT INTO ai_stories (submitter_name, submitter_email, dept_id, title, description, ai_model, ai_model_other,
                   input_details, output_details, daily_activities, deliverables, improved_productivity, improved_accuracy, impact_description)
                 OUTPUT INSERTED.story_id
@@ -146,8 +159,10 @@ async function attachFiles(stories) {
     if (!byStory.has(f.storyId)) byStory.set(f.storyId, []);
     byStory.get(f.storyId).push({ ...f, fileSize: Number(f.fileSize) });
   }
+  const RICH = ['description', 'inputDetails', 'outputDetails', 'dailyActivities', 'deliverables', 'impactDescription'];
   return stories.map(s => ({
-    ...s, hoursSaved: s.hoursSaved == null ? null : Number(s.hoursSaved),
+    ...s, ...Object.fromEntries(RICH.map(k => [k, s[k] == null ? s[k] : toSafeHtml(s[k])])),
+    hoursSaved: s.hoursSaved == null ? null : Number(s.hoursSaved),
     improvedProductivity: Boolean(s.improvedProductivity), improvedAccuracy: Boolean(s.improvedAccuracy),
     files: byStory.get(s.storyId) || [],
   }));

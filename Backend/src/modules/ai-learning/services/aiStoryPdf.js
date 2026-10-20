@@ -8,6 +8,7 @@
 
 const path = require('path');
 const PDFDocument = require('pdfkit');
+const { toPlainText } = require('./richText');
 
 const LOGO = path.join(__dirname, '..', '..', '..', '..', 'assets', 'ievo-logo.png');
 const BRAND = '#d22630';
@@ -93,12 +94,12 @@ function buildStoryPdf(story) {
       doc.font('Helvetica').fontSize(10.5).fillColor(INK).text(String(body), MARGIN, doc.y, { width: contentW, lineGap: 2 });
       doc.moveDown(0.9);
     };
-    section('Your AI story', story.description);
-    section('Daily activities handed to AI', story.dailyActivities);
-    section('Deliverables produced with AI', story.deliverables);
-    section('Input — what was given to the AI', story.inputDetails);
-    section('Output — what came back', story.outputDetails);
-    section('Impact', story.impactDescription);
+    section('Your AI story', toPlainText(story.description));
+    section('Daily activities handed to AI', toPlainText(story.dailyActivities));
+    section('Deliverables produced with AI', toPlainText(story.deliverables));
+    section('Input — what was given to the AI', toPlainText(story.inputDetails));
+    section('Output — what came back', toPlainText(story.outputDetails));
+    section('Impact', toPlainText(story.impactDescription));
     if (story.files?.length) {
       const line = (kind, label) => {
         const names = story.files.filter(f => f.kind === kind).map(f => f.originalName);
