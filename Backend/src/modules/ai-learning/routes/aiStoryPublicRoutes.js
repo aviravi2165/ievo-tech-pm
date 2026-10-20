@@ -7,6 +7,7 @@
  */
 
 const router = require('express').Router();
+const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const ctrl = require('../controllers/aiStoryController');
 const { storyUpload } = require('../middleware/storyUpload');
@@ -21,6 +22,14 @@ const submitLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many stories submitted from this network in the last hour. Please try again later.' },
 });
+
+// This form is open to anyone and uses no login, cookies or tokens, so the
+// app-wide CORS allow-list (which is for the logged-in app) doesn't apply:
+// answer any origin. Without this, opening the form from an address that is
+// not in CORS_ORIGIN (the IP, the domain, a hostname...) makes the browser
+// silently discard the server's reply — the form then shows a generic
+// "Could not submit" even though the story was saved.
+router.use(cors({ origin: true, methods: ['GET', 'POST', 'OPTIONS'], allowedHeaders: ['Content-Type'], credentials: false }));
 
 router.get('/options', ctrl.formOptions);
 router.post('/', submitLimiter, storyUpload, ctrl.submit);

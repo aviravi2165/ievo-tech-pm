@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useTheme } from '@emotion/react';
 import { FileText, X, ExternalLink, Link2, Search, Download } from 'lucide-react';
 import { storyApi, STORY_FORM_PATH } from './api/aiStoryApi';
+import { RichView, stripHtml } from './RichTextBox';
 import { copyText } from './copyText';
 
 const fmtDate = (iso) => {
@@ -36,7 +37,7 @@ function StoryModal({ story, isAdmin, onClose, onReview, onDelete }) {
   const block = (title, body) => (
     <div style={{ marginBottom: 14 }}>
       <div style={{ fontSize: 11, color: c.ash, textTransform: 'uppercase', letterSpacing: '.06em', fontWeight: 700, marginBottom: 4 }}>{title}</div>
-      <div style={{ fontSize: 13, color: c.onyx, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6 }}>{body}</div>
+      <RichView html={body} style={{ fontSize: 13, color: c.onyx, lineHeight: 1.6 }} />
     </div>
   );
   const files = (kind, label) => {
@@ -247,7 +248,7 @@ export default function AIStoriesPanel() {
                 <button key={s.storyId} type="button" onClick={() => setOpen(s)}
                   style={{ textAlign: 'left', background: c.white, border: `1px solid ${c.border}`, borderRadius: theme.radius.sm, padding: 14, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 8, fontFamily: 'inherit', minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 800, color: c.onyx, lineHeight: 1.35, wordBreak: 'break-word' }}>{s.title}</div>
-                  <div style={{ fontSize: 12.5, color: c.ash, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>{s.description}</div>
+                  <div style={{ fontSize: 12.5, color: c.ash, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>{stripHtml(s.description)}</div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 'auto' }}>
                     <Chip theme={theme} tone={c.espresso}>{modelLabel(s)}</Chip>
                     {impactsOf(s).map(t => <Chip key={t} theme={theme} tone={c.success}>{t}</Chip>)}
