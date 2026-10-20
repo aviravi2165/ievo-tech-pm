@@ -56,6 +56,19 @@ const TEMPLATES = {
   }),
 };
 
+// Default CC list from AI_STORY_EMAIL_CC (comma/semicolon separated). Invalid
+// entries are dropped, and the submitter is never CC'd on their own mail.
+function ccList(submitterEmail) {
+  const mine = String(submitterEmail || '').toLowerCase();
+  const seen = new Set();
+  const list = String(process.env.AI_STORY_EMAIL_CC || '')
+    .split(/[,;\s]+/)
+    .map(e => e.trim())
+    .filter(e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))
+    .filter(e => { const k = e.toLowerCase(); if (k === mine || seen.has(k)) return false; seen.add(k); return true; });
+  return list.length ? list.join(', ') : undefined;
+}
+
 async function sendAcknowledgement(story) {
   const key = String(process.env.AI_STORY_EMAIL_TEMPLATE || 'A').trim().toUpperCase();
   const template = TEMPLATES[key] || TEMPLATES.A;
@@ -82,10 +95,11 @@ async function sendAcknowledgement(story) {
   const safeTitle = story.title.replace(/[^\w\- ]+/g, '').trim().slice(0, 60) || 'story';
   await sendMail({
     to: story.submitterEmail,
+    cc: ccList(story.submitterEmail),
     subject: toText(subject),
     html, text,
     attachments: [{ filename: `Your AI Story - ${safeTitle}.pdf`, content: pdf, contentType: 'application/pdf' }],
   });
 }
 
-module.exports = { sendAcknowledgement, greeting, TEMPLATES };
+module.exports = { sendAcknowledgement, greeting, ccList, TEMPLATES };
