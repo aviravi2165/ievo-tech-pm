@@ -202,14 +202,16 @@ export default function PublicAIStoryPage() {
           padding: '8px clamp(12px, 3vw, 18px)',
         }}>
           {/* Specula (the product) on the left, I.EVO (the company) on the right. */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-            <img src={speculaIcon} alt="Specula" style={{ height: 'clamp(34px, 7vw, 40px)', width: 'auto', flexShrink: 0 }} />
-                   
+          {/* One real link around the icon AND the wordmark: pointer cursor on hover, and
+              keyboard / screen-reader friendly. Opens the Specula name PDF in a new tab. */}
+          <a href="/Specula_The_Name.pdf" target="_blank" rel="noopener noreferrer" title="About the name Specula"
+            style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, textDecoration: 'none', color: 'inherit', cursor: 'pointer' }}>
+            <img src={speculaIcon} alt="Specula" draggable={false} style={{ height: 'clamp(34px, 7vw, 40px)', width: 'auto', flexShrink: 0 }} />
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontFamily: theme.font.display, fontSize: 19, fontWeight: 800, letterSpacing: '0.08em', color: c.onyx, lineHeight: 1.1 }} onClick={() => window.open('/Specula_The_Name.pdf', '_blank', 'noopener,noreferrer')}>SPECULA</div>
+              <div style={{ fontFamily: theme.font.display, fontSize: 19, fontWeight: 800, letterSpacing: '0.08em', color: c.onyx, lineHeight: 1.1 }}>SPECULA</div>
               <div style={{ fontSize: 10, color: c.ash, marginTop: 1 }}>Your AI Story</div>
             </div>
-          </div>
+          </a>
           <img src={ievoLogo} alt="I.EVO" style={{ height: 26, width: 'auto', maxWidth: '40%', flexShrink: 1 }} />
         </div>
 
