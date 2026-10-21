@@ -10,8 +10,14 @@
  * in Backend/.env (default A). No code change needed to switch.
  */
 
+const path = require('path');
 const { sendMail } = require('../../../Shared/mailer');
 const { renderStoryPdf } = require('./aiStoryPdf');
+
+// Specula Brand Identity Guide: horizontal logo (PNG, from the Logo Kit) at the top of
+// emails; Specula Navy for emphasis — Beacon Red is reserved for alerts.
+const LOGO_PATH = path.join(__dirname, '..', '..', '..', '..', 'assets', 'specula-horizontal-colour-800px.png');
+const NAVY = '#334456';
 
 function escapeHtml(v) {
   return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -86,9 +92,10 @@ async function sendAcknowledgement(story) {
   const { subject, paragraphs } = template(ctx);
 
   const html = `
-    <div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;color:#222;max-width:560px;line-height:1.65">
+    <div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;color:#1C2430;max-width:560px;line-height:1.65">
+      <img src="cid:specula-logo" alt="Specula" width="170" style="display:block;border:0;margin:0 0 14px">
       ${paragraphs.map(p => `<p style="margin:0 0 14px">${p}</p>`).join('')}
-      <p style="margin:22px 0 0;font-size:17px;font-weight:bold;color:#d22630">Stay Curious!</p>
+      <p style="margin:22px 0 0;font-size:17px;font-weight:bold;color:${NAVY}">Stay Curious!</p>
       <p style="margin:2px 0 0;color:#555">Team CTO Office</p>
     </div>`;
   const toText = (h) => h.replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
@@ -100,7 +107,10 @@ async function sendAcknowledgement(story) {
     cc: ccList(story.submitterEmail),
     subject: toText(subject),
     html, text,
-    attachments: [{ filename: `Your AI Story - ${safeTitle}.pdf`, content: pdf, contentType: 'application/pdf' }],
+    attachments: [
+      { filename: `Your AI Story - ${safeTitle}.pdf`, content: pdf, contentType: 'application/pdf' },
+      { filename: 'specula-logo.png', path: LOGO_PATH, cid: 'specula-logo', contentDisposition: 'inline' },
+    ],
   });
 }
 

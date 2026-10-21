@@ -65,7 +65,7 @@ function Donut({ segments, size = 130, centerValue, centerLabel, formatValue = (
           return el;
         })}
       </g>
-      <text x="60" y="56" textAnchor="middle" fontSize="20" fontWeight="700" fontFamily="Georgia, serif" fill={theme.colors.onyx}>
+      <text x="60" y="56" textAnchor="middle" fontSize="20" fontWeight="700" fontFamily="Space Grotesk, Inter, sans-serif" fill={theme.colors.onyx}>
         {centerValue ?? total}
       </text>
       <text x="60" y="72" textAnchor="middle" fontSize="9" fill={theme.colors.ash}>

@@ -24,7 +24,7 @@ export const StatTile = styled.div`
   padding: 12px 14px;
 `;
 export const StatValue = styled.div`
-  font-size: 24px; font-weight: 700; font-family: Georgia, serif;
+  font-size: 24px; font-weight: 700; font-family: Space Grotesk, Inter, sans-serif;
   color: ${(props) => props.accent || props.theme.colors.onyx}; line-height: 1.1;
 `;
 export const StatLabel = styled.div`
@@ -94,7 +94,7 @@ export const WorkloadRow = styled.div`
 export const WorkloadAvatar = styled.div`
   width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
   background: ${t(th => th.colors.mid)}; display: flex; align-items: center; justify-content: center;
-  font-size: 10px; font-weight: 700; color: ${t(th => th.colors.onyx)}; font-family: Georgia, serif;
+  font-size: 10px; font-weight: 700; color: ${t(th => th.colors.onyx)}; font-family: Space Grotesk, Inter, sans-serif;
 `;
 export const WorkloadName = styled.div`
   flex: 1; font-size: 12.5px; color: ${t(th => th.colors.onyx)}; font-weight: 600;

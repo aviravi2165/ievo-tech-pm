@@ -8,7 +8,7 @@ import styled from '@emotion/styled';
 export const MobileLogoWrap = styled.div` display: none; `;
 
 export const MobileLogo = styled.span`
-  font-family: Georgia, serif;
+  font-family: Space Grotesk, Inter, sans-serif;
   font-size: 22px;
   font-weight: 600;
   color: ${p => p.theme.colors.onyx};

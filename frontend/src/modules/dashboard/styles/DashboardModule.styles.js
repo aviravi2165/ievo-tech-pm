@@ -24,7 +24,7 @@ export const Title = styled.h1`
   font-size: 24px;
   font-weight: 700;
   color: ${p => p.theme.colors.onyx};
-  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-family: Space Grotesk, Inter, sans-serif;
 `;
 
 export const Subtitle = styled.p`
@@ -352,7 +352,7 @@ export const StatTile = styled.button`
 export const StatValue = styled.div`
   font-size: 24px;
   font-weight: 700;
-  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-family: Space Grotesk, Inter, sans-serif;
   color: ${p => p.accent || p.theme.colors.onyx};
   line-height: 1.1;
 `;

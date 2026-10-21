@@ -11,11 +11,18 @@ const path = require('path');
 const PDFDocument = require('pdfkit');
 const { toPlainText } = require('./richText');
 
-const LOGO = path.join(__dirname, '..', '..', '..', '..', 'assets', 'ievo-logo.png');
-const BRAND = '#d22630';
-const INK = '#1f1f1f';
-const MUTED = '#6b6b6b';
-const RULE = '#d9d4cc';
+// Specula Brand Identity Guide v1.0 — "Documents and reports": Specula on the left of the
+// header, I.EVO on the right at the same visual height; Specula Navy, Inter + Space Grotesk.
+const ASSETS = path.join(__dirname, '..', '..', '..', '..', 'assets');
+const SPECULA_LOGO = path.join(ASSETS, 'specula-horizontal-colour-800px.png');   // from the Specula Logo Kit
+const IEVO_LOGO = path.join(ASSETS, 'ievo-logo.png');
+const FONTS = path.join(ASSETS, 'fonts');
+const NAVY = '#334456';
+const INK = '#1C2430';
+const SLATE = '#4A5462';
+const GREY = '#8A939F';
+const LINE = '#E2E6EB';
+const MIST = '#F4F6F8';
 const MARGIN = 48;
 
 function fmtDate(d) {
@@ -27,6 +34,9 @@ function fmtDate(d) {
 function renderStoryPdf(story) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margins: { top: MARGIN + 34, bottom: MARGIN + 20, left: MARGIN, right: MARGIN }, info: { Title: `Your AI Story — ${story.title}`, Author: story.submitterName } });
+    doc.registerFont('Inter', path.join(FONTS, 'Inter-Regular.ttf'));
+    doc.registerFont('Inter-SemiBold', path.join(FONTS, 'Inter-SemiBold.ttf'));
+    doc.registerFont('SpaceGrotesk-Medium', path.join(FONTS, 'SpaceGrotesk-Medium.ttf'));
     const chunks = [];
     let pages = 1;
     doc.on('data', c => chunks.push(c));
@@ -43,14 +53,14 @@ function renderStoryPdf(story) {
       const bottom = doc.page.margins.bottom;
       doc.page.margins.bottom = 0;
       doc.save();
-      doc.lineWidth(1.2).strokeColor(BRAND).rect(24, 24, W - 48, H - 48).stroke();
-      doc.lineWidth(0.4).strokeColor(RULE).rect(28, 28, W - 56, H - 56).stroke();
+      doc.lineWidth(1.2).strokeColor(NAVY).rect(24, 24, W - 48, H - 48).stroke();
+      doc.lineWidth(0.4).strokeColor(LINE).rect(28, 28, W - 56, H - 56).stroke();
       if (!first) {
-        doc.image(LOGO, MARGIN, 40, { height: 16 });
-        doc.font('Helvetica').fontSize(8).fillColor(MUTED).text('Your AI Story (continued)', MARGIN, 45, { width: contentW, align: 'right' });
+        doc.image(SPECULA_LOGO, MARGIN - 6, 30, { height: 30 });
+        doc.font('Inter').fontSize(8).fillColor(SLATE).text('Your AI Story (continued)', MARGIN, 41, { width: contentW, align: 'right' });
       }
-      doc.font('Helvetica').fontSize(7.5).fillColor(MUTED)
-        .text('Specula · Your AI Story · Stay Curious', MARGIN, H - 44, { width: contentW, align: 'center', lineBreak: false });
+      doc.font('Inter').fontSize(7.5).fillColor(GREY)
+        .text('Specula · CTO Office Projects & Programs · Your AI Story', MARGIN, H - 44, { width: contentW, align: 'center', lineBreak: false });
       doc.restore();
       doc.page.margins.bottom = bottom;
     };
@@ -60,19 +70,22 @@ function renderStoryPdf(story) {
     doc.on('pageAdded', () => {
       pages += 1;
       frame(false);
-      doc.font('Helvetica').fontSize(10.5).fillColor(INK);
+      doc.font('Inter').fontSize(10.5).fillColor(INK);
       doc.x = MARGIN; doc.y = MARGIN + 34;
     });
 
     // ── Header ──
-    doc.image(LOGO, MARGIN, 44, { height: 28 });
-    doc.font('Helvetica-Bold').fontSize(9).fillColor(BRAND).text('YOUR AI STORY', MARGIN, 52, { width: contentW, align: 'right', characterSpacing: 1.5 });
-    doc.moveTo(MARGIN, 84).lineTo(W - MARGIN, 84).lineWidth(0.8).strokeColor(BRAND).stroke();
+    // The logo files carry their own clear space, so they sit slightly outside the text margin.
+    const IEVO_H = 40;
+    const IEVO_W = IEVO_H * (346 / 110);
+    doc.image(SPECULA_LOGO, MARGIN - 10, 34, { height: 50 });
+    doc.image(IEVO_LOGO, W - MARGIN - IEVO_W + 4, 39, { height: IEVO_H });
+    doc.moveTo(MARGIN, 92).lineTo(W - MARGIN, 92).lineWidth(0.8).strokeColor(NAVY).stroke();
 
-    doc.y = 100; doc.x = MARGIN;
-    doc.font('Helvetica-Bold').fontSize(18).fillColor(INK).text(story.title, { width: contentW });
+    doc.y = 108; doc.x = MARGIN;
+    doc.font('SpaceGrotesk-Medium').fontSize(20).fillColor(NAVY).text(story.title, { width: contentW });
     doc.moveDown(0.3);
-    doc.font('Helvetica').fontSize(9.5).fillColor(MUTED)
+    doc.font('Inter').fontSize(9.5).fillColor(SLATE)
       .text(`${story.submitterName}  ·  ${story.deptName}  ·  ${story.submitterEmail}  ·  ${fmtDate(story.createdAt)}`, { width: contentW });
     doc.moveDown(0.8);
 
@@ -80,10 +93,10 @@ function renderStoryPdf(story) {
     const model = story.aiModel === 'Other' ? (story.aiModelOther || 'Other') : story.aiModel;
     const impacts = [story.improvedProductivity && 'Productivity', story.improvedAccuracy && 'Accuracy'].filter(Boolean);
     const stripY = doc.y;
-    doc.save().roundedRect(MARGIN, stripY, contentW, 40, 4).fillColor('#f6f3ee').fill().restore();
+    doc.save().roundedRect(MARGIN, stripY, contentW, 40, 4).fillColor(MIST).fill().restore();
     const cell = (label, value, x) => {
-      doc.font('Helvetica').fontSize(7.5).fillColor(MUTED).text(label.toUpperCase(), x, stripY + 8, { width: contentW / 2 - 20, characterSpacing: 0.8 });
-      doc.font('Helvetica-Bold').fontSize(10.5).fillColor(INK).text(value, x, stripY + 20, { width: contentW / 2 - 20 });
+      doc.font('Inter').fontSize(7.5).fillColor(SLATE).text(label.toUpperCase(), x, stripY + 8, { width: contentW / 2 - 20, characterSpacing: 0.8 });
+      doc.font('Inter-SemiBold').fontSize(10.5).fillColor(INK).text(value, x, stripY + 20, { width: contentW / 2 - 20 });
     };
     cell('AI model used', model, MARGIN + 12);
     cell('Improved', impacts.length ? impacts.join(' & ') : '—', MARGIN + contentW / 2 + 6);
@@ -93,9 +106,9 @@ function renderStoryPdf(story) {
     const section = (label, body) => {
       if (!body) return;
       if (doc.y > H - MARGIN - 90) doc.addPage();
-      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(BRAND).text(label.toUpperCase(), MARGIN, doc.y, { width: contentW, characterSpacing: 1 });
+      doc.font('Inter-SemiBold').fontSize(8.5).fillColor(NAVY).text(label.toUpperCase(), MARGIN, doc.y, { width: contentW, characterSpacing: 1 });
       doc.moveDown(0.25);
-      doc.font('Helvetica').fontSize(10.5).fillColor(INK).text(String(body), MARGIN, doc.y, { width: contentW, lineGap: 2 });
+      doc.font('Inter').fontSize(10.5).fillColor(INK).text(String(body), MARGIN, doc.y, { width: contentW, lineGap: 2 });
       doc.moveDown(0.9);
     };
     section('Your AI story', toPlainText(story.description));

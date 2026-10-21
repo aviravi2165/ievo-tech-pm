@@ -123,7 +123,7 @@ export default function StoryTutorial({ onClose }) {
         <div style={{ display: 'flex', justifyContent: 'center', gap: 6, padding: '14px 0 4px' }}>
           {STEPS.map((_, n) => (
             <button key={n} type="button" onClick={() => setI(n)} aria-label={`Go to step ${n + 1}`}
-              style={{ width: n === i ? 18 : 8, height: 8, borderRadius: 4, border: 'none', padding: 0, cursor: 'pointer', background: n === i ? c.onyx : c.border, transition: 'width .15s' }} />
+              style={{ width: n === i ? 18 : 8, height: 8, borderRadius: 4, border: 'none', padding: 0, cursor: 'pointer', background: n === i ? '#334456' : '#C5CCD4', transition: 'width .15s' }} />
           ))}
         </div>
 
@@ -137,7 +137,7 @@ export default function StoryTutorial({ onClose }) {
               <ChevronLeft size={15} /> Back
             </button>
           )}
-          <button type="button" onClick={() => (last ? onClose() : setI(i + 1))} style={{ ...btn, background: c.onyx, color: c.white, border: 'none' }}>
+          <button type="button" onClick={() => (last ? onClose() : setI(i + 1))} style={{ ...btn, background: '#334456', color: c.white, border: 'none' }}>
             {last ? 'Start writing' : <>Next <ChevronRight size={15} /></>}
           </button>
         </div>

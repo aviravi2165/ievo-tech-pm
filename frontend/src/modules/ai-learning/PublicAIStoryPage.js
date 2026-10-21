@@ -4,9 +4,9 @@ import { Paperclip, X, CheckCircle2, PlayCircle } from 'lucide-react';
 // Transparent copy of the I.EVO wordmark — the original logo.png has a solid
 // white background that showed as a white box on this page.
 import ievoLogo from '../../shell/assets/ievo-logo-transparent.png';
-// Tightly cropped copy: the original PNG has ~25% empty transparent margin on each
-// side, which showed up as a big gap before the logo and between logo and text.
-import speculaIcon from '../../shell/assets/specula-icon-cropped.png';
+// Official Specula logo, "reverse" version (white + red) for the navy header bar —
+// from the Specula Logo Kit. The files already include the required clear space.
+import speculaLogoReverse from '../../assets/brand/specula-horizontal-reverse.svg';
 import { publicStoryApi } from './api/aiStoryApi';
 import { copyText } from './copyText';
 import RichTextBox from './RichTextBox';
@@ -188,10 +188,19 @@ export default function PublicAIStoryPage() {
   };
 
   // ── styles ──
-  const c = theme.colors;
-  const edge = '#C4BBAF';   // field + card outline: soft warm grey, clearly visible on white and on the field fill
-  const label = { display: 'block', fontSize: 11, color: c.ash, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700, marginBottom: 5 };
-  const input = { width: '100%', boxSizing: 'border-box', background: c.mid, border: `1px solid ${edge}`, borderRadius: theme.radius.sm, padding: '10px 12px', color: c.onyx, fontSize: 16, fontFamily: 'inherit', outline: 'none' };
+  // Brand Identity Guide v1.0 colours. Navy carries the brand; Beacon Red only for
+  // required marks and errors; neutrals for text, borders and the page tint.
+  const BRAND = { navy: '#334456', red: '#D8320C', ink: '#1C2430', slate: '#4A5462', grey: '#8A939F', line: '#E2E6EB', mist: '#F4F6F8', green: '#2F7D5B' };
+  const c = {
+    ...theme.colors,
+    onyx: BRAND.ink, ash: BRAND.slate, ashLight: BRAND.grey, greige: BRAND.mist, white: '#FFFFFF', mid: '#FFFFFF',
+    espresso: BRAND.navy, success: BRAND.green, danger: BRAND.red, border: BRAND.line,
+  };
+  // Field/card outline: the guide's Line (#E2E6EB) is too faint against white (the CTO asked for
+  // visible borders), so use one step darker in the same cool-grey family.
+  const edge = '#C5CCD4';
+  const label = { display: 'block', fontSize: 12, color: c.ash, fontWeight: 500, marginBottom: 5 };
+  const input = { width: '100%', boxSizing: 'border-box', background: c.mid, border: `1px solid ${edge}`, borderRadius: theme.radius.sm, padding: '10px 12px', color: c.onyx, fontSize: 16 /* 16px keeps iPhones from zooming into fields; guide body is 15px */, fontFamily: theme.font.body, outline: 'none' };
   const checkRow = { display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, color: c.onyx, cursor: 'pointer', padding: '6px 0' };
   const field = { marginBottom: 16 };
   const focusIn = (e) => { e.target.style.borderColor = c.espresso; e.target.style.boxShadow = `0 0 0 3px ${c.espresso}22`; };
@@ -200,8 +209,8 @@ export default function PublicAIStoryPage() {
     <RichTextBox id={id} value={value} onChange={onChange} placeholder={placeholder} minHeight={minHeight} maxChars={maxChars}
       borderColor={edge} accent={c.espresso} background={c.mid} radius={parseInt(theme.radius.sm, 10) || 6} textColor={c.onyx} />
   );
-  const req = <span style={{ color: c.espresso }}>*</span>;
-  const sectionTitle = { fontSize: 13, fontWeight: 800, color: c.onyx, margin: '8px 0 12px', paddingBottom: 6, borderBottom: `1px solid ${edge}` };
+  const req = <span style={{ color: BRAND.red }}>*</span>;
+  const sectionTitle = { fontSize: 16, fontWeight: 600, color: BRAND.ink, margin: '10px 0 12px', paddingBottom: 6, borderBottom: `1px solid ${BRAND.line}` };
 
   const fileBox = (labelText, hint, files, setter) => (
     <div style={{ flex: '1 1 260px', minWidth: 0 }}>
@@ -235,27 +244,19 @@ export default function PublicAIStoryPage() {
         backgroundImage: `url(${ievoLogo})`, backgroundRepeat: 'no-repeat', backgroundPosition: 'center',
         backgroundSize: 'min(80vw, 760px) auto', opacity: 0.07,
       }} />
-      <div style={{ maxWidth: 760, margin: '0 auto', padding: '28px 16px 48px', position: 'relative', zIndex: 1 }}>
-        {/* Logo band — a very subtle outline, a touch softer than the form card's. */}
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 18,
-          background: c.white, border: '1px solid #DDD6CC', borderRadius: theme.radius.lg,
-          padding: '8px clamp(12px, 3vw, 18px)',
-        }}>
-          {/* Specula (the product) on the left, I.EVO (the company) on the right. */}
-          {/* One real link around the icon AND the wordmark: pointer cursor on hover, and
-              keyboard / screen-reader friendly. Opens the Specula name PDF in a new tab. */}
+      {/* Header bar — brand guide: reverse logo on a navy bar, left aligned; form title on the right in Inter.
+          The logo is one real link (pointer cursor, keyboard friendly) to the note on the Specula name. */}
+      <header style={{ background: BRAND.navy, position: 'relative', zIndex: 2 }}>
+        <div style={{ maxWidth: 760, margin: '0 auto', padding: '4px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <a href="/Specula_The_Name.pdf" target="_blank" rel="noopener noreferrer" title="About the name Specula"
-            style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, textDecoration: 'none', color: 'inherit', cursor: 'pointer' }}>
-            <img src={speculaIcon} alt="Specula" draggable={false} style={{ height: 'clamp(34px, 7vw, 40px)', width: 'auto', flexShrink: 0 }} />
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontFamily: theme.font.display, fontSize: 19, fontWeight: 800, letterSpacing: '0.08em', color: c.onyx, lineHeight: 1.1 }}>SPECULA</div>
-              {/* <div style={{ fontSize: 10, color: c.ash, marginTop: 1 }}>Your AI Story</div> */}
-            </div>
+            style={{ display: 'flex', alignItems: 'center', textDecoration: 'none', cursor: 'pointer', minWidth: 0 }}>
+            <img src={speculaLogoReverse} alt="Specula" draggable={false} style={{ height: 'clamp(48px, 11vw, 60px)', width: 'auto', display: 'block' }} />
           </a>
-          <img src={ievoLogo} alt="I.EVO" style={{ height: 26, width: 'auto', maxWidth: '40%', flexShrink: 1 }} />
+          <span style={{ fontFamily: theme.font.body, fontSize: 16, fontWeight: 500, color: '#FFFFFF', whiteSpace: 'nowrap' }}>Your AI Story</span>
         </div>
+      </header>
 
+      <div style={{ maxWidth: 760, margin: '0 auto', padding: '24px 16px 40px', position: 'relative', zIndex: 1 }}>
         <div style={{ background: c.white, border: `1px solid ${edge}`, borderRadius: theme.radius.lg, padding: 'clamp(16px, 4vw, 24px) clamp(14px, 4vw, 24px) 28px' }}>
           {done ? (
             <div style={{ textAlign: 'center', padding: '24px 8px' }}>
@@ -266,7 +267,7 @@ export default function PublicAIStoryPage() {
               </div>
               <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
                 <button type="button" onClick={resetStory}
-                  style={{ background: c.onyx, color: c.white, border: 'none', borderRadius: theme.radius.sm, padding: '10px 18px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>
+                  style={{ background: BRAND.navy, color: c.white, border: 'none', borderRadius: theme.radius.sm, padding: '10px 18px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>
                   Share another story
                 </button>
                 <button type="button" onClick={copyLink}
@@ -285,7 +286,7 @@ export default function PublicAIStoryPage() {
           ) : (
             <form onSubmit={submit} noValidate>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
-                <h1 style={{ fontSize: 'clamp(20px, 5vw, 24px)', fontWeight: 800, color: c.onyx, margin: 0 }}>Your AI Story</h1>
+                <h1 style={{ fontFamily: theme.font.display, fontSize: 'clamp(24px, 6vw, 32px)', fontWeight: 500, lineHeight: 1.2, color: BRAND.ink, margin: 0 }}>Tell us how you used AI</h1>
                 <button type="button" onClick={() => setShowTutorial(true)}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: c.white, color: c.onyx, border: `1px solid ${edge}`, borderRadius: 20, padding: '7px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
                   <PlayCircle size={16} /> How it works · Demo
@@ -430,12 +431,20 @@ export default function PublicAIStoryPage() {
               </div>
               {error && <div role="alert" style={{ color: c.danger, fontSize: 13, marginBottom: 12 }}>{error}</div>}
               <button type="submit" disabled={submitting || !options}
-                style={{ width: '100%', background: c.onyx, color: c.white, border: 'none', borderRadius: theme.radius.sm, padding: '12px 18px', fontSize: 14.5, fontWeight: 700, cursor: submitting ? 'default' : 'pointer', opacity: submitting || !options ? 0.6 : 1 }}>
+                style={{ width: '100%', background: BRAND.navy, color: c.white, border: 'none', borderRadius: theme.radius.sm, padding: '12px 18px', fontSize: 14.5, fontWeight: 700, cursor: submitting ? 'default' : 'pointer', opacity: submitting || !options ? 0.6 : 1 }}>
                 {submitting ? 'Submitting…' : 'Submit Your AI Story'}
               </button>
             </form>
           )}
         </div>
+
+        <footer style={{ marginTop: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', fontSize: 12, color: BRAND.grey }}>
+          <span>Specula · CTO Office Projects &amp; Programs</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <img src={ievoLogo} alt="I.EVO" style={{ height: 16, width: 'auto' }} />
+            <span>Iraj Evolution Design Company Private Limited</span>
+          </span>
+        </footer>
       </div>
       {showTutorial && <StoryTutorial onClose={closeTutorial} />}
     </div>
