@@ -4,9 +4,9 @@ import { Paperclip, X, CheckCircle2, PlayCircle } from 'lucide-react';
 // Transparent copy of the I.EVO wordmark — the original logo.png has a solid
 // white background that showed as a white box on this page.
 import ievoLogo from '../../shell/assets/ievo-logo-transparent.png';
-// Official Specula logo, "reverse" version (white + red) for the navy header bar —
-// from the Specula Logo Kit. The files already include the required clear space.
-import speculaLogoReverse from '../../assets/brand/specula-horizontal-reverse.svg';
+// Official Specula logo, "colour" version (navy + red) for light backgrounds — from the
+// Specula Logo Kit. The file already includes the required clear space.
+import speculaLogoColour from '../../assets/brand/specula-horizontal-colour.svg';
 import { publicStoryApi } from './api/aiStoryApi';
 import { copyText } from './copyText';
 import RichTextBox from './RichTextBox';
@@ -244,19 +244,22 @@ export default function PublicAIStoryPage() {
         backgroundImage: `url(${ievoLogo})`, backgroundRepeat: 'no-repeat', backgroundPosition: 'center',
         backgroundSize: 'min(80vw, 760px) auto', opacity: 0.07,
       }} />
-      {/* Header bar — brand guide: reverse logo on a navy bar, left aligned; form title on the right in Inter.
-          The logo is one real link (pointer cursor, keyboard friendly) to the note on the Specula name. */}
-      <header style={{ background: BRAND.navy, position: 'relative', zIndex: 2 }}>
-        <div style={{ maxWidth: 760, margin: '0 auto', padding: '4px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+      <div style={{ maxWidth: 760, margin: '0 auto', padding: '28px 16px 40px', position: 'relative', zIndex: 1 }}>
+        {/* Logo band: Specula (the product) on the left, I.EVO (the company) on the right, in a
+            softly outlined white band. The Specula logo is one real link (pointer cursor, keyboard
+            friendly) to the note on the name. */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 18,
+          background: c.white, border: '1px solid #DDD6CC', borderRadius: theme.radius.lg,
+          padding: '2px clamp(10px, 3vw, 18px)',
+        }}>
           <a href="/Specula_The_Name.pdf" target="_blank" rel="noopener noreferrer" title="About the name Specula"
             style={{ display: 'flex', alignItems: 'center', textDecoration: 'none', cursor: 'pointer', minWidth: 0 }}>
-            <img src={speculaLogoReverse} alt="Specula" draggable={false} style={{ height: 'clamp(48px, 11vw, 60px)', width: 'auto', display: 'block' }} />
+            <img src={speculaLogoColour} alt="Specula" draggable={false} style={{ height: 'clamp(50px, 11vw, 62px)', width: 'auto', display: 'block' }} />
           </a>
-          <span style={{ fontFamily: theme.font.body, fontSize: 16, fontWeight: 500, color: '#FFFFFF', whiteSpace: 'nowrap' }}>Your AI Story</span>
+          <img src={ievoLogo} alt="I.EVO" style={{ height: 32, width: 'auto', maxWidth: '40%', flexShrink: 1 }} />
         </div>
-      </header>
 
-      <div style={{ maxWidth: 760, margin: '0 auto', padding: '24px 16px 40px', position: 'relative', zIndex: 1 }}>
         <div style={{ background: c.white, border: `1px solid ${edge}`, borderRadius: theme.radius.lg, padding: 'clamp(16px, 4vw, 24px) clamp(14px, 4vw, 24px) 28px' }}>
           {done ? (
             <div style={{ textAlign: 'center', padding: '24px 8px' }}>
