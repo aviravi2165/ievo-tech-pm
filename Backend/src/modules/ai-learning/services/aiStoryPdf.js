@@ -118,11 +118,25 @@ function renderStoryPdf(story) {
     section('Output — what came back', toPlainText(story.outputDetails));
     section('Impact', toPlainText(story.impactDescription));
     if (story.files?.length) {
-      const line = (kind, label) => {
-        const names = story.files.filter(f => f.kind === kind).map(f => f.originalName);
-        return names.length ? `${label}: ${names.join(', ')}` : null;
+      // Very long names (e.g. a saved email title) are shortened in the middle, keeping the extension.
+      const short = (name, max = 140) => {
+        if (name.length <= max) return name;
+        const ext = path.extname(name).slice(0, 8);
+        return `${name.slice(0, max - ext.length - 1).trimEnd()}…${ext}`;
       };
-      section('Attached files', [line('before', 'Before'), line('after', 'After')].filter(Boolean).join('\n'));
+      if (doc.y > H - MARGIN - 110) doc.addPage();
+      doc.font('Inter-SemiBold').fontSize(8.5).fillColor(NAVY).text('ATTACHED FILES', MARGIN, doc.y, { width: contentW, characterSpacing: 1 });
+      doc.moveDown(0.35);
+      for (const [kind, label] of [['before', 'Before'], ['after', 'After']]) {
+        const names = story.files.filter(f => f.kind === kind).map(f => f.originalName);
+        if (!names.length) continue;
+        doc.font('Inter-SemiBold').fontSize(9.5).fillColor(SLATE).text(`${label} (${names.length})`, MARGIN, doc.y, { width: contentW });
+        doc.moveDown(0.15);
+        for (const n of names) {
+          doc.font('Inter').fontSize(9.5).fillColor(INK).text(`•  ${short(n)}`, MARGIN + 8, doc.y, { width: contentW - 8, lineGap: 1 });
+        }
+        doc.moveDown(0.5);
+      }
     }
 
     doc.end();

@@ -25,6 +25,16 @@ const LIMITS = { name: 100, email: 150, title: 200, description: 4000, modelOthe
 const truthy = (v) => v === true || v === 'true' || v === '1' || v === 1 || v === 'on';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// multer decodes the browser's UTF-8 file name as latin-1, so "—" or "é" arrive as "â€”" / "Ã©".
+// Re-decode when (and only when) that round trip gives valid UTF-8; real Unicode names and
+// plain ASCII are left alone. Also repairs names already stored this way.
+function fixFilename(name) {
+  const s = String(name ?? '');
+  if (!/[\u0080-\u00FF]/.test(s) || /[^\u0000-\u00FF]/.test(s)) return s;
+  const fixed = Buffer.from(s, 'latin1').toString('utf8');
+  return fixed.includes('\uFFFD') ? s : fixed;
+}
+
 function httpError(status, message) { const e = new Error(message); e.statusCode = status; return e; }
 
 function removeUploaded(files) {
@@ -109,7 +119,7 @@ async function submitStory(body, filesByField) {
       storyId = r.recordset[0].story_id;
       const add = async (f, kind) => req()
         .input('storyId', sql.Int, storyId).input('kind', sql.NVarChar(10), kind)
-        .input('originalName', sql.NVarChar(260), f.originalname.slice(0, 260))
+        .input('originalName', sql.NVarChar(260), fixFilename(f.originalname).slice(0, 260))
         .input('storedName', sql.NVarChar(100), f.filename)
         .input('storagePath', sql.NVarChar(500), path.relative(STORAGE_ROOT, f.path))
         .input('mimeType', sql.NVarChar(150), f.mimetype || null)
@@ -164,7 +174,7 @@ async function attachFiles(stories) {
     ...s, ...Object.fromEntries(RICH.map(k => [k, s[k] == null ? s[k] : toSafeHtml(s[k])])),
     hoursSaved: s.hoursSaved == null ? null : Number(s.hoursSaved),
     improvedProductivity: Boolean(s.improvedProductivity), improvedAccuracy: Boolean(s.improvedAccuracy),
-    files: byStory.get(s.storyId) || [],
+    files: (byStory.get(s.storyId) || []).map(f => ({ ...f, originalName: fixFilename(f.originalName) })),
   }));
 }
 
@@ -250,7 +260,7 @@ async function getFileForDownload(storyId, fileId, isAdmin) {
   const full = path.resolve(root, f.storagePath);
   if (!full.startsWith(root)) throw httpError(400, 'Invalid file path.');
   if (!fs.existsSync(full)) throw httpError(404, 'File is missing on the server.');
-  return { originalName: f.originalName, fullPath: full };
+  return { originalName: fixFilename(f.originalName), fullPath: full };
 }
 
-module.exports = { AI_MODELS, getFormOptions, submitStory, listStories, reviewStory, deleteStory, getFileForDownload, getFullStory, getStoryForPdf };
+module.exports = { fixFilename, AI_MODELS, getFormOptions, submitStory, listStories, reviewStory, deleteStory, getFileForDownload, getFullStory, getStoryForPdf };
