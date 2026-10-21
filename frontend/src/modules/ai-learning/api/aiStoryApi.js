@@ -25,7 +25,7 @@ export const storyApi = {
   review: (storyId, action, note) => axiosInstance.post(`/api/ai-learning/stories/${storyId}/review`, { action, note }).then(r => r.data),
   remove: (storyId) => axiosInstance.delete(`/api/ai-learning/stories/${storyId}`).then(r => r.data),
   download: (storyId, file) => saveBlob(`/api/ai-learning/stories/${storyId}/files/${file.fileId}`, file.originalName),
-  // One-page "Your AI Story" summary (I.EVO header + border).
+  // "Your AI Story" PDF summary (I.EVO header + border); one or more pages depending on length.
   downloadPdf: (story) => saveBlob(`/api/ai-learning/stories/${story.storyId}/pdf`,
     `Your AI Story - ${story.title.replace(/[^\w\- ]+/g, '').trim().slice(0, 60) || 'story'}.pdf`),
 };

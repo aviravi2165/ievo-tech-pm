@@ -1,9 +1,10 @@
 'use strict';
 
 /**
- * One-page "Your AI Story" summary PDF — I.EVO header, page border, every
- * field of the story. Long stories flow onto extra pages (border + header
- * strip repeat). Returns a Buffer.
+ * "Your AI Story" summary PDF — I.EVO header, page border, every field of
+ * the story. It is one page for a short story; a long story flows onto extra
+ * pages (border + header strip repeat), so callers must not assume a page
+ * count — renderStoryPdf() reports the real one.
  */
 
 const path = require('path');
@@ -22,12 +23,14 @@ function fmtDate(d) {
   return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
 }
 
-function buildStoryPdf(story) {
+// Resolves { buffer, pages }.
+function renderStoryPdf(story) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margins: { top: MARGIN + 34, bottom: MARGIN + 20, left: MARGIN, right: MARGIN }, info: { Title: `Your AI Story — ${story.title}`, Author: story.submitterName } });
     const chunks = [];
+    let pages = 1;
     doc.on('data', c => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('end', () => resolve({ buffer: Buffer.concat(chunks), pages }));
     doc.on('error', reject);
 
     const W = doc.page.width;
@@ -55,6 +58,7 @@ function buildStoryPdf(story) {
     // Fonts/colours aren't part of save()/restore(), so text continuing onto
     // the new page would inherit the frame's small grey footer style.
     doc.on('pageAdded', () => {
+      pages += 1;
       frame(false);
       doc.font('Helvetica').fontSize(10.5).fillColor(INK);
       doc.x = MARGIN; doc.y = MARGIN + 34;
@@ -112,4 +116,6 @@ function buildStoryPdf(story) {
   });
 }
 
-module.exports = { buildStoryPdf };
+const buildStoryPdf = async (story) => (await renderStoryPdf(story)).buffer;
+
+module.exports = { buildStoryPdf, renderStoryPdf };

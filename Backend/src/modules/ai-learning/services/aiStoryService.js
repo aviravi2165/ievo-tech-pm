@@ -21,7 +21,7 @@ const AI_MODELS = ['ChatGPT', 'Claude', 'Gemini', 'Manus', 'Meta AI', 'Perplexit
 // valid as a filter value so those stories stay findable.
 const LEGACY_MODELS = ['Microsoft Copilot'];
 const STATUSES = ['pending', 'approved', 'rejected'];
-const LIMITS = { name: 100, email: 150, title: 200, description: 4000, modelOther: 50, input: 4000, output: 4000, note: 500, activities: 2000, deliverables: 2000, impact: 1000 };
+const LIMITS = { name: 100, email: 150, title: 200, description: 4000, modelOther: 50, input: 4000, output: 4000, note: 500, activities: 2000, deliverables: 2000, impact: 4000 };
 const truthy = (v) => v === true || v === 'true' || v === '1' || v === 1 || v === 'on';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 

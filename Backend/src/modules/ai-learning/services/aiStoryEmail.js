@@ -3,7 +3,7 @@
 /**
  * Acknowledgement email sent to the submitter right after they share "Your
  * AI Story" — personalised (full name, time-of-day greeting in IST),
- * encouraging, signed off with "Stay Curious", with the one-page PDF
+ * encouraging, signed off with "Stay Curious", with the PDF summary
  * summary attached.
  *
  * Three wordings are available; pick one with AI_STORY_EMAIL_TEMPLATE=A|B|C
@@ -11,7 +11,7 @@
  */
 
 const { sendMail } = require('../../../Shared/mailer');
-const { buildStoryPdf } = require('./aiStoryPdf');
+const { renderStoryPdf } = require('./aiStoryPdf');
 
 function escapeHtml(v) {
   return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -26,31 +26,31 @@ function greeting(now = new Date()) {
 
 const TEMPLATES = {
   // A — warm thank-you
-  A: ({ greet, fullName, firstName, title }) => ({
+  A: ({ greet, fullName, firstName, title, summary }) => ({
     subject: `Thank you for sharing Your AI Story, ${firstName}!`,
     paragraphs: [
       `${greet}, ${fullName}`,
       `Thank you for sharing your AI story, <b>"${title}"</b>.`,
       `Stories like yours show what becomes possible when we work smarter with AI — and they inspire others to try it too.`,
-      `Your one-page summary is attached. Keep exploring, and keep sharing!`,
+      `${summary} is attached. Keep exploring, and keep sharing!`,
     ],
   }),
   // B — energetic
-  B: ({ greet, firstName, title, model }) => ({
+  B: ({ greet, firstName, title, model, summary }) => ({
     subject: `Your AI Story is in, ${firstName}!`,
     paragraphs: [
       `${greet}, ${firstName}`,
       `Thanks for sharing <b>"${title}"</b> — great use of ${model}!`,
       `Every story like this makes it easier for a colleague to take their first step with AI.`,
-      `Your one-page summary is attached. What will you try next?`,
+      `${summary} is attached. What will you try next?`,
     ],
   }),
   // C — short and simple
-  C: ({ greet, fullName, firstName, title }) => ({
+  C: ({ greet, fullName, firstName, title, summary }) => ({
     subject: `Thank you, ${firstName} — Your AI Story`,
     paragraphs: [
       `${greet}, ${fullName},`,
-      `Thank you for sharing <b>"${title}"</b>. Your one-page summary is attached.`,
+      `Thank you for sharing <b>"${title}"</b>. ${summary} is attached.`,
       `Keep experimenting!`,
     ],
   }),
@@ -73,7 +73,10 @@ async function sendAcknowledgement(story) {
   const key = String(process.env.AI_STORY_EMAIL_TEMPLATE || 'A').trim().toUpperCase();
   const template = TEMPLATES[key] || TEMPLATES.A;
   const fullName = story.submitterName.trim();
+  // Built first: the email states the PDF's real page count, which depends on how long the story is.
+  const { buffer: pdf, pages } = await renderStoryPdf(story);
   const ctx = {
+    summary: `Your story summary (PDF, ${pages} ${pages === 1 ? 'page' : 'pages'})`,
     greet: greeting(),
     fullName: escapeHtml(fullName),
     firstName: escapeHtml(fullName.split(/\s+/)[0]),
@@ -91,7 +94,6 @@ async function sendAcknowledgement(story) {
   const toText = (h) => h.replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
   const text = `${paragraphs.map(toText).join('\n\n')}\n\nStay Curious!\nTeam CTO Office\n`;
 
-  const pdf = await buildStoryPdf(story);
   const safeTitle = story.title.replace(/[^\w\- ]+/g, '').trim().slice(0, 60) || 'story';
   await sendMail({
     to: story.submitterEmail,

@@ -10,6 +10,7 @@ import speculaIcon from '../../shell/assets/specula-icon-cropped.png';
 import { publicStoryApi } from './api/aiStoryApi';
 import { copyText } from './copyText';
 import RichTextBox from './RichTextBox';
+import { saveDraft, loadDraft, clearDraft } from './storyDraft';
 import StoryTutorial, { tutorialSeen, markTutorialSeen } from './StoryTutorial';
 import { modelsFor } from './aiModelCatalog';
 
@@ -37,29 +38,32 @@ const extOf = (name) => (name.match(/\.[^.]+$/)?.[0] || '').toLowerCase();
 export default function PublicAIStoryPage() {
   const theme = useTheme();
   const saved = loadProfile();
+  // Autosaved draft from a previous visit (text only — files can't be kept).
+  const [draft0] = useState(() => loadDraft());
+  const d0 = draft0?.values || {};
   const [options, setOptions] = useState(null);
   const [optionsError, setOptionsError] = useState('');
 
-  const [name, setName] = useState(saved.name || '');
-  const [email, setEmail] = useState(saved.email || '');
-  const [deptId, setDeptId] = useState(saved.deptId ? String(saved.deptId) : '');
+  const [name, setName] = useState(d0.name || saved.name || '');
+  const [email, setEmail] = useState(d0.email || saved.email || '');
+  const [deptId, setDeptId] = useState(d0.deptId ? String(d0.deptId) : (saved.deptId ? String(saved.deptId) : ''));
   const [remember, setRemember] = useState(true);
-  const [title, setTitle] = useState('');
-  const [aiModel, setAiModel] = useState('');
-  const [aiModelOther, setAiModelOther] = useState('');
+  const [title, setTitle] = useState(d0.title || '');
+  const [aiModel, setAiModel] = useState(d0.aiModel || '');
+  const [aiModelOther, setAiModelOther] = useState(d0.aiModelOther || '');
   // Specific model + version within the chosen provider (e.g. Claude →
   // "Opus 5.5") — options come from the LOCAL aiModelCatalog.js, so this is
   // required only for providers that have a catalog entry.
-  const [aiModelVersion, setAiModelVersion] = useState('');
-  const [description, setDescription] = useState('');
-  const [inputDetails, setInputDetails] = useState('');
-  const [outputDetails, setOutputDetails] = useState('');
-  const [dailyActivities, setDailyActivities] = useState('');
-  const [deliverables, setDeliverables] = useState('');
-  const [improvedProductivity, setImprovedProductivity] = useState(false);
-  const [improvedAccuracy, setImprovedAccuracy] = useState(false);
-  const [customerAppreciation, setCustomerAppreciation] = useState(false);
-  const [impactDescription, setImpactDescription] = useState('');
+  const [aiModelVersion, setAiModelVersion] = useState(d0.aiModelVersion || '');
+  const [description, setDescription] = useState(d0.description || '');
+  const [inputDetails, setInputDetails] = useState(d0.inputDetails || '');
+  const [outputDetails, setOutputDetails] = useState(d0.outputDetails || '');
+  const [dailyActivities, setDailyActivities] = useState(d0.dailyActivities || '');
+  const [deliverables, setDeliverables] = useState(d0.deliverables || '');
+  const [improvedProductivity, setImprovedProductivity] = useState(Boolean(d0.improvedProductivity));
+  const [improvedAccuracy, setImprovedAccuracy] = useState(Boolean(d0.improvedAccuracy));
+  const [customerAppreciation, setCustomerAppreciation] = useState(Boolean(d0.customerAppreciation));
+  const [impactDescription, setImpactDescription] = useState(d0.impactDescription || '');
   const [submittedEmail, setSubmittedEmail] = useState('');
   const [beforeFiles, setBeforeFiles] = useState([]);
   const [afterFiles, setAfterFiles] = useState([]);
@@ -72,7 +76,31 @@ export default function PublicAIStoryPage() {
   const [showTutorial, setShowTutorial] = useState(() => !tutorialSeen());
   const closeTutorial = () => { setShowTutorial(false); markTutorialSeen(); };
   const [copyState, setCopyState] = useState(null); // null | 'copied' | 'failed'
+  const [savedAt, setSavedAt] = useState(draft0?.savedAt || null);   // when the draft was last written
+  const [restored, setRestored] = useState(Boolean(draft0));          // show the "we restored your draft" note
   const formUrl = `${window.location.origin}${window.location.pathname}`;
+
+  // Autosave: shortly after the last keystroke, write the text and choices to
+  // this browser. Stops once the story is submitted.
+  useEffect(() => {
+    if (done) return undefined;
+    const t = setTimeout(() => {
+      setSavedAt(saveDraft({
+        name, email, deptId, title, aiModel, aiModelOther, aiModelVersion, description, inputDetails, outputDetails,
+        dailyActivities, deliverables, improvedProductivity, improvedAccuracy, customerAppreciation, impactDescription,
+      }));
+    }, 800);
+    return () => clearTimeout(t);
+  }, [done, name, email, deptId, title, aiModel, aiModelOther, aiModelVersion, description, inputDetails, outputDetails,
+    dailyActivities, deliverables, improvedProductivity, improvedAccuracy, customerAppreciation, impactDescription]);
+
+  // Attached files can't be autosaved, so warn before a refresh/close would drop them.
+  useEffect(() => {
+    if (done || (!beforeFiles.length && !afterFiles.length)) return undefined;
+    const warn = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [done, beforeFiles.length, afterFiles.length]);
 
   useEffect(() => {
     document.title = 'Your AI Story · I.EVO';
@@ -102,6 +130,17 @@ export default function PublicAIStoryPage() {
     setBeforeFiles([]); setAfterFiles([]); setError(''); setDone(false); setCopyState(null);
   };
 
+  const discardDraft = () => {
+    if (!window.confirm('Discard this draft and start with an empty form?')) return;
+    clearDraft();
+    resetStory();
+    setSavedAt(null);
+    setRestored(false);
+  };
+
+  const fmtTime = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const fmtWhen = (t) => new Date(t).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+
   const submit = async (e) => {
     e.preventDefault();
     const req = [[name, 'your name'], [email, 'your email'], [deptId, 'your department'], [title, 'a title'], [aiModel, 'the AI model'],
@@ -129,6 +168,8 @@ export default function PublicAIStoryPage() {
         customerAppreciation: customerAppreciation ? 'true' : 'false',
         impactDescription: impactDescription.trim() || null, website,
       }, beforeFiles, afterFiles);
+      clearDraft();
+      setSavedAt(null);
       setSubmittedEmail(email.trim());
       if (remember) saveProfile({ name: name.trim(), email: email.trim(), deptId: Number(deptId) });
       else forgetProfile();
@@ -209,7 +250,7 @@ export default function PublicAIStoryPage() {
             <img src={speculaIcon} alt="Specula" draggable={false} style={{ height: 'clamp(34px, 7vw, 40px)', width: 'auto', flexShrink: 0 }} />
             <div style={{ minWidth: 0 }}>
               <div style={{ fontFamily: theme.font.display, fontSize: 19, fontWeight: 800, letterSpacing: '0.08em', color: c.onyx, lineHeight: 1.1 }}>SPECULA</div>
-              <div style={{ fontSize: 10, color: c.ash, marginTop: 1 }}>Your AI Story</div>
+              {/* <div style={{ fontSize: 10, color: c.ash, marginTop: 1 }}>Your AI Story</div> */}
             </div>
           </a>
           <img src={ievoLogo} alt="I.EVO" style={{ height: 26, width: 'auto', maxWidth: '40%', flexShrink: 1 }} />
@@ -255,6 +296,14 @@ export default function PublicAIStoryPage() {
               </p>
 
               {optionsError && <div style={{ color: c.danger, fontSize: 13, marginBottom: 12 }}>{optionsError}</div>}
+
+              {restored && draft0 && (
+                <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', background: '#FFF8E6', border: '1px solid #E8D5A0', borderRadius: 6, padding: '9px 12px', fontSize: 13, color: c.onyx, marginBottom: 16 }}>
+                  <span style={{ flex: '1 1 240px' }}>We restored your unsaved draft from <strong>{fmtWhen(draft0.savedAt)}</strong>. Attached files are not saved in drafts, so re-attach them if you had any.</span>
+                  <button type="button" onClick={() => setRestored(false)} style={{ background: 'none', border: 'none', color: c.ash, cursor: 'pointer', fontSize: 13 }}>Dismiss</button>
+                  <button type="button" onClick={discardDraft} style={{ background: 'none', border: 'none', color: c.danger, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Start fresh</button>
+                </div>
+              )}
 
               <div style={sectionTitle}>About you</div>
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
@@ -354,7 +403,7 @@ export default function PublicAIStoryPage() {
               </div>
               <div style={field}>
                 <label style={label} htmlFor="s-impact">Describe the impact</label>
-                {rtb('s-impact', impactDescription, setImpactDescription, IMPACT_GUIDE, 60, 1000)}
+                {rtb('s-impact', impactDescription, setImpactDescription, IMPACT_GUIDE, 80, 4000)}
               </div>
 
               <div style={sectionTitle}>Before &amp; after (optional)</div>
@@ -371,6 +420,14 @@ export default function PublicAIStoryPage() {
                 <label>Website <input tabIndex={-1} autoComplete="off" value={website} onChange={e => setWebsite(e.target.value)} name="website" /></label>
               </div>
 
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: c.ash, marginBottom: 12, minHeight: 18 }}>
+                {savedAt ? (
+                  <>
+                    <span>✓ Draft autosaved on this device at {fmtTime(savedAt)} — you can safely close or refresh this page and come back to it.</span>
+                    <button type="button" onClick={discardDraft} style={{ background: 'none', border: 'none', color: c.ash, textDecoration: 'underline', cursor: 'pointer', fontSize: 12, padding: 0 }}>Clear draft</button>
+                  </>
+                ) : <span>Your work is autosaved on this device as you type.</span>}
+              </div>
               {error && <div role="alert" style={{ color: c.danger, fontSize: 13, marginBottom: 12 }}>{error}</div>}
               <button type="submit" disabled={submitting || !options}
                 style={{ width: '100%', background: c.onyx, color: c.white, border: 'none', borderRadius: theme.radius.sm, padding: '12px 18px', fontSize: 14.5, fontWeight: 700, cursor: submitting ? 'default' : 'pointer', opacity: submitting || !options ? 0.6 : 1 }}>

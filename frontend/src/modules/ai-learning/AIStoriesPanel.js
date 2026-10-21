@@ -75,7 +75,7 @@ function StoryModal({ story, isAdmin, onClose, onReview, onDelete }) {
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-            <button type="button" onClick={() => act(() => storyApi.downloadPdf(story))} disabled={busy} title="Download the one-page PDF"
+            <button type="button" onClick={() => act(() => storyApi.downloadPdf(story))} disabled={busy} title="Download the PDF summary"
               style={{ display: 'flex', alignItems: 'center', gap: 5, background: c.white, color: c.onyx, border: `1px solid ${c.border}`, borderRadius: theme.radius.sm, padding: '6px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
               <Download size={13} /> PDF
             </button>
