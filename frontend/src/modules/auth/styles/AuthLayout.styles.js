@@ -72,7 +72,7 @@ export const LogoIcon = styled.img`
 `;
 
 export const Logo = styled.div`
-  font-family: Georgia, serif;
+  font-family: Space Grotesk, Inter, sans-serif;
   font-size: 48px;
   font-weight: 600;
   letter-spacing: 0.12em;
@@ -129,7 +129,7 @@ export const Heading = styled.h1`
   font-weight: 600;
   color: ${p => p.theme.colors.onyx};
   margin: 0 0 ${p => p.small ? '10px' : '6px'};
-  font-family: Georgia, serif;
+  font-family: Space Grotesk, Inter, sans-serif;
 `;
 
 export const Subheading = styled.p`

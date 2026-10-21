@@ -107,8 +107,10 @@ const theme = {
   colors,
 
   font: {
+    // Brand guide: Space Grotesk for the name, headings and big numbers;
+    // Inter for everything people read (body text, forms, interface).
     display:
-      "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+      "'Space Grotesk', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     body:
       "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   },

@@ -7,7 +7,7 @@ import { Bold, Italic, Underline, List, ListOrdered, Link2, RemoveFormatting } f
 
 const STYLE_ID = 'specula-rich-text-styles';
 const CSS = `
-.rtb-editor:empty:before { content: attr(data-placeholder); color: #9a928a; white-space: pre-line; pointer-events: none; }
+.rtb-editor:empty:before { content: attr(data-placeholder); color: #8A939F; white-space: pre-line; pointer-events: none; }
 .rtb-editor ul, .rtb-editor ol { margin: 4px 0 4px 22px; padding: 0; }
 .rtb-editor a { color: #1c5cab; text-decoration: underline; }
 .rtb-editor p, .rtb-editor div { margin: 0; }

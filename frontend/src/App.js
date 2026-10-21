@@ -109,7 +109,7 @@ const loadingStyles = {
     gap: 20,
   },
   logo: {
-    fontFamily: 'Georgia, serif',
+    fontFamily: 'Space Grotesk, Inter, sans-serif',
     fontSize: 36,
     fontWeight: 600,
     letterSpacing: '0.12em',
