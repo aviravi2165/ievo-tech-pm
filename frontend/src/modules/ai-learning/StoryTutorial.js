@@ -10,7 +10,7 @@ const STEPS = [
   {
     title: 'Welcome to Your AI Story',
     body: 'Used AI to get something done faster or better? Share it here — big or small, every story helps a colleague learn something new. It takes about 5 minutes and you do not need a Specula login.',
-    tips: ['Fields marked * are required — everything else is optional.', 'You can share as many stories as you like.'],
+    tips: ['Fields marked * are required — everything else is optional.', 'Your work is autosaved on this device as you type, so you can leave and come back to finish it later. (Attached files are not saved — re-attach them if you refresh.)', 'You can share as many stories as you like.'],
   },
   {
     title: 'Step 1 · About you',
@@ -52,7 +52,7 @@ const STEPS = [
   },
   {
     title: 'Submit — what happens next',
-    body: 'Press "Submit Your AI Story". You will get a confirmation email with a one-page PDF of your story (check Spam if you do not see it). After a quick review it appears in Specula\'s AI Stories for everyone to learn from.',
+    body: 'Press "Submit Your AI Story". You will get a confirmation email with a PDF summary of your story (check Spam if you do not see it). After a quick review it appears in Specula\'s AI Stories for everyone to learn from.',
     tips: ['Stay Curious!'],
   },
 ];
