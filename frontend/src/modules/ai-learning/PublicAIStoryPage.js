@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTheme } from '@emotion/react';
-import { Paperclip, X, CheckCircle2, PlayCircle } from 'lucide-react';
+import { Paperclip, X, CheckCircle2, PlayCircle, FolderOpen, Plus, Save } from 'lucide-react';
 // Transparent copy of the I.EVO wordmark — the original logo.png has a solid
 // white background that showed as a white box on this page.
 import ievoLogo from '../../shell/assets/ievo-logo-transparent.png';
@@ -10,7 +10,8 @@ import speculaLogoColour from '../../assets/brand/specula-horizontal-colour.svg'
 import { publicStoryApi } from './api/aiStoryApi';
 import { copyText } from './copyText';
 import RichTextBox from './RichTextBox';
-import { saveDraft, loadDraft, clearDraft } from './storyDraft';
+import { saveDraftEntry, listDrafts, getDraft, deleteDraft, hasContent, draftTitle, DRAFTS_KEY } from './storyDraft';
+import StoryDraftsPanel from './StoryDraftsPanel';
 import StoryTutorial, { tutorialSeen, markTutorialSeen } from './StoryTutorial';
 import { modelsFor } from './aiModelCatalog';
 
@@ -38,9 +39,17 @@ const extOf = (name) => (name.match(/\.[^.]+$/)?.[0] || '').toLowerCase();
 export default function PublicAIStoryPage() {
   const theme = useTheme();
   const saved = loadProfile();
-  // Autosaved draft from a previous visit (text only — files can't be kept).
-  const [draft0] = useState(() => loadDraft());
+  // Drafts saved on this device (text only — files can't be kept). The most recent one is
+  // opened; the "Drafts" button lists them all so several stories can be worked on.
+  const [initialDrafts] = useState(() => listDrafts());
+  const draft0 = initialDrafts[0] || null;
   const d0 = draft0?.values || {};
+  const activeIdRef = useRef(draft0?.id || null);   // the draft the form is currently writing into
+  const [activeId, setActiveIdState] = useState(draft0?.id || null);
+  const setActive = (id) => { activeIdRef.current = id; setActiveIdState(id); };
+  const [drafts, setDrafts] = useState(initialDrafts);
+  const [showDrafts, setShowDrafts] = useState(false);
+  const [saveState, setSaveState] = useState(null);   // null | 'saved' | 'empty' | 'failed' — feedback on the Save draft button
   const [options, setOptions] = useState(null);
   const [optionsError, setOptionsError] = useState('');
 
@@ -76,23 +85,42 @@ export default function PublicAIStoryPage() {
   const [showTutorial, setShowTutorial] = useState(() => !tutorialSeen());
   const closeTutorial = () => { setShowTutorial(false); markTutorialSeen(); };
   const [copyState, setCopyState] = useState(null); // null | 'copied' | 'failed'
-  const [savedAt, setSavedAt] = useState(draft0?.savedAt || null);   // when the draft was last written
-  const [restored, setRestored] = useState(Boolean(draft0));          // show the "we restored your draft" note
+  const [savedAt, setSavedAt] = useState(draft0?.savedAt || null);   // when the active draft was last written
+  const [restored, setRestored] = useState(Boolean(draft0));          // show the "we opened your latest draft" note
   const formUrl = `${window.location.origin}${window.location.pathname}`;
 
-  // Autosave: shortly after the last keystroke, write the text and choices to
-  // this browser. Stops once the story is submitted.
+  const currentValues = () => ({
+    name, email, deptId, title, aiModel, aiModelOther, aiModelVersion, description, inputDetails, outputDetails,
+    dailyActivities, deliverables, improvedProductivity, improvedAccuracy, customerAppreciation, impactDescription,
+  });
+  const refreshDrafts = () => setDrafts(listDrafts());
+
+  // Write the form into its draft (creating the draft the first time there is something to
+  // keep). Returns { id, savedAt } or null when nothing was written.
+  const persist = () => {
+    const r = saveDraftEntry(activeIdRef.current, currentValues());
+    if (r) { setActive(r.id); setSavedAt(r.savedAt); }
+    else if (!hasContent(currentValues())) { setActive(null); setSavedAt(null); }
+    refreshDrafts();
+    return r;
+  };
+
+  // Autosave: shortly after the last keystroke, write the story into its draft. Stops once
+  // the story is submitted.
   useEffect(() => {
     if (done) return undefined;
-    const t = setTimeout(() => {
-      setSavedAt(saveDraft({
-        name, email, deptId, title, aiModel, aiModelOther, aiModelVersion, description, inputDetails, outputDetails,
-        dailyActivities, deliverables, improvedProductivity, improvedAccuracy, customerAppreciation, impactDescription,
-      }));
-    }, 800);
+    const t = setTimeout(persist, 800);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [done, name, email, deptId, title, aiModel, aiModelOther, aiModelVersion, description, inputDetails, outputDetails,
     dailyActivities, deliverables, improvedProductivity, improvedAccuracy, customerAppreciation, impactDescription]);
+
+  // Another tab on this device changed the drafts → keep the count bubble honest.
+  useEffect(() => {
+    const onStorage = (e) => { if (e.key === DRAFTS_KEY || e.key === null) refreshDrafts(); };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   // Attached files can't be autosaved, so warn before a refresh/close would drop them.
   useEffect(() => {
@@ -130,12 +158,55 @@ export default function PublicAIStoryPage() {
     setBeforeFiles([]); setAfterFiles([]); setError(''); setDone(false); setCopyState(null);
   };
 
-  const discardDraft = () => {
-    if (!window.confirm('Discard this draft and start with an empty form?')) return;
-    clearDraft();
+  const saveNow = () => {
+    if (!hasContent(currentValues())) { setSaveState('empty'); setTimeout(() => setSaveState(null), 2500); return; }
+    const r = persist();
+    setSaveState(r ? 'saved' : 'failed');
+    if (r) setTimeout(() => setSaveState(null), 2500);
+  };
+
+  const filesAttached = beforeFiles.length + afterFiles.length > 0;
+  // Attached files can't live in a draft, so confirm before moving away from a form that has some.
+  const okToLeaveFiles = () => !filesAttached || window.confirm('The files you attached are not saved in drafts and will be removed. Continue?');
+
+  const startNewStory = () => {
+    if (!okToLeaveFiles()) return;
+    persist();                 // the story being left stays in the drafts
     resetStory();
-    setSavedAt(null);
-    setRestored(false);
+    setActive(null); setSavedAt(null); setRestored(false); setShowDrafts(false);
+    refreshDrafts();
+    window.scrollTo?.(0, 0);
+  };
+
+  const applyValues = (v) => {
+    setName(v.name || saved.name || ''); setEmail(v.email || saved.email || '');
+    setDeptId(v.deptId ? String(v.deptId) : (saved.deptId ? String(saved.deptId) : ''));
+    setTitle(v.title || ''); setAiModel(v.aiModel || ''); setAiModelOther(v.aiModelOther || ''); setAiModelVersion(v.aiModelVersion || '');
+    setDescription(v.description || ''); setInputDetails(v.inputDetails || ''); setOutputDetails(v.outputDetails || '');
+    setDailyActivities(v.dailyActivities || ''); setDeliverables(v.deliverables || '');
+    setImprovedProductivity(Boolean(v.improvedProductivity)); setImprovedAccuracy(Boolean(v.improvedAccuracy)); setCustomerAppreciation(Boolean(v.customerAppreciation));
+    setImpactDescription(v.impactDescription || '');
+    setBeforeFiles([]); setAfterFiles([]); setError(''); setDone(false);
+  };
+
+  const openDraft = (id) => {
+    if (id === activeIdRef.current) { setShowDrafts(false); return; }
+    const target = getDraft(id);
+    if (!target) { refreshDrafts(); return; }
+    if (!okToLeaveFiles()) return;
+    persist();                 // keep what was being worked on
+    applyValues(target.values);
+    setActive(id); setSavedAt(target.savedAt); setRestored(false); setShowDrafts(false);
+    refreshDrafts();
+    window.scrollTo?.(0, 0);
+  };
+
+  const removeDraft = (id) => {
+    const target = drafts.find(d => d.id === id);
+    if (!window.confirm(`Delete the draft "${draftTitle(target?.values)}"? This cannot be undone.`)) return;
+    deleteDraft(id);
+    if (id === activeIdRef.current) { resetStory(); setActive(null); setSavedAt(null); setRestored(false); }
+    refreshDrafts();
   };
 
   const fmtTime = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -168,8 +239,10 @@ export default function PublicAIStoryPage() {
         customerAppreciation: customerAppreciation ? 'true' : 'false',
         impactDescription: impactDescription.trim() || null, website,
       }, beforeFiles, afterFiles);
-      clearDraft();
+      if (activeIdRef.current) deleteDraft(activeIdRef.current);
+      setActive(null);
       setSavedAt(null);
+      refreshDrafts();
       setSubmittedEmail(email.trim());
       if (remember) saveProfile({ name: name.trim(), email: email.trim(), deptId: Number(deptId) });
       else forgetProfile();
@@ -273,6 +346,12 @@ export default function PublicAIStoryPage() {
                   style={{ background: BRAND.navy, color: c.white, border: 'none', borderRadius: theme.radius.sm, padding: '10px 18px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>
                   Share another story
                 </button>
+                {drafts.length > 0 && (
+                  <button type="button" onClick={() => { resetStory(); setShowDrafts(true); }}
+                    style={{ background: c.white, color: BRAND.navy, border: `1px solid ${BRAND.navy}`, borderRadius: theme.radius.sm, padding: '10px 18px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>
+                    Continue a draft ({drafts.length})
+                  </button>
+                )}
                 <button type="button" onClick={copyLink}
                   style={{ background: c.white, color: copyState === 'copied' ? c.success : c.onyx, border: `1px solid ${copyState === 'copied' ? c.success : edge}`, borderRadius: theme.radius.sm, padding: '10px 18px', fontSize: 13.5, fontWeight: 600, cursor: 'pointer' }}>
                   {copyState === 'copied' ? 'Link copied!' : 'Copy link to share with colleagues'}
@@ -290,10 +369,25 @@ export default function PublicAIStoryPage() {
             <form onSubmit={submit} noValidate>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
                 <h1 style={{ fontFamily: theme.font.display, fontSize: 'clamp(24px, 6vw, 32px)', fontWeight: 500, lineHeight: 1.2, color: BRAND.ink, margin: 0 }}>Tell us how you used AI</h1>
-                <button type="button" onClick={() => setShowTutorial(true)}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: c.white, color: c.onyx, border: `1px solid ${edge}`, borderRadius: 20, padding: '7px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
-                  <PlayCircle size={16} /> How it works · Demo
-                </button>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <button type="button" onClick={() => setShowDrafts(true)} aria-label={`Drafts, ${drafts.length} saved`}
+                    style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, background: c.white, color: c.onyx, border: `1px solid ${edge}`, borderRadius: 20, padding: '7px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                    <FolderOpen size={16} /> Drafts
+                    {drafts.length > 0 && (
+                      <span aria-hidden="true" style={{ position: 'absolute', top: -7, right: -7, minWidth: 20, height: 20, padding: '0 5px', boxSizing: 'border-box', borderRadius: 10, background: BRAND.red, color: '#fff', fontSize: 11.5, fontWeight: 700, lineHeight: '20px', textAlign: 'center', boxShadow: '0 0 0 2px #fff' }}>
+                        {drafts.length}
+                      </span>
+                    )}
+                  </button>
+                  <button type="button" onClick={startNewStory}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: c.white, color: c.onyx, border: `1px solid ${edge}`, borderRadius: 20, padding: '7px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                    <Plus size={16} /> New story
+                  </button>
+                  <button type="button" onClick={() => setShowTutorial(true)}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: c.white, color: c.onyx, border: `1px solid ${edge}`, borderRadius: 20, padding: '7px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                    <PlayCircle size={16} /> How it works · Demo
+                  </button>
+                </div>
               </div>
               <p style={{ fontSize: 14, color: c.ash, lineHeight: 1.6, margin: '0 0 20px' }}>
                 Used AI to get something done faster or better? Tell us your story — big or small, it helps colleagues learn. No login needed.
@@ -303,9 +397,13 @@ export default function PublicAIStoryPage() {
 
               {restored && draft0 && (
                 <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', background: '#FFF8E6', border: '1px solid #E8D5A0', borderRadius: 6, padding: '9px 12px', fontSize: 13, color: c.onyx, marginBottom: 16 }}>
-                  <span style={{ flex: '1 1 240px' }}>We restored your unsaved draft from <strong>{fmtWhen(draft0.savedAt)}</strong>. Attached files are not saved in drafts, so re-attach them if you had any.</span>
+                  <span style={{ flex: '1 1 240px' }}>
+                    We opened your latest draft, <strong>{draftTitle(draft0.values)}</strong> (saved {fmtWhen(draft0.savedAt)}).
+                    {drafts.length > 1 ? <> You have {drafts.length} drafts in all.</> : null} Attached files are not saved in drafts, so re-attach them if you had any.
+                  </span>
+                  {drafts.length > 1 && <button type="button" onClick={() => setShowDrafts(true)} style={{ background: 'none', border: 'none', color: BRAND.navy, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>View drafts</button>}
                   <button type="button" onClick={() => setRestored(false)} style={{ background: 'none', border: 'none', color: c.ash, cursor: 'pointer', fontSize: 13 }}>Dismiss</button>
-                  <button type="button" onClick={discardDraft} style={{ background: 'none', border: 'none', color: c.danger, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Start fresh</button>
+                  <button type="button" onClick={startNewStory} style={{ background: 'none', border: 'none', color: c.danger, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Start a new story</button>
                 </div>
               )}
 
@@ -427,16 +525,23 @@ export default function PublicAIStoryPage() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: c.ash, marginBottom: 12, minHeight: 18 }}>
                 {savedAt ? (
                   <>
-                    <span>✓ Draft autosaved on this device at {fmtTime(savedAt)} — you can safely close or refresh this page and come back to it.</span>
-                    <button type="button" onClick={discardDraft} style={{ background: 'none', border: 'none', color: c.ash, textDecoration: 'underline', cursor: 'pointer', fontSize: 12, padding: 0 }}>Clear draft</button>
+                    <span>✓ Saved to your drafts on this device at {fmtTime(savedAt)} — it autosaves as you type, so you can close this page and come back to it.</span>
+                    {activeId && <button type="button" onClick={() => removeDraft(activeId)} style={{ background: 'none', border: 'none', color: c.ash, textDecoration: 'underline', cursor: 'pointer', fontSize: 12, padding: 0 }}>Delete this draft</button>}
                   </>
-                ) : <span>Your work is autosaved on this device as you type.</span>}
+                ) : <span>Your work is saved to your drafts on this device as you type. You can keep more than one story going.</span>}
               </div>
               {error && <div role="alert" style={{ color: c.danger, fontSize: 13, marginBottom: 12 }}>{error}</div>}
-              <button type="submit" disabled={submitting || !options}
-                style={{ width: '100%', background: BRAND.navy, color: c.white, border: 'none', borderRadius: theme.radius.sm, padding: '12px 18px', fontSize: 14.5, fontWeight: 700, cursor: submitting ? 'default' : 'pointer', opacity: submitting || !options ? 0.6 : 1 }}>
-                {submitting ? 'Submitting…' : 'Submit Your AI Story'}
-              </button>
+              {saveState === 'failed' && <div role="alert" style={{ color: c.danger, fontSize: 13, marginBottom: 12 }}>Could not save the draft — this browser's storage is full or blocked. Your text is still on screen; submit it or copy it somewhere safe.</div>}
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <button type="button" onClick={saveNow}
+                  style={{ flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: c.white, color: saveState === 'saved' ? c.success : BRAND.navy, border: `1px solid ${saveState === 'saved' ? c.success : BRAND.navy}`, borderRadius: theme.radius.sm, padding: '12px 18px', fontSize: 14.5, fontWeight: 700, cursor: 'pointer' }}>
+                  <Save size={16} /> {saveState === 'saved' ? 'Draft saved ✓' : saveState === 'empty' ? 'Nothing to save yet' : 'Save draft'}
+                </button>
+                <button type="submit" disabled={submitting || !options}
+                  style={{ flex: '1 1 220px', background: BRAND.navy, color: c.white, border: 'none', borderRadius: theme.radius.sm, padding: '12px 18px', fontSize: 14.5, fontWeight: 700, cursor: submitting ? 'default' : 'pointer', opacity: submitting || !options ? 0.6 : 1 }}>
+                  {submitting ? 'Submitting…' : 'Submit Your AI Story'}
+                </button>
+              </div>
             </form>
           )}
         </div>
@@ -450,6 +555,7 @@ export default function PublicAIStoryPage() {
         </footer>
       </div>
       {showTutorial && <StoryTutorial onClose={closeTutorial} />}
+      {showDrafts && <StoryDraftsPanel drafts={drafts} activeId={activeId} onOpen={openDraft} onDelete={removeDraft} onNew={startNewStory} onClose={() => setShowDrafts(false)} />}
     </div>
   );
 }
