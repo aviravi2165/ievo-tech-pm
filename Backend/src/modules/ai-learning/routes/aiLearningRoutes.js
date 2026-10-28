@@ -4,6 +4,8 @@ const router = require('express').Router();
 const { authenticate, requireAdmin } = require('../../../middleware/auth');
 const ctrl = require('../controllers/aiLearningController');
 const stories = require('../controllers/aiStoryController');
+const tech = require('../controllers/aiTechController');
+const feed = require('../controllers/aiFeedController');
 
 router.use(authenticate);
 
@@ -23,5 +25,15 @@ router.get('/stories/:storyId/files/:fileId',         stories.download);
 router.get('/stories/:storyId/pdf',                   stories.pdf);
 router.post('/stories/:storyId/review', requireAdmin, stories.review);
 router.delete('/stories/:storyId',      requireAdmin, stories.remove);
+
+// ── AI Tech posts (submitted through the public "Share a tech" form) — admin review ──
+router.get('/tech',                               requireAdmin, tech.list);
+router.get('/tech/:postId/files/:fileId',         requireAdmin, tech.download);
+router.post('/tech/:postId/review',               requireAdmin, tech.review);
+router.delete('/tech/:postId',                    requireAdmin, tech.remove);
+
+// ── AI Feed comment moderation ──
+router.get('/feed/comments',                      requireAdmin, feed.recentComments);
+router.delete('/feed/comments/:commentId',        requireAdmin, feed.removeComment);
 
 module.exports = router;

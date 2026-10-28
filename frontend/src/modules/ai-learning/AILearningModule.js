@@ -4,6 +4,8 @@ import { ChevronLeft } from 'lucide-react';
 import { aiLearningApi } from './api/aiLearningApi';
 import ChatBox from '../project-management/components/ChatBox';
 import AIStoriesPanel from './AIStoriesPanel';
+import AITechPanel, { FeedCommentsPanel } from './AITechPanel';
+import { useAuth } from '../auth/AuthContext';
 
 function initials(name = '') { return (name || '?').split(' ').filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase(); }
 
@@ -224,15 +226,19 @@ function LearningJournal() {
   );
 }
 
-// Two tabs: the existing per-employee journal chat, and AI Stories (use cases
-// shared through the open form).
+// Tabs: the existing per-employee journal chat, AI Stories (use cases shared through the open
+// form) and — for admins only — AI Tech (technology suggestions to review) and Feed comments.
 export default function AILearningModule() {
   const theme = useTheme();
+  const { user } = useAuth();
+  const isAdmin = user?.userType === 'admin';
+  const tabs = [['journal', 'Learning Journal'], ['stories', 'AI Stories'], ...(isAdmin ? [['tech', 'AI Tech'], ['comments', 'Feed comments']] : [])];
   const [tab, setTab] = useState(() => {
     try { return sessionStorage.getItem('ai_learning_tab') || 'journal'; } catch { return 'journal'; }
   });
   const choose = (t) => { setTab(t); try { sessionStorage.setItem('ai_learning_tab', t); } catch { /* ignore */ } };
-  const tabs = [['journal', 'Learning Journal'], ['stories', 'AI Stories']];
+  // A remembered admin-only tab must not open for someone who is not an admin.
+  const current = tabs.some(([key]) => key === tab) ? tab : 'journal';
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -240,16 +246,19 @@ export default function AILearningModule() {
         {tabs.map(([key, label]) => (
           <button key={key} type="button" onClick={() => choose(key)}
             style={{
-              background: 'none', border: 'none', borderBottom: `2px solid ${tab === key ? theme.colors.onyx : 'transparent'}`,
-              padding: '10px 12px', fontSize: 12.5, fontWeight: tab === key ? 800 : 600,
-              color: tab === key ? theme.colors.onyx : theme.colors.ash, cursor: 'pointer',
+              background: 'none', border: 'none', borderBottom: `2px solid ${current === key ? theme.colors.onyx : 'transparent'}`,
+              padding: '10px 12px', fontSize: 12.5, fontWeight: current === key ? 800 : 600,
+              color: current === key ? theme.colors.onyx : theme.colors.ash, cursor: 'pointer',
             }}>
             {label}
           </button>
         ))}
       </div>
       <div style={{ flex: 1, minHeight: 0 }}>
-        {tab === 'stories' ? <AIStoriesPanel /> : <LearningJournal />}
+        {current === 'stories' ? <AIStoriesPanel />
+          : current === 'tech' ? <AITechPanel />
+          : current === 'comments' ? <FeedCommentsPanel />
+          : <LearningJournal />}
       </div>
     </div>
   );

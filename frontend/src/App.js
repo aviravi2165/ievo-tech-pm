@@ -7,6 +7,8 @@ import LoginPage from './modules/auth/LoginPage';
 import ForceChangePasswordPage from './modules/auth/ForceChangePasswordPage';
 import AppShell from './shell/AppShell';
 import PublicAIStoryPage from './modules/ai-learning/PublicAIStoryPage';
+import PublicAITechPage from './modules/ai-learning/PublicAITechPage';
+import PublicAIFeedPage from './modules/ai-learning/PublicAIFeedPage';
 
 /**
  * Inner component — reads from AuthContext.
@@ -88,6 +90,8 @@ export default function App() {
         {/* Public — no login: the open "Share your AI story" form. Must sit
             outside AuthProvider/AuthGate, which would show the login page. */}
         <Route path="/ai-story" element={<PublicAIStoryPage />} />
+        <Route path="/ai-tech" element={<PublicAITechPage />} />
+        <Route path="/ai-feed" element={<PublicAIFeedPage />} />
         <Route path="*" element={(
           <AuthProvider>
             <AuthGate />

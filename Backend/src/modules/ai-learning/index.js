@@ -11,12 +11,16 @@
  */
 const aiLearningRoutes = require('./routes/aiLearningRoutes');
 const aiStoryPublicRoutes = require('./routes/aiStoryPublicRoutes');
+const aiTechPublicRoutes = require('./routes/aiTechPublicRoutes');
+const aiFeedPublicRoutes = require('./routes/aiFeedPublicRoutes');
 
-// Public "Share your AI story" form — no login (see aiStoryPublicRoutes).
-// Registered via registerPublic so it runs before other modules' auth-guarded
-// '/api' routers.
+// Public pages — no login: "Share your AI story", "Share a tech" and the AI Feed
+// (see the *PublicRoutes files). Registered via registerPublic so they run before
+// other modules' auth-guarded '/api' routers.
 function registerPublic(app) {
   app.use('/api/public/ai-stories', aiStoryPublicRoutes);
+  app.use('/api/public/ai-tech', aiTechPublicRoutes);
+  app.use('/api/public/ai-feed', aiFeedPublicRoutes);
 }
 
 function register(app) {

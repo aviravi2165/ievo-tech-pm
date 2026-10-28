@@ -263,4 +263,4 @@ async function getFileForDownload(storyId, fileId, isAdmin) {
   return { originalName: fixFilename(f.originalName), fullPath: full };
 }
 
-module.exports = { fixFilename, AI_MODELS, getFormOptions, submitStory, listStories, reviewStory, deleteStory, getFileForDownload, getFullStory, getStoryForPdf };
+module.exports = { httpError, text, rich, EMAIL_RE, getActiveDepartments, fixFilename, AI_MODELS, getFormOptions, submitStory, listStories, reviewStory, deleteStory, getFileForDownload, getFullStory, getStoryForPdf };

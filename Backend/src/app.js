@@ -36,7 +36,12 @@ function createApp() {
     credentials:    true,
   };
 
-  app.use(cors(corsOptions));
+  // The open pages (/api/public/*: AI story, AI tech, AI feed) have no login and set their own
+  // CORS on their routers. The allow-list below must not answer for them: it would end a
+  // browser's preflight (OPTIONS) request itself, without the allow-origin header, and every
+  // JSON POST (like, comment) from an address not in CORS_ORIGIN would be blocked.
+  const appCors = cors(corsOptions);
+  app.use((req, res, next) => (req.path.startsWith('/api/public/') ? next() : appCors(req, res, next)));
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true }));
 
