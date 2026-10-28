@@ -14,6 +14,7 @@ import { saveDraftEntry, listDrafts, getDraft, deleteDraft, hasContent, draftTit
 import StoryDraftsPanel from './StoryDraftsPanel';
 import StoryTutorial, { tutorialSeen, markTutorialSeen } from './StoryTutorial';
 import { modelsFor } from './aiModelCatalog';
+import { PublicNav } from './PublicShell';
 
 // "Your AI Story" — the OPEN form (no Specula login). Rendered by
 // App.js for /ai-story before the login gate.
@@ -332,6 +333,7 @@ export default function PublicAIStoryPage() {
           </a>
           <img src={ievoLogo} alt="I.EVO" style={{ height: 32, width: 'auto', maxWidth: '40%', flexShrink: 1 }} />
         </div>
+        <PublicNav active="story" />
 
         <div style={{ background: c.white, border: `1px solid ${edge}`, borderRadius: theme.radius.lg, padding: 'clamp(16px, 4vw, 24px) clamp(14px, 4vw, 24px) 28px' }}>
           {done ? (
