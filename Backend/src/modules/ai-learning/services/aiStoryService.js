@@ -20,6 +20,21 @@ const AI_MODELS = ['ChatGPT', 'Claude', 'Gemini', 'Manus', 'Meta AI', 'Perplexit
 // No longer offered on the form, but older stories may carry it — still
 // valid as a filter value so those stories stay findable.
 const LEGACY_MODELS = ['Microsoft Copilot'];
+// "I use multiple AI tools": ai_model (NOT NULL) holds this fixed text and ai_models holds the
+// list as JSON. Single-tool stories — every older row too — keep ai_models NULL.
+const MULTI_MODEL = 'Multiple tools';
+const MIN_MULTI_TOOLS = 2;
+
+// The tools list arrives as a JSON string (multipart form) or an array; keep only known tools.
+function parseToolList(raw) {
+  let list = raw;
+  if (typeof raw === 'string') { try { list = JSON.parse(raw); } catch { list = null; } }
+  if (!Array.isArray(list)) throw httpError(400, 'Choose the AI tools you used.');
+  const unique = [...new Set(list.map(String))];
+  if (unique.some(m => !AI_MODELS.includes(m))) throw httpError(400, 'Choose the AI tools from the list.');
+  return unique;
+}
+const parseStoredList = (json) => { try { const v = JSON.parse(json); return Array.isArray(v) ? v : null; } catch { return null; } };
 const STATUSES = ['pending', 'approved', 'rejected'];
 const LIMITS = { name: 100, email: 150, title: 200, description: 4000, modelOther: 50, input: 4000, output: 4000, note: 500, activities: 2000, deliverables: 2000, impact: 4000 };
 const truthy = (v) => v === true || v === 'true' || v === '1' || v === 1 || v === 'on';
@@ -79,15 +94,26 @@ async function validate(body) {
   if (!depts.some(d => d.deptId === deptId)) throw httpError(400, 'Choose your department.');
   const title = text(body.title, LIMITS.title, 'Title');
   const description = rich(body.description, LIMITS.description, 'Description');
-  if (!AI_MODELS.includes(body.aiModel)) throw httpError(400, 'Choose the AI model you used.');
-  const aiModelOther = body.aiModel === 'Other' ? text(body.aiModelOther, LIMITS.modelOther, 'AI model name') : null;
+  let aiModel = body.aiModel, aiModelOther, aiModelsJson = null;
+  if (truthy(body.multiTools)) {
+    // Several tools: a version is meaningless here, so none is read (or stored) at all.
+    const tools = parseToolList(body.aiModels);
+    if (tools.length < MIN_MULTI_TOOLS) throw httpError(400, `Choose at least ${MIN_MULTI_TOOLS} AI tools, or untick "I use multiple AI tools".`);
+    aiModelOther = tools.includes('Other') ? text(body.aiModelOther, LIMITS.modelOther, 'AI model name') : null;
+    aiModel = MULTI_MODEL;
+    // A tool typed under "Other" is kept by its own name, so the list reads naturally everywhere.
+    aiModelsJson = JSON.stringify([...new Set(tools.map(t => (t === 'Other' ? aiModelOther : t)))]);
+  } else {
+    if (!AI_MODELS.includes(aiModel)) throw httpError(400, 'Choose the AI model you used.');
+    aiModelOther = aiModel === 'Other' ? text(body.aiModelOther, LIMITS.modelOther, 'AI model name') : null;
+  }
   const inputDetails = rich(body.inputDetails, LIMITS.input, 'Input details');
   const outputDetails = rich(body.outputDetails, LIMITS.output, 'Output details');
   const dailyActivities = rich(body.dailyActivities, LIMITS.activities, 'Daily activities', false);
   const deliverables = rich(body.deliverables, LIMITS.deliverables, 'Deliverables', false);
   const impactDescription = rich(body.impactDescription, LIMITS.impact, 'Impact description', false);
   return {
-    name, email, deptId, title, description, aiModel: body.aiModel, aiModelOther, inputDetails, outputDetails,
+    name, email, deptId, title, description, aiModel, aiModelOther, aiModelsJson, inputDetails, outputDetails,
     dailyActivities, deliverables, impactDescription,
     improvedProductivity: truthy(body.improvedProductivity), improvedAccuracy: truthy(body.improvedAccuracy),
   };
@@ -107,14 +133,15 @@ async function submitStory(body, filesByField) {
         .input('deptId', sql.Int, v.deptId).input('title', sql.NVarChar(200), v.title)
         .input('description', sql.NVarChar(sql.MAX), v.description)
         .input('aiModel', sql.NVarChar(50), v.aiModel).input('aiModelOther', sql.NVarChar(50), v.aiModelOther)
+        .input('aiModels', sql.NVarChar(500), v.aiModelsJson)
         .input('input', sql.NVarChar(sql.MAX), v.inputDetails).input('output', sql.NVarChar(sql.MAX), v.outputDetails)
         .input('activities', sql.NVarChar(sql.MAX), v.dailyActivities).input('deliverables', sql.NVarChar(sql.MAX), v.deliverables)
         .input('productivity', sql.Bit, v.improvedProductivity ? 1 : 0).input('accuracy', sql.Bit, v.improvedAccuracy ? 1 : 0)
         .input('impact', sql.NVarChar(sql.MAX), v.impactDescription)
-        .query(`INSERT INTO ai_stories (submitter_name, submitter_email, dept_id, title, description, ai_model, ai_model_other,
+        .query(`INSERT INTO ai_stories (submitter_name, submitter_email, dept_id, title, description, ai_model, ai_model_other, ai_models,
                   input_details, output_details, daily_activities, deliverables, improved_productivity, improved_accuracy, impact_description)
                 OUTPUT INSERTED.story_id
-                VALUES (@name, @email, @deptId, @title, @description, @aiModel, @aiModelOther, @input, @output,
+                VALUES (@name, @email, @deptId, @title, @description, @aiModel, @aiModelOther, @aiModels, @input, @output,
                         @activities, @deliverables, @productivity, @accuracy, @impact)`);
       storyId = r.recordset[0].story_id;
       const add = async (f, kind) => req()
@@ -145,7 +172,7 @@ async function submitStory(body, filesByField) {
 const SELECT = `
   SELECT s.story_id AS storyId, s.submitter_name AS submitterName, s.submitter_email AS submitterEmail,
          s.dept_id AS deptId, d.dept_name AS deptName, s.title, s.description,
-         s.ai_model AS aiModel, s.ai_model_other AS aiModelOther,
+         s.ai_model AS aiModel, s.ai_model_other AS aiModelOther, s.ai_models AS aiModelsJson,
          s.input_details AS inputDetails, s.output_details AS outputDetails,
          s.hours_saved_per_week AS hoursSaved, s.status, s.review_note AS reviewNote,
          s.daily_activities AS dailyActivities, s.deliverables, s.impact_description AS impactDescription,
@@ -155,6 +182,12 @@ const SELECT = `
   FROM ai_stories s
   INNER JOIN dept_master d ON d.dept_id = s.dept_id
   LEFT JOIN auth_users ru ON ru.user_id = s.reviewed_by`;
+
+function modelLabelOf(s, aiModelsJson) {
+  const list = aiModelsJson ? parseStoredList(aiModelsJson) : null;
+  if (list && list.length) return list.join(', ');
+  return s.aiModel === 'Other' ? (s.aiModelOther || 'Other') : s.aiModel;
+}
 
 async function attachFiles(stories) {
   if (!stories.length) return stories;
@@ -170,8 +203,11 @@ async function attachFiles(stories) {
     byStory.get(f.storyId).push({ ...f, fileSize: Number(f.fileSize) });
   }
   const RICH = ['description', 'inputDetails', 'outputDetails', 'dailyActivities', 'deliverables', 'impactDescription'];
-  return stories.map(s => ({
+  return stories.map(({ aiModelsJson, ...s }) => ({
     ...s, ...Object.fromEntries(RICH.map(k => [k, s[k] == null ? s[k] : toSafeHtml(s[k])])),
+    // aiModels: the tools of a multi-tool story, else null. modelLabel: what to show for either kind.
+    aiModels: aiModelsJson ? parseStoredList(aiModelsJson) : null,
+    modelLabel: modelLabelOf(s, aiModelsJson),
     hoursSaved: s.hoursSaved == null ? null : Number(s.hoursSaved),
     improvedProductivity: Boolean(s.improvedProductivity), improvedAccuracy: Boolean(s.improvedAccuracy),
     files: (byStory.get(s.storyId) || []).map(f => ({ ...f, originalName: fixFilename(f.originalName) })),
@@ -189,10 +225,16 @@ async function listStories({ status, deptId, aiModel, search } = {}, isAdmin) {
     where.push(`s.status = 'approved'`);
   }
   if (deptId && Number.isInteger(Number(deptId))) { where.push('s.dept_id = @deptId'); req.input('deptId', sql.Int, Number(deptId)); }
-  if (aiModel && [...AI_MODELS, ...LEGACY_MODELS].includes(aiModel)) { where.push('s.ai_model = @aiModel'); req.input('aiModel', sql.NVarChar(50), aiModel); }
+  if (aiModel === MULTI_MODEL) {
+    where.push('s.ai_models IS NOT NULL');
+  } else if (aiModel && [...AI_MODELS, ...LEGACY_MODELS].includes(aiModel)) {
+    // A multi-tool story also matches each tool it lists.
+    where.push('(s.ai_model = @aiModel OR s.ai_models LIKE @aiModelJson)');
+    req.input('aiModel', sql.NVarChar(50), aiModel).input('aiModelJson', sql.NVarChar(80), `%"${aiModel}"%`);
+  }
   const q = String(search || '').trim();
   if (q) {
-    where.push(`(s.title LIKE @q OR s.description LIKE @q OR s.submitter_name LIKE @q OR s.ai_model_other LIKE @q)`);
+    where.push(`(s.title LIKE @q OR s.description LIKE @q OR s.submitter_name LIKE @q OR s.ai_model_other LIKE @q OR s.ai_models LIKE @q)`);
     req.input('q', sql.NVarChar(210), `%${q.slice(0, 200).replace(/[[%_]/g, '[$&]')}%`);
   }
   const r = await req.query(`${SELECT} WHERE ${where.join(' AND ')} ORDER BY s.created_at DESC`);
@@ -204,7 +246,7 @@ async function listStories({ status, deptId, aiModel, search } = {}, isAdmin) {
     counts = { pending: 0, approved: 0, rejected: 0 };
     for (const row of c.recordset) counts[row.status] = row.n;
   }
-  return { stories, counts, isAdmin: Boolean(isAdmin), departments: await getActiveDepartments(), aiModels: [...AI_MODELS, ...LEGACY_MODELS] };
+  return { stories, counts, isAdmin: Boolean(isAdmin), departments: await getActiveDepartments(), aiModels: [...AI_MODELS, ...LEGACY_MODELS, MULTI_MODEL] };
 }
 
 async function getStoryRow(storyId) {

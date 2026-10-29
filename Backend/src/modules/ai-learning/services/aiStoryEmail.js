@@ -87,7 +87,7 @@ async function sendAcknowledgement(story) {
     fullName: escapeHtml(fullName),
     firstName: escapeHtml(fullName.split(/\s+/)[0]),
     title: escapeHtml(story.title),
-    model: escapeHtml(story.aiModel === 'Other' ? (story.aiModelOther || 'AI') : story.aiModel),
+    model: escapeHtml(story.modelLabel || (story.aiModel === 'Other' ? (story.aiModelOther || 'AI') : story.aiModel)),
   };
   const { subject, paragraphs } = template(ctx);
 

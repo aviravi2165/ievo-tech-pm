@@ -15,6 +15,7 @@ import StoryDraftsPanel from './StoryDraftsPanel';
 import StoryTutorial, { tutorialSeen, markTutorialSeen } from './StoryTutorial';
 import { modelsFor } from './aiModelCatalog';
 import { PublicNav } from './PublicShell';
+import MultiSelect from './MultiSelect';
 
 // "Your AI Story" — the OPEN form (no Specula login). Rendered by
 // App.js for /ai-story before the login gate.
@@ -65,6 +66,9 @@ export default function PublicAIStoryPage() {
   // "Opus 5.5") — options come from the LOCAL aiModelCatalog.js, so this is
   // required only for providers that have a catalog entry.
   const [aiModelVersion, setAiModelVersion] = useState(d0.aiModelVersion || '');
+  // "I use multiple AI tools": several tools can be ticked and no version is asked for.
+  const [multiTools, setMultiTools] = useState(Boolean(d0.multiTools));
+  const [aiModels, setAiModels] = useState(Array.isArray(d0.aiModels) ? d0.aiModels : []);
   const [description, setDescription] = useState(d0.description || '');
   const [inputDetails, setInputDetails] = useState(d0.inputDetails || '');
   const [outputDetails, setOutputDetails] = useState(d0.outputDetails || '');
@@ -91,7 +95,7 @@ export default function PublicAIStoryPage() {
   const formUrl = `${window.location.origin}${window.location.pathname}`;
 
   const currentValues = () => ({
-    name, email, deptId, title, aiModel, aiModelOther, aiModelVersion, description, inputDetails, outputDetails,
+    name, email, deptId, title, aiModel, aiModelOther, aiModelVersion, multiTools, aiModels, description, inputDetails, outputDetails,
     dailyActivities, deliverables, improvedProductivity, improvedAccuracy, customerAppreciation, impactDescription,
   });
   const refreshDrafts = () => setDrafts(listDrafts());
@@ -113,7 +117,7 @@ export default function PublicAIStoryPage() {
     const t = setTimeout(persist, 800);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [done, name, email, deptId, title, aiModel, aiModelOther, aiModelVersion, description, inputDetails, outputDetails,
+  }, [done, name, email, deptId, title, aiModel, aiModelOther, aiModelVersion, multiTools, aiModels, description, inputDetails, outputDetails,
     dailyActivities, deliverables, improvedProductivity, improvedAccuracy, customerAppreciation, impactDescription]);
 
   // Another tab on this device changed the drafts → keep the count bubble honest.
@@ -154,7 +158,7 @@ export default function PublicAIStoryPage() {
   };
 
   const resetStory = () => {
-    setTitle(''); setAiModel(''); setAiModelOther(''); setAiModelVersion(''); setDescription(''); setInputDetails(''); setOutputDetails('');
+    setTitle(''); setAiModel(''); setAiModelOther(''); setAiModelVersion(''); setMultiTools(false); setAiModels([]); setDescription(''); setInputDetails(''); setOutputDetails('');
     setDailyActivities(''); setDeliverables(''); setImprovedProductivity(false); setImprovedAccuracy(false); setCustomerAppreciation(false); setImpactDescription('');
     setBeforeFiles([]); setAfterFiles([]); setError(''); setDone(false); setCopyState(null);
   };
@@ -164,6 +168,17 @@ export default function PublicAIStoryPage() {
     const r = persist();
     setSaveState(r ? 'saved' : 'failed');
     if (r) setTimeout(() => setSaveState(null), 2500);
+  };
+
+  const otherChosen = multiTools ? aiModels.includes('Other') : aiModel === 'Other';
+  // Ticking/unticking "I use multiple AI tools". Ticking carries a single choice over into the
+  // list; unticking starts the single dropdown (and its version) fresh, so a version picked for
+  // one model can never be sent along with another.
+  const toggleMulti = (on) => {
+    setMultiTools(on);
+    setAiModels(on && aiModel ? [aiModel] : []);
+    setAiModel(''); setAiModelVersion('');
+    if (!on) setAiModelOther('');
   };
 
   const filesAttached = beforeFiles.length + afterFiles.length > 0;
@@ -183,6 +198,7 @@ export default function PublicAIStoryPage() {
     setName(v.name || saved.name || ''); setEmail(v.email || saved.email || '');
     setDeptId(v.deptId ? String(v.deptId) : (saved.deptId ? String(saved.deptId) : ''));
     setTitle(v.title || ''); setAiModel(v.aiModel || ''); setAiModelOther(v.aiModelOther || ''); setAiModelVersion(v.aiModelVersion || '');
+    setMultiTools(Boolean(v.multiTools)); setAiModels(Array.isArray(v.aiModels) ? v.aiModels : []);
     setDescription(v.description || ''); setInputDetails(v.inputDetails || ''); setOutputDetails(v.outputDetails || '');
     setDailyActivities(v.dailyActivities || ''); setDeliverables(v.deliverables || '');
     setImprovedProductivity(Boolean(v.improvedProductivity)); setImprovedAccuracy(Boolean(v.improvedAccuracy)); setCustomerAppreciation(Boolean(v.customerAppreciation));
@@ -215,23 +231,32 @@ export default function PublicAIStoryPage() {
 
   const submit = async (e) => {
     e.preventDefault();
-    const req = [[name, 'your name'], [email, 'your email'], [deptId, 'your department'], [title, 'a title'], [aiModel, 'the AI model'],
+    const req = [[name, 'your name'], [email, 'your email'], [deptId, 'your department'], [title, 'a title'],
       [description, 'a description'], [inputDetails, 'the input details'], [outputDetails, 'the output details']];
-    if (modelsFor(aiModel)) req.push([aiModelVersion, 'the model & version']);
+    // One tool: the model (and its version when it has a list). Several tools: at least two, no version.
+    if (!multiTools) {
+      req.splice(4, 0, [aiModel, 'the AI model']);
+      if (modelsFor(aiModel)) req.push([aiModelVersion, 'the model & version']);
+    }
     const missing = req.find(([v]) => !String(v).trim());
     if (missing) { setError(`Please enter ${missing[1]}.`); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setError('Please enter a valid email address.'); return; }
-    if (aiModel === 'Other' && !aiModelOther.trim()) { setError('Please write which AI model you used.'); return; }
+    if (multiTools && aiModels.length < 2) { setError('Please choose at least two AI tools, or untick "I use multiple AI tools".'); return; }
+    if (otherChosen && !aiModelOther.trim()) { setError('Please write which AI model you used.'); return; }
 
     setSubmitting(true); setError('');
     try {
       await publicStoryApi.submit({
-        name: name.trim(), email: email.trim(), deptId, title: title.trim(), aiModel,
-        aiModelOther: aiModel === 'Other' ? aiModelOther.trim() : null,
+        name: name.trim(), email: email.trim(), deptId, title: title.trim(),
+        // One tool → aiModel; several → multiTools + the list (never a version, even if one was picked earlier).
+        aiModel: multiTools ? null : aiModel,
+        multiTools: multiTools ? 'true' : 'false',
+        aiModels: multiTools ? JSON.stringify(aiModels) : null,
+        aiModelOther: otherChosen ? aiModelOther.trim() : null,
         // Sent for forward-compat — the backend currently whitelists its
         // fields on submit, so this is ignored server-side until it learns
         // to store it (that change comes after this UI is tested).
-        aiModelVersion: modelsFor(aiModel) ? aiModelVersion.trim() : null,
+        aiModelVersion: !multiTools && modelsFor(aiModel) ? aiModelVersion.trim() : null,
         description: description.trim(), inputDetails: inputDetails.trim(), outputDetails: outputDetails.trim(),
         dailyActivities: dailyActivities.trim() || null, deliverables: deliverables.trim() || null,
         improvedProductivity: improvedProductivity ? 'true' : 'false', improvedAccuracy: improvedAccuracy ? 'true' : 'false',
@@ -439,13 +464,25 @@ export default function PublicAIStoryPage() {
               </div>
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                 <div style={{ ...field, flex: '1 1 220px' }}>
-                  <label style={label} htmlFor="s-model">AI model used {req}</label>
-                  <select id="s-model" style={input} onFocus={focusIn} onBlur={focusOut} value={aiModel} onChange={e => { setAiModel(e.target.value); setAiModelVersion(''); }} disabled={!options}>
-                    <option value="">Select…</option>
-                    {(options?.aiModels || []).map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '2px 12px', flexWrap: 'wrap' }}>
+                    <label style={label} htmlFor="s-model">{multiTools ? 'AI models used' : 'AI model used'} {req}</label>
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: c.onyx, cursor: 'pointer', marginBottom: 5 }}>
+                      <input type="checkbox" id="s-multi" checked={multiTools} onChange={e => toggleMulti(e.target.checked)} disabled={!options} style={{ margin: 0 }} />
+                      I use multiple AI tools
+                    </label>
+                  </div>
+                  {multiTools ? (
+                    <MultiSelect id="s-model" options={options?.aiModels || []} value={aiModels} disabled={!options}
+                      onChange={(v) => setAiModels((options?.aiModels || []).filter(m => v.includes(m)))}
+                      placeholder="Select two or more…" style={input} borderColor={edge} accent={c.espresso} />
+                  ) : (
+                    <select id="s-model" style={input} onFocus={focusIn} onBlur={focusOut} value={aiModel} onChange={e => { setAiModel(e.target.value); setAiModelVersion(''); }} disabled={!options}>
+                      <option value="">Select…</option>
+                      {(options?.aiModels || []).map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  )}
                 </div>
-                {aiModel === 'Other' && (
+                {otherChosen && (
                   <div style={{ ...field, flex: '1 1 220px' }}>
                     <label style={label} htmlFor="s-model-other">Which AI model? {req}</label>
                     <input id="s-model-other" style={input} onFocus={focusIn} onBlur={focusOut} value={aiModelOther} onChange={e => setAiModelOther(e.target.value)} maxLength={50} placeholder="e.g. DeepSeek" />
@@ -453,7 +490,18 @@ export default function PublicAIStoryPage() {
                 )}
                 {/* Appears only after a provider with a local catalog entry is
                     chosen — switching providers resets it (see onChange above). */}
-                {modelsFor(aiModel) && (
+                {multiTools && (
+                  <div style={{ ...field, flex: '1 1 220px' }}>
+                    <label style={label} htmlFor="s-model-version">Model &amp; version</label>
+                    <select id="s-model-version" style={{ ...input, background: c.greige, cursor: 'not-allowed' }} value="" disabled aria-describedby="s-model-version-note">
+                      <option value="">Not available</option>
+                    </select>
+                    <div id="s-model-version-note" style={{ fontSize: 12, color: c.ash, marginTop: 5 }}>
+                      Version selection is unavailable when multiple AI tools are selected.
+                    </div>
+                  </div>
+                )}
+                {!multiTools && modelsFor(aiModel) && (
                   <div style={{ ...field, flex: '1 1 220px' }}>
                     <label style={label} htmlFor="s-model-version">Model &amp; version {req}</label>
                     <select id="s-model-version" style={input} onFocus={focusIn} onBlur={focusOut} value={aiModelVersion} onChange={e => setAiModelVersion(e.target.value)}>
