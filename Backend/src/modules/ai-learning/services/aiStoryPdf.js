@@ -90,7 +90,7 @@ function renderStoryPdf(story) {
     doc.moveDown(0.8);
 
     // ── Facts strip ──
-    const model = story.aiModel === 'Other' ? (story.aiModelOther || 'Other') : story.aiModel;
+    const model = story.modelLabel || (story.aiModel === 'Other' ? (story.aiModelOther || 'Other') : story.aiModel);
     const impacts = [story.improvedProductivity && 'Productivity', story.improvedAccuracy && 'Accuracy'].filter(Boolean);
     const stripY = doc.y;
     doc.save().roundedRect(MARGIN, stripY, contentW, 40, 4).fillColor(MIST).fill().restore();

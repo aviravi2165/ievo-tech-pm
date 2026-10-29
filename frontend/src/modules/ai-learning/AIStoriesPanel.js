@@ -9,7 +9,7 @@ const fmtDate = (iso) => {
   const d = new Date(iso);
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
 };
-const modelLabel = (s) => (s.aiModel === 'Other' ? (s.aiModelOther || 'Other') : s.aiModel);
+const modelLabel = (s) => s.modelLabel || (s.aiModel === 'Other' ? (s.aiModelOther || 'Other') : s.aiModel);
 const errMsg = (err, fallback) => err?.response?.data?.error || fallback;
 const STATUS_TABS = [['pending', 'Pending'], ['approved', 'Approved'], ['rejected', 'Rejected']];
 const impactsOf = (s) => [s.improvedProductivity && 'Productivity ↑', s.improvedAccuracy && 'Accuracy ↑'].filter(Boolean);

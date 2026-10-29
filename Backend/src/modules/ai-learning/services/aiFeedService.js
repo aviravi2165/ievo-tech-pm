@@ -81,7 +81,8 @@ async function listFeed({ type, deptId, q, page, email } = {}) {
     WITH items AS (
       SELECT 'story' AS itemType, s.story_id AS itemId, s.title, s.submitter_name AS authorName, s.dept_id AS deptId,
              d.dept_name AS deptName, s.created_at AS createdAt,
-             CASE WHEN s.ai_model = 'Other' THEN COALESCE(s.ai_model_other, 'Other') ELSE s.ai_model END AS badge,
+             CASE WHEN s.ai_models IS NOT NULL THEN s.ai_models
+                  WHEN s.ai_model = 'Other' THEN COALESCE(s.ai_model_other, 'Other') ELSE s.ai_model END AS badge,
              s.description AS searchText
       FROM ai_stories s INNER JOIN dept_master d ON d.dept_id = s.dept_id
       WHERE s.status = 'approved' AND s.is_deleted = 0
@@ -154,9 +155,14 @@ async function listFeed({ type, deptId, q, page, email } = {}) {
 
   const items = pageRows.map(r => {
     const c = counts.get(`${r.itemType}:${r.itemId}`) || { likes: 0, comments: 0, liked: false };
+    // A multi-tool story's badge arrives as its JSON list of tools: show them comma-separated.
+    let badge = r.badge;
+    if (r.itemType === 'story' && typeof badge === 'string' && badge.startsWith('[')) {
+      try { badge = JSON.parse(badge).join(', '); } catch { /* keep as is */ }
+    }
     const base = {
       key: `${r.itemType}-${r.itemId}`, type: r.itemType, id: r.itemId, title: r.title, authorName: r.authorName,
-      deptName: r.deptName, createdAt: r.createdAt, badge: r.badge,
+      deptName: r.deptName, createdAt: r.createdAt, badge,
       likeCount: c.likes, commentCount: c.comments, likedByMe: c.liked,
     };
     if (r.itemType === 'story') {

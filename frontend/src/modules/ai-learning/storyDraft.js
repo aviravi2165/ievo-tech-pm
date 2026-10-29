@@ -14,14 +14,14 @@ export const MAX_DRAFTS = 20;
 // What is saved. `website` (the anti-bot field) and the files are left out.
 export const DRAFT_FIELDS = [
   'name', 'email', 'deptId',
-  'title', 'aiModel', 'aiModelOther', 'aiModelVersion',
+  'title', 'aiModel', 'aiModelOther', 'aiModelVersion', 'multiTools', 'aiModels',
   'description', 'inputDetails', 'outputDetails', 'dailyActivities', 'deliverables',
   'improvedProductivity', 'improvedAccuracy', 'customerAppreciation', 'impactDescription',
 ];
 
 // The parts that are actual story content (not just who you are): a draft is only worth
 // keeping if one of these has something in it.
-const CONTENT_FIELDS = ['title', 'aiModel', 'description', 'inputDetails', 'outputDetails', 'dailyActivities', 'deliverables', 'impactDescription'];
+const CONTENT_FIELDS = ['title', 'aiModel', 'aiModels', 'description', 'inputDetails', 'outputDetails', 'dailyActivities', 'deliverables', 'impactDescription'];
 const CHECKS = ['improvedProductivity', 'improvedAccuracy', 'customerAppreciation'];
 
 const textOf = (html) => String(html ?? '').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
@@ -30,7 +30,9 @@ export function hasContent(values) {
   return CONTENT_FIELDS.some(k => textOf(values?.[k])) || CHECKS.some(k => values?.[k] === true);
 }
 
-const pick = (values) => Object.fromEntries(DRAFT_FIELDS.map(k => [k, values?.[k] ?? (CHECKS.includes(k) ? false : '')]));
+// Older drafts have no multiTools / aiModels — they open as single-tool drafts.
+const emptyOf = (k) => (k === 'aiModels' ? [] : (CHECKS.includes(k) || k === 'multiTools') ? false : '');
+const pick = (values) => Object.fromEntries(DRAFT_FIELDS.map(k => [k, k === 'aiModels' && !Array.isArray(values?.[k]) ? [] : (values?.[k] ?? emptyOf(k))]));
 
 export function newDraftId() {
   return `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
