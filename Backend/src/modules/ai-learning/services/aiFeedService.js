@@ -13,6 +13,7 @@
 const { getPool, sql } = require('../../../config/db');
 const { toSafeHtml } = require('./richText');
 const { httpError, EMAIL_RE, getActiveDepartments } = require('./aiStoryService');
+const { refCode } = require('./submissionCode');
 
 const TYPES = ['story', 'tech'];
 const PAGE_SIZE = 10;
@@ -63,8 +64,19 @@ async function getFeedOptions() {
 const section = (label, html) => (html && String(html).trim() ? { label, html: toSafeHtml(html) } : null);
 
 // ── The feed ───────────────────────────────────────────────────────────────
+// The multi-tool column arrives with its own migration. The public page must not go down just
+// because that migration has not been run yet on a server, so the feed checks for it (cached).
+let multiToolsColumn = { checkedAt: 0, present: false };
+async function hasMultiToolsColumn(pool) {
+  if (Date.now() - multiToolsColumn.checkedAt < 60000) return multiToolsColumn.present;
+  const r = await pool.request().query(`SELECT COL_LENGTH('dbo.ai_stories', 'ai_models') AS n`);
+  multiToolsColumn = { checkedAt: Date.now(), present: r.recordset[0].n !== null };
+  return multiToolsColumn.present;
+}
+
 async function listFeed({ type, deptId, q, page, email } = {}) {
   const pool = await getPool();
+  const multiTools = await hasMultiToolsColumn(pool);
   const pageNo = Math.max(1, Math.min(Number(page) || 1, 500));
   const where = [];
   const req = pool.request();
@@ -81,8 +93,10 @@ async function listFeed({ type, deptId, q, page, email } = {}) {
     WITH items AS (
       SELECT 'story' AS itemType, s.story_id AS itemId, s.title, s.submitter_name AS authorName, s.dept_id AS deptId,
              d.dept_name AS deptName, s.created_at AS createdAt,
-             CASE WHEN s.ai_models IS NOT NULL THEN s.ai_models
-                  WHEN s.ai_model = 'Other' THEN COALESCE(s.ai_model_other, 'Other') ELSE s.ai_model END AS badge,
+             ${multiTools
+    ? `CASE WHEN s.ai_models IS NOT NULL THEN s.ai_models
+                  WHEN s.ai_model = 'Other' THEN COALESCE(s.ai_model_other, 'Other') ELSE s.ai_model END`
+    : `CASE WHEN s.ai_model = 'Other' THEN COALESCE(s.ai_model_other, 'Other') ELSE s.ai_model END`} AS badge,
              s.description AS searchText
       FROM ai_stories s INNER JOIN dept_master d ON d.dept_id = s.dept_id
       WHERE s.status = 'approved' AND s.is_deleted = 0
@@ -163,6 +177,7 @@ async function listFeed({ type, deptId, q, page, email } = {}) {
     const base = {
       key: `${r.itemType}-${r.itemId}`, type: r.itemType, id: r.itemId, title: r.title, authorName: r.authorName,
       deptName: r.deptName, createdAt: r.createdAt, badge,
+      refCode: refCode({ kind: r.itemType, deptName: r.deptName, createdAt: r.createdAt, id: r.itemId }),
       likeCount: c.likes, commentCount: c.comments, likedByMe: c.liked,
     };
     if (r.itemType === 'story') {

@@ -15,6 +15,7 @@ const { getPool, sql, withTransaction } = require('../../../config/db');
 const { STORAGE_ROOT } = require('../../../middleware/upload');
 const { sendAcknowledgement } = require('./aiStoryEmail');
 const { toSafeHtml, toPlainText } = require('./richText');
+const { refCode, idFromRefCode } = require('./submissionCode');
 
 const AI_MODELS = ['ChatGPT', 'Claude', 'Gemini', 'Manus', 'Meta AI', 'Perplexity', 'Other'];
 // No longer offered on the form, but older stories may carry it — still
@@ -166,7 +167,8 @@ async function submitStory(body, filesByField) {
     try { await sendAcknowledgement(await getFullStory(storyId)); }
     catch (err) { console.error(`[ai-story] acknowledgement email for story ${storyId} failed:`, err.message); }
   });
-  return { submitted: true, storyId };
+  const row = await getStoryRow(storyId);
+  return { submitted: true, storyId, refCode: refCode({ kind: 'story', deptName: row.deptName, createdAt: row.createdAt, id: row.storyId }) };
 }
 
 const SELECT = `
@@ -204,7 +206,8 @@ async function attachFiles(stories) {
   }
   const RICH = ['description', 'inputDetails', 'outputDetails', 'dailyActivities', 'deliverables', 'impactDescription'];
   return stories.map(({ aiModelsJson, ...s }) => ({
-    ...s, ...Object.fromEntries(RICH.map(k => [k, s[k] == null ? s[k] : toSafeHtml(s[k])])),
+    ...s, refCode: refCode({ kind: 'story', deptName: s.deptName, createdAt: s.createdAt, id: s.storyId }),
+    ...Object.fromEntries(RICH.map(k => [k, s[k] == null ? s[k] : toSafeHtml(s[k])])),
     // aiModels: the tools of a multi-tool story, else null. modelLabel: what to show for either kind.
     aiModels: aiModelsJson ? parseStoredList(aiModelsJson) : null,
     modelLabel: modelLabelOf(s, aiModelsJson),
@@ -233,7 +236,10 @@ async function listStories({ status, deptId, aiModel, search } = {}, isAdmin) {
     req.input('aiModel', sql.NVarChar(50), aiModel).input('aiModelJson', sql.NVarChar(80), `%"${aiModel}"%`);
   }
   const q = String(search || '').trim();
-  if (q) {
+  const byCode = idFromRefCode(q, 'story');           // a typed reference code points at one story
+  if (byCode) {
+    where.push('s.story_id = @codeId'); req.input('codeId', sql.Int, byCode.id);
+  } else if (q) {
     where.push(`(s.title LIKE @q OR s.description LIKE @q OR s.submitter_name LIKE @q OR s.ai_model_other LIKE @q OR s.ai_models LIKE @q)`);
     req.input('q', sql.NVarChar(210), `%${q.slice(0, 200).replace(/[[%_]/g, '[$&]')}%`);
   }

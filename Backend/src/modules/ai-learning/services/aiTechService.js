@@ -13,6 +13,7 @@ const { getPool, sql, withTransaction } = require('../../../config/db');
 const { STORAGE_ROOT } = require('../../../middleware/upload');
 const { toSafeHtml } = require('./richText');
 const { httpError, text, rich, EMAIL_RE, getActiveDepartments, fixFilename } = require('./aiStoryService');
+const { refCode, idFromRefCode } = require('./submissionCode');
 
 const TECH_TYPES = ['AI model', 'AI tool', 'New technology', 'Software / platform', 'Other'];
 const STATUSES = ['pending', 'approved', 'rejected'];
@@ -84,7 +85,8 @@ async function submitTechPost(body, files) {
                   VALUES (@postId, @originalName, @storedName, @storagePath, @mimeType, @fileSize)`);
       }
     });
-    return { submitted: true, postId };
+    const row = await getPostRow(postId);
+    return { submitted: true, postId, refCode: refCode({ kind: 'tech', deptName: row.deptName, createdAt: row.createdAt, id: postId }) };
   } catch (e) {
     removeUploaded(files);
     throw e;
@@ -115,7 +117,7 @@ async function attachFiles(posts) {
     by.get(f.postId).push({ ...f, fileSize: Number(f.fileSize), originalName: fixFilename(f.originalName) });
   }
   return posts.map(p => ({
-    ...p, summary: toSafeHtml(p.summary), useCase: toSafeHtml(p.useCase), expectedBenefit: p.expectedBenefit == null ? null : toSafeHtml(p.expectedBenefit),
+    ...p, refCode: refCode({ kind: 'tech', deptName: p.deptName, createdAt: p.createdAt, id: p.postId }), summary: toSafeHtml(p.summary), useCase: toSafeHtml(p.useCase), expectedBenefit: p.expectedBenefit == null ? null : toSafeHtml(p.expectedBenefit),
     files: by.get(p.postId) || [],
   }));
 }
@@ -128,7 +130,10 @@ async function listTechPosts({ status, deptId, search } = {}) {
   if (status && STATUSES.includes(status)) { where.push('p.status = @status'); req.input('status', sql.NVarChar(10), status); }
   if (deptId && Number.isInteger(Number(deptId))) { where.push('p.dept_id = @deptId'); req.input('deptId', sql.Int, Number(deptId)); }
   const q = String(search || '').trim();
-  if (q) {
+  const byCode = idFromRefCode(q, 'tech');            // a typed reference code points at one post
+  if (byCode) {
+    where.push('p.post_id = @codeId'); req.input('codeId', sql.Int, byCode.id);
+  } else if (q) {
     where.push('(p.title LIKE @q OR p.submitter_name LIKE @q OR p.tech_type_other LIKE @q)');
     req.input('q', sql.NVarChar(210), `%${q.slice(0, 200).replace(/[[%_]/g, '[$&]')}%`);
   }

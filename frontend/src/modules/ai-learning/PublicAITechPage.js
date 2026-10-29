@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useTheme } from '@emotion/react';
 import { Paperclip, X, CheckCircle2 } from 'lucide-react';
-import { publicTechApi } from './api/aiFeedApi';
+import { publicTechApi, FEED_PATH, FEED_NAME } from './api/aiFeedApi';
 import RichTextBox from './RichTextBox';
 import PublicShell, { BRAND, EDGE, loadProfile, saveProfile, forgetProfile } from './PublicShell';
 
@@ -38,6 +38,7 @@ export default function PublicAITechPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
+  const [refCode, setRefCode] = useState('');   // the reference code of the post just sent
 
   useEffect(() => {
     document.title = 'Share a tech · I.EVO';
@@ -79,7 +80,7 @@ export default function PublicAITechPage() {
 
     setSubmitting(true); setError('');
     try {
-      await publicTechApi.submit({
+      const sent = await publicTechApi.submit({
         name: name.trim(), email: email.trim(), deptId, title: title.trim(), techType,
         techTypeOther: techType === 'Other' ? techTypeOther.trim() : null,
         summary: summary.trim(), linkUrl: linkUrl.trim() || null, useCase: useCase.trim(),
@@ -87,6 +88,7 @@ export default function PublicAITechPage() {
       }, files);
       if (remember) saveProfile({ name: name.trim(), email: email.trim(), deptId: Number(deptId) });
       else forgetProfile();
+      setRefCode(sent?.refCode || '');
       setDone(true);
       window.scrollTo?.(0, 0);
     } catch (err) {
@@ -123,11 +125,16 @@ export default function PublicAITechPage() {
             <CheckCircle2 size={44} color={BRAND.green} strokeWidth={1.8} />
             <div style={{ fontSize: 20, fontWeight: 800, color: BRAND.ink, margin: '10px 0 6px' }}>Thank you for sharing!</div>
             <div style={{ fontSize: 14, color: BRAND.slate, lineHeight: 1.6, maxWidth: 460, margin: '0 auto 22px' }}>
-              Your suggestion was submitted. It will appear in the AI Feed once it has been reviewed.
+              Your suggestion was submitted. It will appear on {FEED_NAME} once it has been reviewed.
             </div>
+            {refCode && (
+              <div style={{ display: 'inline-block', margin: '0 auto 20px', padding: '8px 16px', border: `1px dashed ${EDGE}`, borderRadius: 8, fontSize: 13, color: BRAND.slate }}>
+                Your reference <strong style={{ color: BRAND.ink, letterSpacing: '.02em', marginLeft: 6 }}>{refCode}</strong>
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
               <button type="button" onClick={reset} style={{ ...pill, background: BRAND.navy, color: '#fff', border: 'none' }}>Share another</button>
-              <Link to="/ai-feed" style={pill}>Open the AI Feed</Link>
+              <Link to={FEED_PATH} style={pill}>Open {FEED_NAME}</Link>
             </div>
           </div>
         ) : (
