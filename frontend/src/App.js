@@ -1,5 +1,6 @@
 import { ThemeProvider, Global, css } from '@emotion/react';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { FEED_PATH } from './modules/ai-learning/api/aiFeedApi';
 import theme from './theme';
 import { AuthProvider, useAuth } from './modules/auth/AuthContext';
 import { SocketProvider } from './modules/messages/context/SocketContext';
@@ -91,7 +92,8 @@ export default function App() {
             outside AuthProvider/AuthGate, which would show the login page. */}
         <Route path="/ai-story" element={<PublicAIStoryPage />} />
         <Route path="/ai-tech" element={<PublicAITechPage />} />
-        <Route path="/ai-feed" element={<PublicAIFeedPage />} />
+        <Route path={FEED_PATH} element={<PublicAIFeedPage />} />
+        <Route path="/ai-feed" element={<Navigate to={FEED_PATH} replace />} />
         <Route path="*" element={(
           <AuthProvider>
             <AuthGate />

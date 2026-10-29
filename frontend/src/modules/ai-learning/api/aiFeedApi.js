@@ -9,7 +9,10 @@ const TECH_BASE = `${API}/api/public/ai-tech`;
 const FEED_BASE = `${API}/api/public/ai-feed`;
 
 export const TECH_FORM_PATH = '/ai-tech';
-export const FEED_PATH = '/ai-feed';
+// The public timeline of approved stories and tech posts. Its name and address live here only
+// (the API address /api/public/ai-feed is internal and stays as it is).
+export const FEED_NAME = 'AI Pulse';
+export const FEED_PATH = '/ai-pulse';
 
 export const publicTechApi = {
   // { departments: [{ deptId, deptName }], techTypes: [...] }

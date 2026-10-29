@@ -4,6 +4,7 @@ import { useTheme } from '@emotion/react';
 import ievoLogo from '../../shell/assets/ievo-logo-transparent.png';
 // Official Specula logo, "colour" version (navy + red) for light backgrounds.
 import speculaLogoColour from '../../assets/brand/specula-horizontal-colour.svg';
+import { FEED_PATH, FEED_NAME } from './api/aiFeedApi';
 
 // Brand Identity Guide v1.0 colours, shared by the open (no-login) pages.
 export const BRAND = { navy: '#334456', red: '#D8320C', ink: '#1C2430', slate: '#4A5462', grey: '#8A939F', line: '#E2E6EB', mist: '#F4F6F8', green: '#2F7D5B' };
@@ -21,7 +22,7 @@ export function forgetProfile() {
   try { localStorage.removeItem(PROFILE_KEY); } catch { /* ignore */ }
 }
 
-const PAGES = [['feed', '/ai-feed', 'AI Feed'], ['story', '/ai-story', 'Share your AI story'], ['tech', '/ai-tech', 'Share a tech']];
+const PAGES = [['feed', FEED_PATH, FEED_NAME], ['story', '/ai-story', 'Share your AI story'], ['tech', '/ai-tech', 'Share a tech']];
 
 /** The three open pages link to each other through this strip. */
 export function PublicNav({ active }) {

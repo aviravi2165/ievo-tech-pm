@@ -68,6 +68,7 @@ export default function PublicAIStoryPage() {
   const [aiModelVersion, setAiModelVersion] = useState(d0.aiModelVersion || '');
   // "I use multiple AI tools": several tools can be ticked and no version is asked for.
   const [multiTools, setMultiTools] = useState(Boolean(d0.multiTools));
+  const [switchFocus, setSwitchFocus] = useState(false);   // keyboard focus ring for the switch
   const [aiModels, setAiModels] = useState(Array.isArray(d0.aiModels) ? d0.aiModels : []);
   const [description, setDescription] = useState(d0.description || '');
   const [inputDetails, setInputDetails] = useState(d0.inputDetails || '');
@@ -79,6 +80,7 @@ export default function PublicAIStoryPage() {
   const [customerAppreciation, setCustomerAppreciation] = useState(Boolean(d0.customerAppreciation));
   const [impactDescription, setImpactDescription] = useState(d0.impactDescription || '');
   const [submittedEmail, setSubmittedEmail] = useState('');
+  const [submittedRef, setSubmittedRef] = useState('');   // the reference code of the story just sent
   const [beforeFiles, setBeforeFiles] = useState([]);
   const [afterFiles, setAfterFiles] = useState([]);
   const [website, setWebsite] = useState(''); // honeypot — hidden from people
@@ -246,7 +248,7 @@ export default function PublicAIStoryPage() {
 
     setSubmitting(true); setError('');
     try {
-      await publicStoryApi.submit({
+      const sent = await publicStoryApi.submit({
         name: name.trim(), email: email.trim(), deptId, title: title.trim(),
         // One tool → aiModel; several → multiTools + the list (never a version, even if one was picked earlier).
         aiModel: multiTools ? null : aiModel,
@@ -270,6 +272,7 @@ export default function PublicAIStoryPage() {
       setSavedAt(null);
       refreshDrafts();
       setSubmittedEmail(email.trim());
+      setSubmittedRef(sent?.refCode || '');
       if (remember) saveProfile({ name: name.trim(), email: email.trim(), deptId: Number(deptId) });
       else forgetProfile();
       setDone(true);
@@ -368,6 +371,11 @@ export default function PublicAIStoryPage() {
               <div style={{ fontSize: 14, color: c.ash, lineHeight: 1.6, maxWidth: 460, margin: '0 auto 22px' }}>
                 Your AI story was submitted. A confirmation email is on its way{submittedEmail ? <> to <strong>{submittedEmail}</strong></> : ''} — if you don't see it, check your Spam folder. It will appear in Specula's AI Stories once it has been reviewed.
               </div>
+              {submittedRef && (
+                <div style={{ display: 'inline-block', margin: '0 auto 20px', padding: '8px 16px', border: `1px dashed ${edge}`, borderRadius: 8, fontSize: 13, color: c.ash }}>
+                  Your reference <strong style={{ color: c.onyx, letterSpacing: '.02em', marginLeft: 6 }}>{submittedRef}</strong>
+                </div>
+              )}
               <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
                 <button type="button" onClick={resetStory}
                   style={{ background: BRAND.navy, color: c.white, border: 'none', borderRadius: theme.radius.sm, padding: '10px 18px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>
@@ -394,27 +402,27 @@ export default function PublicAIStoryPage() {
             </div>
           ) : (
             <form onSubmit={submit} noValidate>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
-                <h1 style={{ fontFamily: theme.font.display, fontSize: 'clamp(24px, 6vw, 32px)', fontWeight: 500, lineHeight: 1.2, color: BRAND.ink, margin: 0 }}>Tell us how you used AI</h1>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <button type="button" onClick={() => setShowDrafts(true)} aria-label={`Drafts, ${drafts.length} saved`}
-                    style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, background: c.white, color: c.onyx, border: `1px solid ${edge}`, borderRadius: 20, padding: '7px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
-                    <FolderOpen size={16} /> Drafts
-                    {drafts.length > 0 && (
-                      <span aria-hidden="true" style={{ position: 'absolute', top: -7, right: -7, minWidth: 20, height: 20, padding: '0 5px', boxSizing: 'border-box', borderRadius: 10, background: BRAND.red, color: '#fff', fontSize: 11.5, fontWeight: 700, lineHeight: '20px', textAlign: 'center', boxShadow: '0 0 0 2px #fff' }}>
-                        {drafts.length}
-                      </span>
-                    )}
-                  </button>
-                  <button type="button" onClick={startNewStory}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: c.white, color: c.onyx, border: `1px solid ${edge}`, borderRadius: 20, padding: '7px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
-                    <Plus size={16} /> New story
-                  </button>
-                  <button type="button" onClick={() => setShowTutorial(true)}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: c.white, color: c.onyx, border: `1px solid ${edge}`, borderRadius: 20, padding: '7px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
-                    <PlayCircle size={16} /> How it works · Demo
-                  </button>
-                </div>
+              <h1 style={{ fontFamily: theme.font.display, fontSize: 'clamp(24px, 6vw, 32px)', fontWeight: 500, lineHeight: 1.2, color: BRAND.ink, margin: '0 0 12px' }}>Tell us how you used AI</h1>
+              {/* Tool row: the everyday actions on the left (outlined pills); Drafts sits alone on the
+                  right as the one filled button, so it stands apart from them. */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                <button type="button" onClick={startNewStory}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: c.white, color: c.onyx, border: `1px solid ${edge}`, borderRadius: 20, padding: '7px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                  <Plus size={16} /> New story
+                </button>
+                <button type="button" onClick={() => setShowTutorial(true)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: c.white, color: c.onyx, border: `1px solid ${edge}`, borderRadius: 20, padding: '7px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                  <PlayCircle size={16} /> How it works · Demo
+                </button>
+                <button type="button" onClick={() => setShowDrafts(true)} aria-label={`Drafts, ${drafts.length} saved`}
+                  style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8, background: BRAND.navy, color: '#fff', border: 'none', borderRadius: 8, padding: '8px 14px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer', boxShadow: '0 1px 2px rgba(28,36,48,0.25)' }}>
+                  <FolderOpen size={16} /> Drafts
+                  {drafts.length > 0 && (
+                    <span aria-hidden="true" style={{ minWidth: 20, height: 20, padding: '0 6px', boxSizing: 'border-box', borderRadius: 10, background: BRAND.red, color: '#fff', fontSize: 11.5, fontWeight: 700, lineHeight: '20px', textAlign: 'center' }}>
+                      {drafts.length}
+                    </span>
+                  )}
+                </button>
               </div>
               <p style={{ fontSize: 14, color: c.ash, lineHeight: 1.6, margin: '0 0 20px' }}>
                 Used AI to get something done faster or better? Tell us your story — big or small, it helps colleagues learn. No login needed.
@@ -464,10 +472,16 @@ export default function PublicAIStoryPage() {
               </div>
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                 <div style={{ ...field, flex: '1 1 220px' }}>
-                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '2px 12px', flexWrap: 'wrap' }}>
-                    <label style={label} htmlFor="s-model">{multiTools ? 'AI models used' : 'AI model used'} {req}</label>
-                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: c.onyx, cursor: 'pointer', marginBottom: 5 }}>
-                      <input type="checkbox" id="s-multi" checked={multiTools} onChange={e => toggleMulti(e.target.checked)} disabled={!options} style={{ margin: 0 }} />
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 5 }}>
+                    <label style={{ ...label, marginBottom: 0 }} htmlFor="s-model">{multiTools ? 'AI models used' : 'AI model used'} {req}</label>
+                    {/* A small on/off switch (a real checkbox underneath, so keyboard and screen readers work). */}
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: c.ash, cursor: options ? 'pointer' : 'default', whiteSpace: 'nowrap', position: 'relative' }}>
+                      <input type="checkbox" id="s-multi" checked={multiTools} onChange={e => toggleMulti(e.target.checked)} disabled={!options}
+                        onFocus={() => setSwitchFocus(true)} onBlur={() => setSwitchFocus(false)}
+                        style={{ position: 'absolute', opacity: 0, width: 28, height: 16, margin: 0, left: 0, cursor: 'inherit' }} />
+                      <span aria-hidden="true" style={{ width: 28, height: 16, borderRadius: 8, flexShrink: 0, background: multiTools ? c.espresso : edge, position: 'relative', transition: 'background .15s', boxShadow: switchFocus ? `0 0 0 3px ${c.espresso}33` : 'none' }}>
+                        <span style={{ position: 'absolute', top: 2, left: multiTools ? 14 : 2, width: 12, height: 12, borderRadius: '50%', background: '#fff', transition: 'left .15s' }} />
+                      </span>
                       I use multiple AI tools
                     </label>
                   </div>

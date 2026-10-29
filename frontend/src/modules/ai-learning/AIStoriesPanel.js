@@ -65,7 +65,7 @@ function StoryModal({ story, isAdmin, onClose, onReview, onDelete }) {
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 18, fontWeight: 800, color: c.onyx, wordBreak: 'break-word' }}>{story.title}</div>
             <div style={{ fontSize: 12.5, color: c.ash, marginTop: 3 }}>
-              {story.submitterName} · {story.deptName} · {fmtDate(story.createdAt)}
+              {story.submitterName} · {story.deptName} · {fmtDate(story.createdAt)} · {story.refCode}
               {isAdmin && <> · {story.submitterEmail}</>}
             </div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
@@ -221,7 +221,7 @@ export default function AIStoriesPanel() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
           <div style={{ position: 'relative', flex: '1 1 220px', maxWidth: 320 }}>
             <Search size={14} color={c.ash} style={{ position: 'absolute', left: 9, top: 9 }} />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search stories…"
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search stories or a reference code…"
               style={{ ...selectStyle, width: '100%', boxSizing: 'border-box', paddingLeft: 28 }} />
           </div>
           <select value={deptId} onChange={e => setDeptId(e.target.value)} style={selectStyle}>
@@ -255,6 +255,7 @@ export default function AIStoriesPanel() {
                     {s.files.length > 0 && <Chip theme={theme}>{s.files.length} file{s.files.length === 1 ? '' : 's'}</Chip>}
                   </div>
                   <div style={{ fontSize: 11.5, color: c.ashLight }}>{s.submitterName} · {s.deptName} · {fmtDate(s.createdAt)}</div>
+                  <div style={{ fontSize: 11, color: c.ashLight, letterSpacing: '.02em' }}>{s.refCode}</div>
                 </button>
               ))}
             </div>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTheme } from '@emotion/react';
 import { FileText, X, ExternalLink, Link2, Search, Trash2 } from 'lucide-react';
-import { techApi, feedAdminApi, TECH_FORM_PATH, FEED_PATH } from './api/aiFeedApi';
+import { techApi, feedAdminApi, TECH_FORM_PATH, FEED_PATH, FEED_NAME } from './api/aiFeedApi';
 import { RichView, stripHtml } from './RichTextBox';
 import { copyText } from './copyText';
 
@@ -43,7 +43,7 @@ function PostModal({ post, onClose, onReview, onDelete }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 18, fontWeight: 800, color: c.onyx, wordBreak: 'break-word' }}>{post.title}</div>
-            <div style={{ fontSize: 12.5, color: c.ash, marginTop: 3 }}>{post.submitterName} · {post.deptName} · {fmtDate(post.createdAt)} · {post.submitterEmail}</div>
+            <div style={{ fontSize: 12.5, color: c.ash, marginTop: 3 }}>{post.submitterName} · {post.deptName} · {fmtDate(post.createdAt)} · {post.submitterEmail} · {post.refCode}</div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
               <Chip tone={c.espresso}>{typeLabel(post)}</Chip>
               <Chip tone={post.status === 'approved' ? c.success : post.status === 'rejected' ? c.danger : c.warning}>{post.status}</Chip>
@@ -140,14 +140,14 @@ export default function AITechPanel() {
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
           <div style={{ flex: '1 1 300px' }}>
             <div style={{ fontFamily: theme.font.display, fontSize: 16, fontWeight: 800, color: c.onyx }}>AI Tech</div>
-            <div style={{ fontSize: 12.5, color: c.ash, marginTop: 2 }}>New technology, AI models and tools suggested by colleagues. Approved posts appear in the public AI Feed.</div>
+            <div style={{ fontSize: 12.5, color: c.ash, marginTop: 2 }}>New technology, AI models and tools suggested by colleagues. Approved posts appear on the public {FEED_NAME} page.</div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button type="button" onClick={() => copyLink('tech', TECH_FORM_PATH)} style={linkBtn}><Link2 size={14} /> {copied === 'tech' ? 'Link copied!' : 'Copy form link'}</button>
-            <button type="button" onClick={() => copyLink('feed', FEED_PATH)} style={linkBtn}><Link2 size={14} /> {copied === 'feed' ? 'Link copied!' : 'Copy feed link'}</button>
+            <button type="button" onClick={() => copyLink('feed', FEED_PATH)} style={linkBtn}><Link2 size={14} /> {copied === 'feed' ? 'Link copied!' : `Copy ${FEED_NAME} link`}</button>
             <a href={FEED_PATH} target="_blank" rel="noopener noreferrer"
               style={{ ...linkBtn, background: c.onyx, color: c.white, border: 'none', fontWeight: 700, textDecoration: 'none' }}>
-              <ExternalLink size={14} /> Open AI Feed
+              <ExternalLink size={14} /> Open {FEED_NAME}
             </a>
           </div>
         </div>
@@ -164,7 +164,7 @@ export default function AITechPanel() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
           <div style={{ position: 'relative', flex: '1 1 220px', maxWidth: 320 }}>
             <Search size={14} color={c.ash} style={{ position: 'absolute', left: 9, top: 9 }} />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search tech posts…"
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search tech posts or a reference code…"
               style={{ ...selectStyle, width: '100%', boxSizing: 'border-box', paddingLeft: 28 }} />
           </div>
           <select value={deptId} onChange={e => setDeptId(e.target.value)} style={selectStyle}>
@@ -191,6 +191,7 @@ export default function AITechPanel() {
                     {p.files.length > 0 && <Chip tone={c.ash}>{p.files.length} file{p.files.length === 1 ? '' : 's'}</Chip>}
                   </div>
                   <div style={{ fontSize: 11.5, color: c.ashLight }}>{p.submitterName} · {p.deptName} · {fmtDate(p.createdAt)}</div>
+                  <div style={{ fontSize: 11, color: c.ashLight, letterSpacing: '.02em' }}>{p.refCode}</div>
                 </button>
               ))}
             </div>
@@ -224,7 +225,7 @@ export function FeedCommentsPanel() {
     <div style={{ height: '100%', overflowY: 'auto', background: c.greige }}>
       <div style={{ padding: '16px 20px 32px', maxWidth: 900 }}>
         <div style={{ fontFamily: theme.font.display, fontSize: 16, fontWeight: 800, color: c.onyx }}>Feed comments</div>
-        <div style={{ fontSize: 12.5, color: c.ash, margin: '2px 0 14px' }}>The latest 100 comments on the public AI Feed. Visitors identify themselves by name and email only, so remove anything inappropriate here.</div>
+        <div style={{ fontSize: 12.5, color: c.ash, margin: '2px 0 14px' }}>The latest 100 comments on the public {FEED_NAME} page. Visitors identify themselves by name and email only, so remove anything inappropriate here.</div>
         {error && <div style={{ color: c.danger, fontSize: 13, marginBottom: 10 }}>{error}</div>}
         {!comments ? (!error && <div style={{ color: c.ash, fontSize: 13 }}>Loading…</div>)
           : comments.length === 0 ? (

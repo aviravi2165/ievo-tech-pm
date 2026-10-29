@@ -86,7 +86,7 @@ function renderStoryPdf(story) {
     doc.font('SpaceGrotesk-Medium').fontSize(20).fillColor(NAVY).text(story.title, { width: contentW });
     doc.moveDown(0.3);
     doc.font('Inter').fontSize(9.5).fillColor(SLATE)
-      .text(`${story.submitterName}  ·  ${story.deptName}  ·  ${story.submitterEmail}  ·  ${fmtDate(story.createdAt)}`, { width: contentW });
+      .text(`${story.refCode}  ·  ${story.submitterName}  ·  ${story.deptName}  ·  ${story.submitterEmail}  ·  ${fmtDate(story.createdAt)}`, { width: contentW });
     doc.moveDown(0.8);
 
     // ── Facts strip ──

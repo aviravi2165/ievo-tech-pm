@@ -95,6 +95,7 @@ async function sendAcknowledgement(story) {
     <div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;color:#1C2430;max-width:560px;line-height:1.65">
       <img src="cid:specula-logo" alt="Specula" width="170" style="display:block;border:0;margin:0 0 14px">
       ${paragraphs.map(p => `<p style="margin:0 0 14px">${p}</p>`).join('')}
+      <p style="margin:0 0 14px;font-size:13px;color:#555">Your reference: <b>${escapeHtml(story.refCode)}</b></p>
       <p style="margin:22px 0 0;font-size:17px;font-weight:bold;color:${NAVY}">Stay Curious!</p>
       <p style="margin:2px 0 0;color:#555">Team CTO Office</p>
     </div>`;
