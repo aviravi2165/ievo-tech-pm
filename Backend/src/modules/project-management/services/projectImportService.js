@@ -31,6 +31,9 @@ const taskService = require('./taskService');
 const SHEET = 'Plan';
 const LIMITS = { rows: 1500, phases: 60, activities: 400, tasks: 1200, name: 200 };
 const PRIORITIES = ['Low', 'Medium', 'High', 'Critical'];
+// What a task can be set to at import. 'Blocked' is system-managed (from dependencies), so it is not offered.
+const STATUS_ALIASES = { 'to do': 'To Do', todo: 'To Do', 'not started': 'To Do', ongoing: 'Ongoing', 'in progress': 'Ongoing',
+  complete: 'Complete', completed: 'Complete', done: 'Complete' };
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Column order of the template. `key` is what the parser reads; `labels` are accepted header spellings.
@@ -51,6 +54,8 @@ const COLUMNS = [
   { key: 'taskWeight',   header: 'Task Weight %',             width: 13, labels: ['task weight', 'task weightage', 'task weight %'] },
   { key: 'assignees',    header: 'Task Assignee Emails',      width: 32, labels: ['task assignee', 'task assignees', 'task assignee emails', 'assignee emails'] },
   { key: 'description',  header: 'Task Description',          width: 36, labels: ['task description', 'description'] },
+  // Last on purpose: files made with the earlier 16-column format have no such column and still import.
+  { key: 'taskStatus',   header: 'Task Status',               width: 13, labels: ['task status', 'status'] },
 ];
 const REQUIRED_KEYS = ['phase', 'activity'];
 const colLetter = (key) => String.fromCharCode(65 + COLUMNS.findIndex(c => c.key === key));
@@ -143,7 +148,7 @@ async function readRows(buffer) {
     const cell = (k) => (colOf[k] ? row.getCell(colOf[k]) : null);
     const text = (k) => cellText(cell(k)?.value);
     const item = { row: r, phase: text('phase'), activity: text('activity'), task: text('task'), priority: text('priority'),
-      actOwner: text('actOwner').toLowerCase(), description: text('description'),
+      actOwner: text('actOwner').toLowerCase(), description: text('description'), status: text('taskStatus'),
       assignees: text('assignees').split(/[,;\s]+/).map(s => s.trim().toLowerCase()).filter(Boolean) };
     for (const [list, reader, hint] of [[DATES, readDate, 'a date. Use YYYY-MM-DD (for example 2026-03-31) or DD/MM/YYYY'], [WEIGHTS, readWeight, 'a number']]) {
       for (const [k, label] of list) {
@@ -153,7 +158,7 @@ async function readRows(buffer) {
       }
     }
     const anyValue = [...DATES, ...WEIGHTS].some(([k]) => item[k] !== undefined);
-    if (!item.phase && !item.activity && !item.task && !item.description && !item.actOwner && !item.priority && !item.assignees.length && !anyValue) continue;
+    if (!item.phase && !item.activity && !item.task && !item.description && !item.actOwner && !item.priority && !item.status && !item.assignees.length && !anyValue) continue;
     rows.push(item);
   }
   if (!rows.length) throw httpError(400, 'The file has no data rows under the header. Fill in at least one Phase, Activity and Task.');
@@ -208,8 +213,8 @@ function buildTree(rows, problems) {
 
     if (r.task) {
       if (r.task.length > LIMITS.name) problems.push({ row: r.row, column: 'Task', message: `Task name is longer than ${LIMITS.name} characters.` });
-      curAct.tasks.push({ name: r.task, row: r.row, priority: r.priority, start: r.taskStart, due: r.taskDue, weight: r.taskWeight, assignees: r.assignees, description: r.description || null });
-    } else if (r.priority || r.taskStart !== undefined || r.taskDue !== undefined || r.taskWeight !== undefined || r.assignees.length || r.description) {
+      curAct.tasks.push({ name: r.task, row: r.row, priority: r.priority, status: r.status, start: r.taskStart, due: r.taskDue, weight: r.taskWeight, assignees: r.assignees, description: r.description || null });
+    } else if (r.priority || r.status || r.taskStart !== undefined || r.taskDue !== undefined || r.taskWeight !== undefined || r.assignees.length || r.description) {
       problems.push({ row: r.row, column: 'Task', message: 'This row has task details but no Task name.' });
     }
   }
@@ -290,6 +295,9 @@ async function analyse(projectId, buffer) {
         const known = t.priority ? PRIORITIES.find(x => x.toLowerCase() === t.priority.toLowerCase()) : 'Medium';
         if (!known) problems.push({ row: t.row, column: 'Priority', message: `"${t.priority}" is not a priority. Use Low, Medium, High or Critical.` });
         t.priority = known || 'Medium';
+        const status = t.status ? STATUS_ALIASES[t.status.toLowerCase()] : 'To Do';
+        if (!status) problems.push({ row: t.row, column: 'Task Status', message: `"${t.status}" is not a status. Use To Do, Ongoing or Complete.` });
+        t.status = status || 'To Do';
         if (t.start && t.due && t.due < t.start) problems.push({ row: t.row, column: 'Task Due Date', message: `Task "${t.name}" is due before it starts.` });
         if (t.start && a.start && t.start < a.start) problems.push({ row: t.row, column: 'Task Start', message: `Task "${t.name}" starts before its activity "${a.name}" (${a.start}).` });
       }
@@ -372,10 +380,13 @@ async function runImport(projectId, userId, buffer) {
           name: a.name, plannedStart: a.start || null, plannedEnd: a.end || null, weightage: a.weightage, ownerId: a.ownerId || null,
         });
         for (const t of a.tasks) {
-          await taskService.createTask(activity.activityId, projectId, userId, {
+          const task = await taskService.createTask(activity.activityId, projectId, userId, {
             name: t.name, description: t.description, priority: t.priority, startDate: t.start || null, dueDate: t.due || null,
             weightage: t.weightage, assigneeIds: t.assigneeIds,
           });
+          // A task that is already Ongoing / Complete (for example when a finished project is rebuilt) is
+          // moved there through the normal status change, so progress and the audit log follow.
+          if (t.status !== 'To Do') await taskService.updateTaskStatus(task.taskId, projectId, userId, t.status, 'Manager', false);
         }
       }
     }
@@ -430,6 +441,7 @@ async function buildTemplateWorkbook(startIso) {
   });
   for (let r = 2; r <= 300; r++) {
     for (const k of dateKeys) ws.getCell(`${colLetter(k)}${r}`).numFmt = 'yyyy-mm-dd';
+    ws.getCell(`${colLetter('taskStatus')}${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: ['"To Do,Ongoing,Complete"'], showErrorMessage: true, errorTitle: 'Task Status', error: 'Choose To Do, Ongoing or Complete.' };
     ws.getCell(`${colLetter('priority')}${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: ['"Low,Medium,High,Critical"'], showErrorMessage: true, errorTitle: 'Priority', error: 'Choose Low, Medium, High or Critical.' };
   }
   ws.getColumn('description').alignment = { wrapText: true, vertical: 'top' };
@@ -445,6 +457,7 @@ async function buildTemplateWorkbook(startIso) {
     ['Dates', 'Write dates as YYYY-MM-DD (2026-03-31) or DD/MM/YYYY. An activity cannot start before its phase, and a phase cannot start before the project\'s start date. Dates are optional.'],
     ['Weights (%)', 'Each group of siblings (the phases of the project, the activities of a phase, the tasks of an activity) must add up to 100. Leave ALL of a group blank for an equal split. Mixing filled and blank weights in one group is not allowed.'],
     ['Priority', 'Low, Medium, High or Critical. Blank = Medium.'],
+    ['Task Status', 'Optional, last column. To Do, Ongoing or Complete. Blank = To Do. Use it when you rebuild a project that is already under way.'],
     ['Activity Owner Email', 'Optional. The person becomes the Manager of that activity. Must be the email of an active Specula user.'],
     ['Task Assignee Emails', 'Optional. One or more emails separated by commas. Each person gets an assignment request that they accept from their dashboard, the same as when a task is assigned by hand.'],
     ['Importing', 'Open the project, press "Import from Excel", choose this file and check the preview. Nothing is created until you confirm.'],
