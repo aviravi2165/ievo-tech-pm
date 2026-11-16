@@ -97,6 +97,16 @@ export const taskApi = {
   // Assignment requests (replaces old direct addAssignee)
   sendRequest:   (id, userId)   => axiosInstance.post(`/api/tasks/${id}/requests`, { userId }).then(r => r.data),
   removeRequest: (id, uid)      => axiosInstance.delete(`/api/tasks/${id}/requests/${uid}`).then(r => r.data),
+  // Optional proof of completion — files attached to a task. list -> { proofs, canAdd }
+  listProofs:   (id)            => axiosInstance.get(`/api/tasks/${id}/proofs`).then(r => r.data),
+  addProofs:    (id, files, note) => {
+    const form = new FormData();
+    files.forEach(f => form.append('files', f));
+    if (note) form.append('note', note);
+    return axiosInstance.post(`/api/tasks/${id}/proofs`, form, { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data);
+  },
+  removeProof:  (id, proofId)   => axiosInstance.delete(`/api/tasks/${id}/proofs/${proofId}`).then(r => r.data),
+  downloadProof: async (id, proof) => saveBlob(`/api/tasks/${id}/proofs/${proof.proofId}`, proof.originalName),
   // Task Shared/CC chat — returns { conversationId }, auto-creating the thread if needed
   getChat:       (id)           => axiosInstance.get(`/api/tasks/${id}/chat`).then(r => r.data),
   // Real status-over-time — Timeline segmented bars
@@ -285,3 +295,16 @@ export const userApi = {
   search: (q, limit = 10) =>
     axiosInstance.get(`/api/users/search?q=${encodeURIComponent(q)}&limit=${limit}`).then(r => r.data),
 };
+// Excel import — fills an empty project's phases/activities/tasks from a spreadsheet.
+export const importApi = {
+  downloadFormat: (projectId) => saveBlob(`/api/projects/${projectId}/import/template`, 'Specula project import format.xlsx'),
+  // preview checks the file and writes nothing; run creates the structure.
+  preview: (projectId, file) => postFile(`/api/projects/${projectId}/import/preview`, file),
+  run:     (projectId, file) => postFile(`/api/projects/${projectId}/import`, file),
+};
+
+function postFile(url, file) {
+  const form = new FormData();
+  form.append('file', file);
+  return axiosInstance.post(url, form, { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data);
+}

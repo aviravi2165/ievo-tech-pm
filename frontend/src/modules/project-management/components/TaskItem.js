@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTheme } from '@emotion/react';
-import { ArrowRight, FileText, RotateCcw, Trash2, AlertCircle, Clock } from 'lucide-react';
+import { ArrowRight, FileText, RotateCcw, Trash2, AlertCircle, Clock, Paperclip } from 'lucide-react';
+import ProofModal from './ProofModal';
 import StatusBadge, { InactiveBadge, statusLabel } from './StatusBadge';
 import PriorityBadge from './PriorityBadge';
 import UserSearchInput from './UserSearchInput';
@@ -192,6 +193,7 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
   const canStatus  = canEdit;
   const isInactive = task.isActive === false;
 
+  const [showProof,    setShowProof]    = useState(false);   // optional proof-of-completion files
   const [localStatus,  setLocalStatus]  = useState(task.status);
   const [panel,        setPanel]        = useState(null); // 'assign'|'deps'|'date'|'desc'|null
   const [editName,     setEditName]     = useState(task.name);
@@ -503,6 +505,17 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
             stays — there's no visible description text in the row to
             click on instead. */}
         <RowActions data-row-actions onClick={e => e.stopPropagation()}>
+          {/* Proof of completion (optional). Shown when the task already has proof (anyone can look),
+              or to the people who can add some — the assignee and the managers. */}
+          {(Number(task.proofCount) > 0 || ((canEdit || isAssigned) && !isInactive)) && (
+            <IconBtn active={showProof} title={Number(task.proofCount) > 0 ? `Proof of completion (${task.proofCount})` : 'Attach proof of completion (optional)'}
+              onClick={() => setShowProof(true)} style={{ width:20, height:20, position:'relative' }}>
+              <Paperclip size={14} strokeWidth={2} />
+              {Number(task.proofCount) > 0 && (
+                <span aria-hidden="true" style={{ position:'absolute', top:-5, right:-5, minWidth:12, height:12, padding:'0 3px', boxSizing:'border-box', borderRadius:6, background:theme.colors.espresso, color:'#fff', fontSize:8.5, fontWeight:700, lineHeight:'12px', textAlign:'center' }}>{task.proofCount}</span>
+              )}
+            </IconBtn>
+          )}
           {canEdit && (
             <>
               {!isInactive && (
@@ -546,6 +559,8 @@ export default function TaskItem({ task, activityRole, myUserId, allTasks = [], 
           )}
         </RowActions>
       </TaskTableRow>
+
+      {showProof && <ProofModal task={task} onClose={() => setShowProof(false)} onChanged={() => onRefetch?.()} />}
 
       {/* ── Description panel — viewable by anyone canEdit (assignee or
           Manager), but only a Manager can actually edit it. An assigned

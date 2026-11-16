@@ -2,6 +2,7 @@
 
 const { getPool, withTransaction, sql } = require('../../../config/db');
 const audit = require('./auditService');
+const taskProofs = require('./taskProofService');
 const { resolveUnblocked, blockIfNeeded, isBlocked, isInactive, reevaluateDependents } = require('./dependencyService');
 const { getActivityProgress, getPhaseProgress, deriveStatus, getActivityHasActiveWork, getPhaseHasActiveWork } = require('./progressService');
 const { getEffectiveActivityRole } = require('./roleService');
@@ -66,6 +67,9 @@ const DONE_STATUS = 'Complete';
 
 async function getTasksForActivity(activityId, userId) {
   const pool = await getPool();
+  const proofCountSql = (await taskProofs.proofsTableExists())
+    ? '(SELECT COUNT(*) FROM pm_task_proofs pr WHERE pr.task_id = t.task_id)'
+    : '0';
   const result = await pool.request()
     .input('activityId', sql.Int, activityId)
     .input('userId', sql.UniqueIdentifier, userId)
@@ -77,6 +81,7 @@ async function getTasksForActivity(activityId, userId) {
              t.due_date      AS dueDate,
              t.estimated_hours AS estimatedHours,
              t.created_at   AS createdAt,
+             ${proofCountSql} AS proofCount,
              pa.status AS parentActivityStatus, pph.status AS parentPhaseStatus,
              t.is_active AS ownIsActive, pa.is_active AS parentActivityActive, pph.is_active AS parentPhaseActive,
              pproj.is_active AS parentProjectActive,

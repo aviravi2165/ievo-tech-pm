@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTheme } from '@emotion/react';
-import { ChevronLeft, LayoutGrid, RotateCcw, Pencil, Trash2 } from 'lucide-react';
+import { ChevronLeft, LayoutGrid, RotateCcw, Pencil, Trash2, FileSpreadsheet } from 'lucide-react';
+import ImportExcelModal from '../components/ImportExcelModal';
 import StatusBadge, { InactiveBadge } from '../components/StatusBadge';
 import EmptyStateHint from '../components/EmptyStateHint';
 import ProgressBar from '../components/ProgressBar';
@@ -67,6 +68,7 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
   }, [projectId, project, phases]);
   const [tab,          setTab]          = useState('Phases');
   const [showAddPhase, setShowAddPhase] = useState(false);
+  const [showImport,   setShowImport]   = useState(false);   // "Import from Excel" modal
   const [showEditProject, setShowEditProject] = useState(false);
   const [descExpanded, setDescExpanded] = useState(false);
   const [newPhaseName, setNewPhaseName] = useState('');
@@ -404,11 +406,18 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
                     Weight {projectWeightSum}%/100{projectWeightageLocked ? ' (locked)' : ''}
                   </span>
                 ) : <span />}
+                <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+                {phases.length === 0 && (
+                  <BtnGhost onClick={() => setShowImport(true)} title="Create phases, activities and tasks from an Excel file">
+                    <FileSpreadsheet size={13} style={{ verticalAlign:'-2px', marginRight:5 }} />Import from Excel
+                  </BtnGhost>
+                )}
                 <BtnPrimary onClick={() => setShowAddPhase(v => !v)}
                   disabled={!showAddPhase && projectWeightageLocked}
                   title={(!showAddPhase && projectWeightageLocked) ? "This project's 100% phase weightage is already allocated" : undefined}>
                   {showAddPhase ? '✕ Cancel' : '+ Add Phase'}
                 </BtnPrimary>
+                </div>
               </div>
             )}
 
@@ -466,7 +475,12 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
             {!phases.length && (
               <Empty>
                 <LayoutGrid size={38} strokeWidth={1.2} />
-                <p>No phases yet. Add one to structure this project.</p>
+                <p>No phases yet. Add one to structure this project{canEdit && !isProjectInactive ? ', or build the whole structure from an Excel file.' : '.'}</p>
+                {canEdit && !isProjectInactive && (
+                  <BtnGhost onClick={() => setShowImport(true)} style={{ marginTop: 8 }}>
+                    <FileSpreadsheet size={13} style={{ verticalAlign:'-2px', marginRight:5 }} />Import from Excel
+                  </BtnGhost>
+                )}
               </Empty>
             )}
 
@@ -579,6 +593,10 @@ export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
           edit modal, Phase/Activity/Task date panels) opens this via
           dateChangeRequestStore instead of just erroring out. */}
       <DateChangeRequestModal onApplied={refetch} />
+
+      {showImport && (
+        <ImportExcelModal projectId={projectId} onClose={() => setShowImport(false)} onImported={refetch} />
+      )}
 
       {showEditProject && (
         <ProjectEditModal
