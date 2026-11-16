@@ -29,6 +29,14 @@ router.get('/:id/task-completions', ctrl.getTaskCompletions);
 // fire — posts the exact same messages the scheduled run would. Admin only.
 router.post('/activity-insights/run-now', requireAdmin, ctrl.runActivityInsightsNow);
 
+// Excel import: fills an EMPTY project's phases/activities/tasks from a spreadsheet.
+// Manager only. "preview" checks the file and writes nothing; the POST creates.
+const importCtrl = require('../controllers/projectImportController');
+const { importUpload } = require('../middleware/importUpload');
+router.get('/:id/import/template',  setProjectId, requireRole('Manager'), importCtrl.template);
+router.post('/:id/import/preview',  setProjectId, requireRole('Manager'), importUpload, importCtrl.preview);
+router.post('/:id/import',          setProjectId, requireRole('Manager'), importUpload, importCtrl.run);
+
 // Members — flat list and hierarchical breakdown (for Members tab)
 router.get('/:id/members',            ctrl.getMembers);
 router.get('/:id/members/hierarchy',  ctrl.getMembersHierarchy);   // ← NEW: phase→activity tree

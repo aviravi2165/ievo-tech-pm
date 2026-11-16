@@ -1,6 +1,7 @@
 'use strict';
 
 const svc  = require('../services/taskService');
+const proofs = require('../services/taskProofService');
 const audit = require('../services/auditService');
 
 const list           = async (req,res,next) => { try { res.json(await svc.getTasksForActivity(req.params.activityId, req.user.userId)); } catch(e){next(e);} };
@@ -37,4 +38,11 @@ const removeDep      = async (req,res,next) => { try { await svc.removeTaskDep(r
 
 const getStatusHistory = async (req,res,next) => { try { res.json(await svc.getTaskStatusHistory(req.params.id)); } catch(e){next(e);} };
 
-module.exports = { list, create, update, updateStatus, remove, reactivate, hardDelete, sendRequest, removeRequest, acceptRequest, declineRequest, getMyRequests, getMyActiveTasks, getMyRecentAudit, getChat, addDep, removeDep, getAdminRecentAudit, getAdminOverdueBlocked, getMyProjectsOverdueBlocked, getStatusHistory };
+// Proof of completion (optional files on a task)
+const isAdmin = (req) => req.user.userType === 'admin';
+const listProofs   = async (req,res,next) => { try { res.json(await proofs.listProofs(req.params.id, req.user.userId, req.projectRole, isAdmin(req))); } catch(e){next(e);} };
+const addProofs    = async (req,res,next) => { try { res.status(201).json(await proofs.addProofs(req.params.id, req.pmProjectId, req.user.userId, req.projectRole, isAdmin(req), req.files, req.body?.note)); } catch(e){next(e);} };
+const removeProof  = async (req,res,next) => { try { res.json(await proofs.removeProof(req.params.id, req.params.proofId, req.pmProjectId, req.user.userId, req.projectRole, isAdmin(req))); } catch(e){next(e);} };
+const downloadProof = async (req,res,next) => { try { const f = await proofs.getProofForDownload(req.params.id, req.params.proofId); res.download(f.fullPath, f.originalName); } catch(e){next(e);} };
+
+module.exports = { listProofs, addProofs, removeProof, downloadProof, list, create, update, updateStatus, remove, reactivate, hardDelete, sendRequest, removeRequest, acceptRequest, declineRequest, getMyRequests, getMyActiveTasks, getMyRecentAudit, getChat, addDep, removeDep, getAdminRecentAudit, getAdminOverdueBlocked, getMyProjectsOverdueBlocked, getStatusHistory };

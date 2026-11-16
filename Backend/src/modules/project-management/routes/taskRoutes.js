@@ -7,6 +7,7 @@ const { requireEntityRole } = require('../middleware/entityRole');
 const { checkCircular } = require('../middleware/circularDepCheck');
 const { getPool, sql }  = require('../../../config/db');
 const ctrl = require('../controllers/taskController');
+const { proofUpload } = require('../middleware/proofUpload');
 
 async function resolveTaskProject(req, res, next) {
   try {
@@ -61,6 +62,14 @@ router.patch('/:id/reactivate', resolveTaskProject, requireEntityRole('activity'
 // (see taskService.hardDeleteTask).
 router.delete('/:id/hard', resolveTaskProject, requireEntityRole('activity', 'Manager'), ctrl.hardDelete);
 router.patch('/:id/status', resolveTaskProject, requireRole('Member'),  ctrl.updateStatus);
+
+// ── Proof of completion (optional) ───────────────────────────────────────────
+// Anyone who can see the project may view/download; attaching is limited to the
+// task's assignees and its managers (checked in the service).
+router.get('/:id/proofs',                 resolveTaskProject, requireRole('Viewer'), ctrl.listProofs);
+router.post('/:id/proofs',                resolveTaskProject, requireRole('Member'), proofUpload, ctrl.addProofs);
+router.get('/:id/proofs/:proofId',        resolveTaskProject, requireRole('Viewer'), ctrl.downloadProof);
+router.delete('/:id/proofs/:proofId',     resolveTaskProject, requireRole('Member'), ctrl.removeProof);
 
 // ── Task chat ────────────────────────────────────────────────────────────────
 // Returns { conversationId } for the task's auto-managed Shared/CC thread.
